@@ -34,6 +34,9 @@ export interface Company {
   group_id: string
   name: string
   slug: string
+  description: string | null
+  industry: string | null
+  is_active: boolean
   created_at: string
 }
 
@@ -42,6 +45,9 @@ export interface Division {
   company_id: string
   name: string
   slug: string
+  description: string | null
+  industry: string | null
+  is_active: boolean
   created_at: string
 }
 

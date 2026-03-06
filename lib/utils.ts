@@ -34,6 +34,21 @@ export function getPeriodDateRange(period: string): { fromDate: string; toDate: 
   }
 }
 
+/**
+ * Generate a URL-safe slug from a display name.
+ * Lowercases, strips special characters, replaces spaces with hyphens.
+ * e.g. "Acme Corp (AU)" → "acme-corp-au"
+ */
+export function generateSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s-]/g, '')  // strip non-alphanumeric (keep spaces + hyphens)
+    .replace(/\s+/g, '-')           // spaces → hyphens
+    .replace(/-+/g, '-')            // collapse multiple hyphens
+    .replace(/^-|-$/g, '')          // trim leading/trailing hyphens
+}
+
 /** Get the last N months as YYYY-MM strings, most recent first */
 export function getLastNMonths(n: number): string[] {
   const months: string[] = []

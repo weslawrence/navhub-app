@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import {
   LayoutDashboard,
   Building2,
   Plug,
+  Bot,
   Settings,
   Menu,
   X,
@@ -38,13 +39,14 @@ import { cn } from '@/lib/utils'
 import type { Group, UserGroup } from '@/lib/types'
 
 // ============================================================
-// Nav items
+// Nav items — Dashboard · Companies · Integrations · Agents · Settings
 // ============================================================
 
 const NAV_ITEMS = [
   { label: 'Dashboard',    href: '/dashboard',    Icon: LayoutDashboard },
   { label: 'Companies',    href: '/companies',    Icon: Building2 },
   { label: 'Integrations', href: '/integrations', Icon: Plug },
+  { label: 'Agents',       href: '/agents',       Icon: Bot },
   { label: 'Settings',     href: '/settings',     Icon: Settings },
 ] as const
 
@@ -66,19 +68,18 @@ interface AppShellProps {
 export default function AppShell({ children, user, groups, activeGroup }: AppShellProps) {
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
-  const router = useRouter()
 
   // Sidebar collapse state — persisted in localStorage
-  const [collapsed,   setCollapsed]   = useState(false)
-  const [mobileOpen,  setMobileOpen]  = useState(false)
-  const [mounted,     setMounted]     = useState(false)
+  const [collapsed,  setCollapsed]  = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [mounted,    setMounted]    = useState(false)
 
   // Apply group colour on mount / group change
   useEffect(() => {
     document.documentElement.style.setProperty('--group-primary', activeGroup.primary_color)
   }, [activeGroup.primary_color])
 
-  // Load sidebar state from localStorage after mount
+  // Load sidebar state from localStorage after mount (avoids hydration mismatch)
   useEffect(() => {
     setMounted(true)
     const saved = localStorage.getItem('navhub-sidebar')
@@ -159,7 +160,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   }
 
   // ────────────────────────────────────────────────────────
-  // Top bar
+  // Top bar + layout
   // ────────────────────────────────────────────────────────
 
   return (
@@ -232,7 +233,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
         </div>
       </header>
 
-      {/* ── Body below top bar ── */}
+      {/* ── Body ── */}
       <div className="flex flex-1 pt-14">
         {/* Desktop sidebar */}
         <Sidebar />

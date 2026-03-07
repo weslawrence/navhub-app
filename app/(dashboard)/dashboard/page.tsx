@@ -27,7 +27,6 @@ import {
   getPreviousPeriod,
   getNextPeriod,
   getCurrentQuarterMonths,
-  getLastQuarterMonths,
   getYTDMonths,
   formatPeriod,
 } from '@/lib/utils'

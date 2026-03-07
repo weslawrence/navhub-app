@@ -184,7 +184,6 @@ export default function DashboardPage() {
   const hasPLData      = perf && (perf.ytd.revenue !== null || perf.qtd.revenue !== null)
 
   const qtdRange  = getCurrentQuarterMonths(period)
-  const _lqRange   = getLastQuarterMonths(period)
   const ytdRange  = getYTDMonths(period)
 
   function periodRangeLabel(months: string[]): string {

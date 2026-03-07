@@ -14,11 +14,12 @@ export type EntityType = 'company' | 'division'
 // ============================================================
 
 export interface Group {
-  id: string
-  name: string
-  slug: string
+  id:            string
+  name:          string
+  slug:          string
   primary_color: string
-  created_at: string
+  palette_id:    string | null   // added Phase 2c — references PALETTES[].id
+  created_at:    string
 }
 
 export interface UserGroup {

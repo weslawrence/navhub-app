@@ -44,6 +44,7 @@ export default function ExcelUpload({ companies, divisions = [] }: ExcelUploadPr
   const [uploadState,  setUploadState]  = useState<UploadState>({ status: 'idle' })
 
   const entities: EntityOption[] = entityType === 'company' ? companies : divisions
+  const step1Done = !!entityId
 
   const onDrop = useCallback(
     async (acceptedFiles: File[]) => {
@@ -100,135 +101,174 @@ export default function ExcelUpload({ companies, divisions = [] }: ExcelUploadPr
     setUploadState({ status: 'idle' })
   }
 
+  // ── Step indicator badge ─────────────────────────────────────────────────
+
+  function StepBadge({ n, done, active }: { n: number; done: boolean; active: boolean }) {
+    if (done) {
+      return (
+        <div className="h-5 w-5 rounded-full bg-primary text-white flex items-center justify-center flex-shrink-0">
+          <CheckCircle className="h-3.5 w-3.5" />
+        </div>
+      )
+    }
+    return (
+      <div className={cn(
+        'h-5 w-5 rounded-full flex items-center justify-center text-[11px] font-bold flex-shrink-0',
+        active
+          ? 'bg-primary text-white'
+          : 'bg-muted text-muted-foreground border border-input'
+      )}>
+        {n}
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-4">
-      {/* Entity selector */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        {/* Company / Division toggle */}
-        <div className="flex rounded-lg border overflow-hidden shrink-0">
-          {(['company', 'division'] as EntityType[]).map((type) => (
-            <button
-              key={type}
-              onClick={() => {
-                setEntityType(type)
-                setEntityId('')
-                reset()
-              }}
-              className={cn(
-                'px-4 py-1.5 text-sm font-medium capitalize transition-colors',
-                entityType === type
-                  ? 'bg-primary text-white'
-                  : 'text-muted-foreground hover:bg-accent'
-              )}
-            >
-              {type}
-            </button>
-          ))}
+    <div className="space-y-6">
+
+      {/* ── Step 1: Select entity ─────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <StepBadge n={1} done={step1Done} active={true} />
+          <span className="text-sm font-medium">Select entity</span>
         </div>
 
-        {/* Entity dropdown */}
-        <select
-          className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-          value={entityId}
-          onChange={(e) => {
-            setEntityId(e.target.value)
-            reset()
-          }}
-        >
-          <option value="">Select {entityType}…</option>
-          {entities.map((e) => (
-            <option key={e.id} value={e.id}>{e.name}</option>
-          ))}
-        </select>
+        <div className="flex flex-col sm:flex-row gap-3 pl-7">
+          {/* Company / Division toggle */}
+          <div className="flex rounded-lg border overflow-hidden shrink-0">
+            {(['company', 'division'] as EntityType[]).map((type) => (
+              <button
+                key={type}
+                onClick={() => {
+                  setEntityType(type)
+                  setEntityId('')
+                  reset()
+                }}
+                className={cn(
+                  'px-4 py-1.5 text-sm font-medium capitalize transition-colors',
+                  entityType === type
+                    ? 'bg-primary text-white'
+                    : 'text-muted-foreground hover:bg-accent'
+                )}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+
+          {/* Entity dropdown */}
+          <select
+            className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            value={entityId}
+            onChange={(e) => {
+              setEntityId(e.target.value)
+              reset()
+            }}
+          >
+            <option value="">Select {entityType}…</option>
+            {entities.map((e) => (
+              <option key={e.id} value={e.id}>{e.name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      {/* Drop zone */}
-      <div
-        {...getRootProps()}
-        className={cn(
-          'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors',
-          isDragActive
-            ? 'border-primary bg-primary/5'
-            : 'border-border hover:border-primary/50 hover:bg-accent/50',
-          (!entityId || uploadState.status === 'uploading') && 'opacity-50 cursor-not-allowed'
-        )}
-      >
-        <input {...getInputProps()} />
+      {/* ── Step 2: Upload file ───────────────────────────────────────── */}
+      <div className={cn('space-y-3', !step1Done && 'opacity-50 pointer-events-none select-none')}>
+        <div className="flex items-center gap-2">
+          <StepBadge n={2} done={false} active={step1Done} />
+          <span className={cn('text-sm font-medium', !step1Done && 'text-muted-foreground')}>
+            Upload file
+          </span>
+          {!step1Done && (
+            <span className="text-xs text-muted-foreground">(select entity first)</span>
+          )}
+        </div>
 
-        {uploadState.status === 'idle' && (
-          <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            <FileSpreadsheet className="h-10 w-10 opacity-40" />
-            <div>
-              <p className="text-sm font-medium">
-                {isDragActive ? 'Drop it here…' : 'Drag & drop an Excel file'}
-              </p>
-              <p className="text-xs mt-0.5">
-                .xlsx or .xls, max 10 MB
-              </p>
-            </div>
-            <button
-              type="button"
-              className="mt-1 text-xs text-primary underline underline-offset-2"
-              onClick={(e) => e.stopPropagation()}
-            >
-              or click to browse
-            </button>
-          </div>
-        )}
-
-        {uploadState.status === 'uploading' && (
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="text-sm text-muted-foreground">Processing…</p>
-            <Progress value={uploadState.progress} className="w-48" />
-          </div>
-        )}
-
-        {uploadState.status === 'success' && (
-          <div className="flex flex-col items-center gap-2 text-emerald-600 dark:text-emerald-400">
-            <CheckCircle className="h-8 w-8" />
-            <p className="text-sm font-medium">Upload complete</p>
-            <div className="flex flex-wrap gap-1 justify-center">
-              {uploadState.result.sheets_found.map((s) => (
-                <Badge key={s} variant="success">{s}</Badge>
-              ))}
-            </div>
-            {uploadState.result.periods.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                Periods: {uploadState.result.periods.join(', ')}
-              </p>
+        <div className="pl-7">
+          <div
+            {...getRootProps()}
+            className={cn(
+              'border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors',
+              isDragActive
+                ? 'border-primary bg-primary/5'
+                : 'border-border hover:border-primary/50 hover:bg-accent/50',
+              (!entityId || uploadState.status === 'uploading') && 'cursor-not-allowed'
             )}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); reset() }}
-              className="mt-1 text-xs text-primary underline underline-offset-2"
-            >
-              Upload another
-            </button>
-          </div>
-        )}
+          >
+            <input {...getInputProps()} />
 
-        {uploadState.status === 'error' && (
-          <div className="flex flex-col items-center gap-2 text-destructive">
-            <XCircle className="h-8 w-8" />
-            <p className="text-sm font-medium">Upload failed</p>
-            <p className="text-xs text-muted-foreground">{uploadState.message}</p>
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); reset() }}
-              className="mt-1 text-xs text-primary underline underline-offset-2"
-            >
-              Try again
-            </button>
+            {uploadState.status === 'idle' && (
+              <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                <FileSpreadsheet className="h-10 w-10 opacity-40" />
+                <div>
+                  <p className="text-sm font-medium">
+                    {isDragActive ? 'Drop it here…' : 'Drag & drop an Excel file'}
+                  </p>
+                  <p className="text-xs mt-0.5">
+                    .xlsx or .xls, max 10 MB
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  className="mt-1 text-xs text-primary underline underline-offset-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  or click to browse
+                </button>
+              </div>
+            )}
+
+            {uploadState.status === 'uploading' && (
+              <div className="flex flex-col items-center gap-3">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Processing…</p>
+                <Progress value={uploadState.progress} className="w-48" />
+              </div>
+            )}
+
+            {uploadState.status === 'success' && (
+              <div className="flex flex-col items-center gap-2 text-emerald-600 dark:text-emerald-400">
+                <CheckCircle className="h-8 w-8" />
+                <p className="text-sm font-medium">Upload complete</p>
+                <div className="flex flex-wrap gap-1 justify-center">
+                  {uploadState.result.sheets_found.map((s) => (
+                    <Badge key={s} variant="success">{s}</Badge>
+                  ))}
+                </div>
+                {uploadState.result.periods.length > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Periods: {uploadState.result.periods.join(', ')}
+                  </p>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); reset() }}
+                  className="mt-1 text-xs text-primary underline underline-offset-2"
+                >
+                  Upload another
+                </button>
+              </div>
+            )}
+
+            {uploadState.status === 'error' && (
+              <div className="flex flex-col items-center gap-2 text-destructive">
+                <XCircle className="h-8 w-8" />
+                <p className="text-sm font-medium">Upload failed</p>
+                <p className="text-xs text-muted-foreground">{uploadState.message}</p>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); reset() }}
+                  className="mt-1 text-xs text-primary underline underline-offset-2"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
 
-      {!entityId && (
-        <p className="text-xs text-muted-foreground">
-          Select a {entityType} above before uploading
-        </p>
-      )}
     </div>
   )
 }

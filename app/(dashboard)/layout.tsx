@@ -2,6 +2,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
+import { getPalette, buildPaletteCSS } from '@/lib/themes'
 import type { Group, UserGroup } from '@/lib/types'
 
 export default async function DashboardLayout({
@@ -52,7 +53,7 @@ export default async function DashboardLayout({
       */}
       <style
         dangerouslySetInnerHTML={{
-          __html: `:root { --group-primary: ${activeGroup.primary_color}; }`,
+          __html: buildPaletteCSS(getPalette(activeGroup.palette_id)),
         }}
       />
       <AppShell

@@ -26,7 +26,10 @@ export function DashboardCard({
   footer,
 }: DashboardCardProps) {
   return (
-    <Card className={cn('flex flex-col', className)}>
+    <Card
+      className={cn('flex flex-col', className)}
+      style={{ borderLeft: '3px solid var(--palette-primary)' }}
+    >
       {/* Header */}
       <CardHeader className="pb-3 flex-shrink-0">
         <div className="flex items-start justify-between gap-2">

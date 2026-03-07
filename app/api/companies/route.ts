@@ -5,7 +5,8 @@ import { createAdminClient }  from '@/lib/supabase/admin'
 import { generateSlug }       from '@/lib/utils'
 
 // ─── GET /api/companies ──────────────────────────────────────────────────────
-// Returns all companies for the active group, with division count.
+// Returns all companies for the active group, with division count,
+// and Xero connection status (has_xero, last_synced_at).
 // Query params:
 //   ?include_inactive=true  → include is_active=false rows (default: false)
 export async function GET(request: Request) {
@@ -39,10 +40,65 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // Compute division_count from the nested array
+  // ── Fetch Xero connection status ─────────────────────────────────────────
+
+  // Extract company and division IDs from query results
+  const companyIds  = (data ?? []).map(c => c.id)
+  const divisionIds = (data ?? []).flatMap(c =>
+    Array.isArray(c.divisions) ? (c.divisions as { id: string }[]).map(d => d.id) : []
+  )
+
+  // Build division_id → company_id lookup for resolving division-level Xero connections
+  const divisionToCompany: Record<string, string> = {}
+  for (const company of data ?? []) {
+    if (Array.isArray(company.divisions)) {
+      for (const div of company.divisions as { id: string }[]) {
+        divisionToCompany[div.id] = company.id
+      }
+    }
+  }
+
+  // Fetch xero_connections for all relevant company/division IDs
+  let xeroConnections: { company_id: string | null; division_id: string | null; updated_at: string | null }[] = []
+  if (companyIds.length > 0) {
+    const orParts: string[] = [`company_id.in.(${companyIds.join(',')})`]
+    if (divisionIds.length > 0) {
+      orParts.push(`division_id.in.(${divisionIds.join(',')})`)
+    }
+    const { data: xeroData } = await supabase
+      .from('xero_connections')
+      .select('company_id, division_id, updated_at')
+      .or(orParts.join(','))
+    xeroConnections = xeroData ?? []
+  }
+
+  // Build per-company Xero status map
+  const xeroMap: Record<string, { has_xero: boolean; last_synced_at: string | null }> = {}
+  for (const conn of xeroConnections) {
+    // Resolve the owning company (company-level or via division lookup)
+    const compId = conn.company_id ?? (conn.division_id ? divisionToCompany[conn.division_id] : null)
+    if (!compId) continue
+
+    if (!xeroMap[compId]) {
+      xeroMap[compId] = { has_xero: true, last_synced_at: conn.updated_at }
+    } else {
+      // Keep the most-recent sync timestamp across all connections for this company
+      if (
+        conn.updated_at &&
+        (!xeroMap[compId].last_synced_at || conn.updated_at > xeroMap[compId].last_synced_at!)
+      ) {
+        xeroMap[compId].last_synced_at = conn.updated_at
+      }
+    }
+  }
+
+  // ── Build final response ─────────────────────────────────────────────────
+
   const companies = (data ?? []).map(({ divisions, ...c }) => ({
     ...c,
-    division_count: Array.isArray(divisions) ? divisions.length : 0,
+    division_count:  Array.isArray(divisions) ? divisions.length : 0,
+    has_xero:        xeroMap[c.id]?.has_xero       ?? false,
+    last_synced_at:  xeroMap[c.id]?.last_synced_at ?? null,
   }))
 
   return NextResponse.json({ data: companies })

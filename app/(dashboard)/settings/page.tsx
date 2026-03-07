@@ -6,6 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button }    from '@/components/ui/button'
 import { Label }     from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { PALETTES, getPalette } from '@/lib/themes'
+import { cn } from '@/lib/utils'
 import type { NumberFormat, SupportedCurrency } from '@/lib/types'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -37,10 +39,10 @@ export default function SettingsPage() {
   const [groupId,       setGroupId]      = useState<string | null>(null)
   const [groupName,     setGroupName]    = useState('')
   const [groupSlug,     setGroupSlug]    = useState('')
-  const [groupColor,    setGroupColor]   = useState('#0ea5e9')
   const [isAdmin,       setIsAdmin]      = useState(false)
-  const [colorSaving,   setColorSaving]  = useState(false)
-  const [colorToast,    setColorToast]   = useState<string | null>(null)
+  const [paletteSaving, setPaletteSaving] = useState(false)
+  const [paletteToast,  setPaletteToast] = useState<string | null>(null)
+  const [selectedPaletteId, setSelectedPaletteId] = useState<string>('ocean')
 
   const [userEmail,    setUserEmail]    = useState('')
   const [userRole,     setUserRole]     = useState('')
@@ -48,26 +50,24 @@ export default function SettingsPage() {
   // ── Load initial data ────────────────────────────────────────────────────
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/settings').then(r => r.json()),
-      fetch('/api/auth/session-info').catch(() => ({ data: null })),
-    ]).then(([prefsJson]) => {
-      if (prefsJson.data) {
-        setNumberFormat(prefsJson.data.number_format ?? 'thousands')
-        setCurrency(prefsJson.data.currency ?? 'AUD')
+    // Load user preferences
+    fetch('/api/settings').then(r => r.json()).then(json => {
+      if (json.data) {
+        setNumberFormat(json.data.number_format ?? 'thousands')
+        setCurrency(json.data.currency ?? 'AUD')
       }
     }).catch(() => {})
 
-    // Load group info via supabase client-side — read from a simple API endpoint
+    // Load group info via API
     fetch('/api/groups/active').then(r => r.json()).then(json => {
       if (json.data) {
         setGroupId(json.data.group.id)
         setGroupName(json.data.group.name)
         setGroupSlug(json.data.group.slug)
-        setGroupColor(json.data.group.primary_color ?? '#0ea5e9')
         setIsAdmin(json.data.is_admin)
         setUserEmail(json.data.user_email ?? '')
         setUserRole(json.data.role ?? '')
+        setSelectedPaletteId(json.data.group.palette_id ?? 'ocean')
       }
     }).catch(() => {})
   }, [])
@@ -81,10 +81,10 @@ export default function SettingsPage() {
   }, [prefsToast])
 
   useEffect(() => {
-    if (!colorToast) return
-    const t = setTimeout(() => setColorToast(null), 3000)
+    if (!paletteToast) return
+    const t = setTimeout(() => setPaletteToast(null), 3000)
     return () => clearTimeout(t)
-  }, [colorToast])
+  }, [paletteToast])
 
   // ── Handlers ─────────────────────────────────────────────────────────────
 
@@ -106,29 +106,39 @@ export default function SettingsPage() {
     }
   }
 
-  async function handleSaveColor() {
+  function handlePaletteSelect(id: string) {
+    setSelectedPaletteId(id)
+    // Preview palette immediately by updating CSS vars
+    const palette = getPalette(id)
+    document.documentElement.style.setProperty('--palette-primary',   palette.primary)
+    document.documentElement.style.setProperty('--palette-secondary', palette.secondary)
+    document.documentElement.style.setProperty('--palette-accent',    palette.accent)
+    document.documentElement.style.setProperty('--palette-surface',   palette.surface)
+    document.documentElement.style.setProperty('--group-primary',     palette.primary)
+  }
+
+  async function handleSavePalette() {
     if (!groupId) return
-    setColorSaving(true)
+    setPaletteSaving(true)
     try {
       const res  = await fetch(`/api/groups/${groupId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ primary_color: groupColor }),
+        body:    JSON.stringify({ palette_id: selectedPaletteId }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to save')
-
-      // Update the CSS var immediately without page reload
-      document.documentElement.style.setProperty('--group-primary', groupColor)
-      setColorToast('Group colour updated')
+      setPaletteToast('Palette updated')
     } catch (err) {
-      setColorToast(err instanceof Error ? err.message : 'Failed to update colour')
+      setPaletteToast(err instanceof Error ? err.message : 'Failed to update palette')
     } finally {
-      setColorSaving(false)
+      setPaletteSaving(false)
     }
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
+
+  const activePalette = getPalette(selectedPaletteId)
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -227,42 +237,54 @@ export default function SettingsPage() {
               Group Appearance
             </CardTitle>
             <CardDescription>
-              Colour applies to all users in this group · <span className="font-medium">{groupName}</span>
+              Colour palette applies to all users in this group · <span className="font-medium">{groupName}</span>
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5">
 
-            {/* Colour picker */}
-            <div className="space-y-2">
-              <Label htmlFor="group-color" className="text-sm font-medium">Primary colour</Label>
-              <div className="flex items-center gap-3">
-                {/* Preview swatch */}
-                <div
-                  className="h-10 w-10 rounded-md ring-1 ring-border shadow-sm flex-shrink-0 transition-colors"
-                  style={{ backgroundColor: groupColor }}
-                />
-                <input
-                  id="group-color"
-                  type="color"
-                  value={groupColor}
-                  onChange={e => setGroupColor(e.target.value)}
-                  className="h-10 w-24 rounded-md border border-input cursor-pointer p-1"
-                />
-                <span className="text-sm font-mono text-muted-foreground">{groupColor}</span>
+            {/* Palette selector */}
+            <div className="space-y-3">
+              <Label className="text-sm font-medium">Colour palette</Label>
+              <div className="grid grid-cols-2 gap-3">
+                {PALETTES.map(palette => (
+                  <button
+                    key={palette.id}
+                    type="button"
+                    onClick={() => handlePaletteSelect(palette.id)}
+                    className={cn(
+                      'relative p-3 rounded-lg border-2 text-left transition-all focus:outline-none',
+                      selectedPaletteId === palette.id
+                        ? 'border-primary ring-1 ring-primary/30 bg-primary/5'
+                        : 'border-border hover:border-muted-foreground/50'
+                    )}
+                  >
+                    {/* Colour swatches */}
+                    <div className="flex gap-1 mb-2">
+                      <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.primary }} />
+                      <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.secondary }} />
+                      <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.accent }} />
+                      <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.surface }} />
+                    </div>
+                    <p className="text-sm font-medium">{palette.name}</p>
+                    {selectedPaletteId === palette.id && (
+                      <Check className="absolute top-2 right-2 h-4 w-4 text-primary" />
+                    )}
+                  </button>
+                ))}
               </div>
               <p className="text-xs text-muted-foreground">
-                Used for buttons, links, and accent elements across the dashboard.
+                Selecting a palette previews it immediately. Click <strong>Save palette</strong> to persist for all users.
               </p>
             </div>
 
             {/* Save + toast */}
             <div className="flex items-center gap-3">
-              <Button onClick={handleSaveColor} disabled={colorSaving || !groupId} size="sm">
-                {colorSaving ? 'Saving…' : 'Save colour'}
+              <Button onClick={handleSavePalette} disabled={paletteSaving || !groupId} size="sm">
+                {paletteSaving ? 'Saving…' : 'Save palette'}
               </Button>
-              {colorToast && (
+              {paletteToast && (
                 <span className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
-                  <Check className="h-3.5 w-3.5" /> {colorToast}
+                  <Check className="h-3.5 w-3.5" /> {paletteToast}
                 </span>
               )}
             </div>
@@ -282,14 +304,14 @@ export default function SettingsPage() {
           <Row label="Slug"       value={groupSlug || '—'} />
           <Row label="Your role"  value={userRole || '—'} />
           <Row
-            label="Group colour"
+            label="Active palette"
             value={
               <span className="flex items-center gap-2">
-                <span
-                  className="h-4 w-4 rounded-sm ring-1 ring-border flex-shrink-0"
-                  style={{ backgroundColor: groupColor }}
-                />
-                {groupColor}
+                <span className="flex gap-1">
+                  <span className="h-3.5 w-3.5 rounded-sm ring-1 ring-border flex-shrink-0" style={{ backgroundColor: activePalette.primary }} />
+                  <span className="h-3.5 w-3.5 rounded-sm ring-1 ring-border flex-shrink-0" style={{ backgroundColor: activePalette.accent }} />
+                </span>
+                {activePalette.name}
               </span>
             }
           />

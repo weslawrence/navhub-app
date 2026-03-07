@@ -101,6 +101,7 @@ export default function DashboardPage() {
   const [summary,   setSummary]   = useState<DashboardSummary | null>(null)
   const [prefs,     setPrefs]     = useState<UserPrefs>({ currency: 'AUD', number_format: 'thousands' })
   const [companies, setCompanies] = useState<CompanyStatus[]>([])
+  const [groupName, setGroupName] = useState<string | null>(null)
   const [loading,   setLoading]   = useState(true)
   const [error,     setError]     = useState<string | null>(null)
   const [syncing,   setSyncing]   = useState(false)
@@ -115,16 +116,18 @@ export default function DashboardPage() {
     setLoading(true)
     setError(null)
     try {
-      const [summaryRes, prefsRes, companiesRes] = await Promise.all([
+      const [summaryRes, prefsRes, companiesRes, groupRes] = await Promise.all([
         fetch(`/api/dashboard/summary?period=${p}`),
         fetch('/api/settings'),
         fetch('/api/companies?include_inactive=false'),
+        fetch('/api/groups/active'),
       ])
 
-      const [summaryJson, prefsJson, companiesJson] = await Promise.all([
+      const [summaryJson, prefsJson, companiesJson, groupJson] = await Promise.all([
         summaryRes.json(),
         prefsRes.json(),
         companiesRes.json(),
+        groupRes.json(),
       ])
 
       if (!summaryRes.ok)   throw new Error(summaryJson.error ?? 'Failed to load dashboard')
@@ -132,13 +135,19 @@ export default function DashboardPage() {
       else                  setPrefs(prefsJson.data)
 
       setSummary(summaryJson.data)
+      setGroupName(groupJson.data?.group?.name ?? null)
 
-      // Build company status list — no per-company xero check needed since summary has it
-      setCompanies((companiesJson.data ?? []).map((c: { id: string; name: string }) => ({
+      // Build company status list with real Xero status from companies API
+      setCompanies((companiesJson.data ?? []).map((c: {
+        id:             string
+        name:           string
+        has_xero?:      boolean
+        last_synced_at?: string | null
+      }) => ({
         id:       c.id,
         name:     c.name,
-        hasXero:  false, // will be updated below
-        lastSync: null,
+        hasXero:  c.has_xero      ?? false,
+        lastSync: c.last_synced_at ?? null,
       })))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load dashboard data. Try refreshing.')
@@ -164,7 +173,15 @@ export default function DashboardPage() {
     try {
       const res  = await fetch('/api/xero/sync/all', { method: 'POST' })
       const json = await res.json()
-      setSyncMsg(json.data?.queued ? 'Sync queued — data will refresh shortly.' : 'Sync triggered.')
+      const d    = json.data
+      if (d?.synced !== undefined) {
+        const msg = d.errors?.length > 0
+          ? `Synced ${d.synced} reports · ${d.errors.length} error(s)`
+          : `Synced ${d.synced} reports successfully`
+        setSyncMsg(msg)
+      } else {
+        setSyncMsg('Sync complete.')
+      }
     } catch {
       setSyncMsg('Sync request failed.')
     } finally {
@@ -200,6 +217,9 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
           <p className="text-muted-foreground text-sm mt-1">
+            {groupName && (
+              <span className="font-medium text-foreground">{groupName} · </span>
+            )}
             Financial overview · <span className="font-medium text-foreground">{formatPeriodLabel(period)}</span>
           </p>
         </div>

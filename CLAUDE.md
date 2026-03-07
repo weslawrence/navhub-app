@@ -136,6 +136,7 @@ lib/
     server.ts               # Server client (createServerClient + cookie try-catch)
     admin.ts                # Admin client (service role, bypasses RLS, server only)
   xero.ts                   # Xero OAuth helpers + token management + data normalisation
+  themes.ts                 # Palette definitions + getPalette() + buildPaletteCSS() (Phase 2c)
   types.ts                  # TypeScript types for all DB entities + financial data
   utils.ts                  # cn(), formatCurrency(amount,format,currency), formatVariance(), period helpers, generateSlug()
 
@@ -144,6 +145,7 @@ supabase/
     001_initial_schema.sql  # All tables, enums, RLS, helper functions
     002_companies_divisions.sql  # ADD description, industry, is_active to companies + divisions
     003_user_settings.sql   # user_settings table with currency + number_format prefs (Phase 2b)
+    004_group_palette.sql   # ADD palette_id to groups (Phase 2c)
 
 docs/
   AI_Agent_Module_Build_Spec.md  # Agent module spec (Claude API integration plan)
@@ -365,8 +367,9 @@ Callback always selects `tenants[0]`. Repeat the connect flow per entity for mul
 ### 4. Sidebar collapse hydration
 AppShell reads `localStorage` for sidebar state. `mounted = false` → default (expanded) on first render.
 
-### 5. Group color flash prevention
-`app/(dashboard)/layout.tsx` injects `<style>` with `primary_color` server-side.
+### 5. Palette flash prevention (updated Phase 2c)
+`app/(dashboard)/layout.tsx` injects full palette CSS block server-side via `buildPaletteCSS(getPalette(activeGroup.palette_id))`.
+This sets `--palette-primary`, `--palette-secondary`, `--palette-accent`, `--palette-surface`, and `--group-primary` (alias) before any client JS runs.
 
 ### 6. xero-node used only for OAuth
 All Xero API calls use raw `fetch()`. `lib/xero.ts` implements OAuth without the xero-node XeroClient.
@@ -394,6 +397,7 @@ Use `companies!inner(group_id)` in Supabase join and filter by `companies.group_
 | Phase 1 | ✅ Complete | Auth, AppShell, Xero OAuth, Excel upload, base schema |
 | Phase 2a | ✅ Complete | Company + Division CRUD, Agents stub, migration 002 |
 | Phase 2b | ✅ Complete | Dashboard 4-card layout, user settings, group colour, period navigation |
+| Phase 2c | ✅ Complete | Palette system, sidebar polish, real Xero status, Excel UX, sync/all |
 | Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
 
 ---
@@ -417,8 +421,67 @@ All amounts remain stored as integer cents. Format only at render time.
 
 ### Settings page is now a client component
 Settings page fetches `/api/groups/active` to get group info and user role client-side.
-Admin-only group colour section conditionally rendered based on `is_admin` flag.
-Group colour updates CSS var immediately on save: `document.documentElement.style.setProperty('--group-primary', color)`.
+Admin-only palette section conditionally rendered based on `is_admin` flag.
+Palette selection previews CSS vars immediately; persists via PATCH `/api/groups/[id]` with `{ palette_id }`.
+
+---
+
+## Phase 2c — Palette System
+
+### Theme palette (lib/themes.ts)
+Four named palettes: Ocean (#0ea5e9), Forest (#16a34a), Slate (#6366f1), Ember (#f97316).
+Each palette: `{ id, name, primary, secondary, accent, surface }`.
+
+```typescript
+import { getPalette, buildPaletteCSS } from '@/lib/themes'
+// layout.tsx server-side injection:
+buildPaletteCSS(getPalette(activeGroup.palette_id))
+// AppShell client-side update on group switch:
+const palette = getPalette(activeGroup.palette_id)
+document.documentElement.style.setProperty('--palette-primary', palette.primary)
+// ...etc
+```
+
+### CSS variables
+| Var | Usage |
+|-----|-------|
+| `--palette-primary` | Buttons, active states, links, Tailwind `primary` |
+| `--palette-secondary` | Hover states on primary elements |
+| `--palette-accent` | Icon highlights, subtle accents |
+| `--palette-surface` | Sidebar background (always dark) |
+| `--group-primary` | Alias for `--palette-primary` (Tailwind compat) |
+
+### Migration 004
+```sql
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS palette_id text NOT NULL DEFAULT 'ocean';
+```
+
+### API changes
+- `PATCH /api/groups/[id]` now accepts `{ palette_id }` (validates against PALETTES ids)
+- Also writes `primary_color` derived from palette for backwards compat
+- Returns `palette_id` in all group selects
+
+### Companies API — Xero status
+`GET /api/companies` now returns `has_xero: boolean` and `last_synced_at: string | null` per company.
+Fetches xero_connections for company IDs + division IDs, merges most-recent sync time per company.
+
+### Xero sync/all
+`POST /api/xero/sync/all` now fully implemented:
+- Finds all active companies + divisions for the active group
+- Fetches all xero_connections for those entities
+- Syncs last 3 months × 3 report types (profit_loss, balance_sheet, cashflow) per connection
+- Returns `{ synced: number, errors: string[] }`
+
+### Excel Upload step UX
+ExcelUpload component now shows explicit Step 1 / Step 2 progression.
+Step 2 (dropzone) is dimmed and non-interactive until Step 1 (entity selection) is complete.
+
+### AppShell sidebar polish
+- Sidebar background: `var(--palette-surface)` (always dark)
+- Nav text: white/60 inactive → white active (readable on dark bg)
+- Active nav item: left 3px accent border in `var(--palette-primary)`
+- Top bar: 2px bottom border in `var(--palette-primary)`
+- Avatar: background in `var(--palette-primary)`
 
 ---
 
@@ -428,5 +491,4 @@ Group colour updates CSS var immediately on save: `document.documentElement.styl
 2. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
 3. Add `error.tsx` files for each route segment
 4. Connect Xero connect button to real entities in integrations page
-5. Wire up real company Xero status in Dashboard Card 4 (Data Status) — currently shows stub data
-6. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)
+5. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)

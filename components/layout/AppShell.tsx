@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
+import { getPalette } from '@/lib/themes'
 import type { Group, UserGroup } from '@/lib/types'
 
 // ============================================================
@@ -74,10 +75,15 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   const [mobileOpen, setMobileOpen] = useState(false)
   const [mounted,    setMounted]    = useState(false)
 
-  // Apply group colour on mount / group change
+  // Apply full palette CSS vars on mount / group change
   useEffect(() => {
-    document.documentElement.style.setProperty('--group-primary', activeGroup.primary_color)
-  }, [activeGroup.primary_color])
+    const palette = getPalette(activeGroup.palette_id)
+    document.documentElement.style.setProperty('--palette-primary',   palette.primary)
+    document.documentElement.style.setProperty('--palette-secondary', palette.secondary)
+    document.documentElement.style.setProperty('--palette-accent',    palette.accent)
+    document.documentElement.style.setProperty('--palette-surface',   palette.surface)
+    document.documentElement.style.setProperty('--group-primary',     palette.primary)
+  }, [activeGroup.palette_id])
 
   // Load sidebar state from localStorage after mount (avoids hydration mismatch)
   useEffect(() => {
@@ -103,7 +109,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
       <TooltipProvider delayDuration={0}>
         <aside
           className={cn(
-            'flex flex-col bg-background border-r transition-all duration-200',
+            'flex flex-col border-r border-white/10 transition-all duration-200',
             mobile
               ? 'fixed inset-y-0 left-0 z-50 w-64 shadow-xl'
               : cn(
@@ -111,6 +117,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                   collapsed ? 'w-16' : 'w-56'
                 )
           )}
+          style={{ backgroundColor: 'var(--palette-surface)' }}
         >
           <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
             {NAV_ITEMS.map(({ label, href, Icon }) => {
@@ -124,10 +131,15 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                       className={cn(
                         'flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors',
                         active
-                          ? 'text-primary bg-primary/10'
-                          : 'text-muted-foreground hover:text-foreground hover:bg-accent',
+                          ? 'bg-white/10 text-white'
+                          : 'text-white/60 hover:text-white hover:bg-white/10',
                         collapsed && !mobile ? 'justify-center' : ''
                       )}
+                      style={
+                        active
+                          ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
+                          : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
+                      }
                     >
                       <Icon className="h-5 w-5 shrink-0" />
                       {(!collapsed || mobile) && <span>{label}</span>}
@@ -143,10 +155,10 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
 
           {/* Collapse toggle — desktop only */}
           {!mobile && mounted && (
-            <div className="border-t p-2">
+            <div className="border-t border-white/10 p-2">
               <button
                 onClick={toggleSidebar}
-                className="flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent transition-colors"
+                className="flex w-full items-center justify-center gap-2 rounded-md px-2 py-1.5 text-xs text-white/50 hover:bg-white/10 hover:text-white/80 transition-colors"
               >
                 {collapsed
                   ? <ChevronRight className="h-4 w-4" />
@@ -166,7 +178,10 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   return (
     <div className="flex flex-col min-h-screen">
       {/* ── Top bar ── */}
-      <header className="fixed top-0 inset-x-0 z-40 h-14 border-b bg-background/95 backdrop-blur flex items-center gap-3 px-4">
+      <header
+        className="fixed top-0 inset-x-0 z-40 h-14 bg-background/95 backdrop-blur flex items-center gap-3 px-4"
+        style={{ borderBottom: '2px solid var(--palette-primary)' }}
+      >
         {/* Mobile sidebar toggle */}
         <button
           className="lg:hidden text-muted-foreground hover:text-foreground"
@@ -187,7 +202,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
 
         {/* Wordmark */}
         <Link href="/dashboard" className="font-bold text-lg tracking-tight mr-2">
-          Nav<span style={{ color: 'var(--group-primary)' }}>Hub</span>
+          Nav<span style={{ color: 'var(--palette-primary)' }}>Hub</span>
         </Link>
 
         <div className="flex-1" />
@@ -213,7 +228,12 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
           <DropdownMenu>
             <DropdownMenuTrigger className="focus:outline-none">
               <Avatar className="h-8 w-8 cursor-pointer">
-                <AvatarFallback className="text-xs">{userInitials}</AvatarFallback>
+                <AvatarFallback
+                  className="text-xs text-white font-semibold"
+                  style={{ backgroundColor: 'var(--palette-primary)' }}
+                >
+                  {userInitials}
+                </AvatarFallback>
               </Avatar>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-52">

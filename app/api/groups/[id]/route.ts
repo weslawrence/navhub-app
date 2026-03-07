@@ -2,13 +2,14 @@ import { NextResponse }      from 'next/server'
 import { cookies }           from 'next/headers'
 import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { PALETTES, getPalette } from '@/lib/themes'
 
 type Params = { params: { id: string } }
 
 // ─── PATCH /api/groups/[id] ──────────────────────────────────────────────────
-// Updates mutable group fields (currently: primary_color).
+// Updates mutable group fields (currently: palette_id).
 // Requires group_admin or super_admin role.
-// Body: { primary_color? }
+// Body: { palette_id? }
 export async function PATCH(request: Request, { params }: Params) {
   const supabase      = createClient()
   const cookieStore   = cookies()
@@ -46,13 +47,19 @@ export async function PATCH(request: Request, { params }: Params) {
 
   const updates: Record<string, unknown> = {}
 
-  if (typeof body.primary_color === 'string') {
-    const color = body.primary_color.trim()
-    // Validate hex colour (#rrggbb or #rgb)
-    if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
-      return NextResponse.json({ error: 'primary_color must be a valid hex colour (e.g. #0ea5e9)' }, { status: 422 })
+  if (typeof body.palette_id === 'string') {
+    const paletteId = body.palette_id.trim()
+    const validIds  = PALETTES.map(p => p.id)
+    if (!validIds.includes(paletteId)) {
+      return NextResponse.json(
+        { error: `palette_id must be one of: ${validIds.join(', ')}` },
+        { status: 422 }
+      )
     }
-    updates.primary_color = color
+    // Derive and persist primary_color from palette for backwards-compat
+    const palette           = getPalette(paletteId)
+    updates.palette_id      = paletteId
+    updates.primary_color   = palette.primary
   }
 
   if (Object.keys(updates).length === 0) {
@@ -64,7 +71,7 @@ export async function PATCH(request: Request, { params }: Params) {
     .from('groups')
     .update(updates)
     .eq('id', params.id)
-    .select('id, name, slug, primary_color')
+    .select('id, name, slug, primary_color, palette_id')
     .single()
 
   if (error) {

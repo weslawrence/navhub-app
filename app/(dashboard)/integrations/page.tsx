@@ -5,7 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Plug, FileSpreadsheet, RefreshCw } from 'lucide-react'
 import ExcelUpload from '@/components/excel/ExcelUpload'
-import type { XeroConnection, Company, Division } from '@/lib/types'
+import type { XeroConnection, Company } from '@/lib/types'
 
 export default async function IntegrationsPage() {
   const supabase    = createClient()

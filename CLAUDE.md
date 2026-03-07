@@ -61,7 +61,7 @@ app/
     login/page.tsx          # Login page — minimal card with email+password
   (dashboard)/
     layout.tsx              # Auth check, loads active group, injects --group-primary
-    dashboard/page.tsx      # Dashboard overview — company/integration counts
+    dashboard/page.tsx      # Dashboard — 4-card layout: Overview, Position, Performance, Status
     agents/page.tsx         # AI Agents stub — "Coming Soon"
     companies/
       page.tsx              # Companies list — client component, is_active toggle
@@ -75,7 +75,7 @@ app/
             page.tsx        # Division detail — Xero section
             edit/page.tsx   # Edit division + Danger Zone
     integrations/page.tsx   # Xero connection status + Excel upload
-    settings/page.tsx       # Group info + account details
+    settings/page.tsx       # Display prefs (number format, currency) + group colour (admin)
   api/
     companies/
       route.ts              # GET (list + division_count) | POST (create + slug)
@@ -83,6 +83,12 @@ app/
     divisions/
       route.ts              # GET (list by company_id) | POST (create + slug)
       [id]/route.ts         # GET (single + parent) | PATCH | DELETE (soft)
+    dashboard/
+      summary/route.ts      # GET — aggregated metrics for active group (Phase 2b)
+    settings/route.ts       # GET (user prefs) | PATCH (upsert)
+    groups/
+      active/route.ts       # GET — active group + user role (used by settings page)
+      [id]/route.ts         # PATCH — update group fields (primary_color; admin only)
     xero/
       connect/route.ts      # GET — start Xero OAuth flow
       callback/route.ts     # GET — handle Xero OAuth callback, store tokens
@@ -90,6 +96,7 @@ app/
         profit-loss/route.ts
         balance-sheet/route.ts
         cashflow/route.ts
+        all/route.ts        # POST — stub to queue sync-all (Phase 2b)
     cron/
       xero-sync/route.ts    # GET — nightly batch sync (Vercel Cron)
     excel/
@@ -118,6 +125,8 @@ components/
   companies/
     CompanyForm.tsx         # CLIENT: reusable create/edit form for companies
     DivisionForm.tsx        # CLIENT: reusable create/edit form for divisions
+  dashboard/
+    DashboardCard.tsx       # CLIENT: wrapper with loading skeleton + error state (Phase 2b)
   excel/
     ExcelUpload.tsx         # CLIENT: drag-and-drop uploader + entity selector
 
@@ -128,12 +137,13 @@ lib/
     admin.ts                # Admin client (service role, bypasses RLS, server only)
   xero.ts                   # Xero OAuth helpers + token management + data normalisation
   types.ts                  # TypeScript types for all DB entities + financial data
-  utils.ts                  # cn(), formatCurrency(), formatPeriod(), getLastNMonths(), generateSlug()
+  utils.ts                  # cn(), formatCurrency(amount,format,currency), formatVariance(), period helpers, generateSlug()
 
 supabase/
   migrations/
     001_initial_schema.sql  # All tables, enums, RLS, helper functions
     002_companies_divisions.sql  # ADD description, industry, is_active to companies + divisions
+    003_user_settings.sql   # user_settings table with currency + number_format prefs (Phase 2b)
 
 docs/
   AI_Agent_Module_Build_Spec.md  # Agent module spec (Claude API integration plan)
@@ -383,17 +393,40 @@ Use `companies!inner(group_id)` in Supabase join and filter by `companies.group_
 |-------|--------|-------------|
 | Phase 1 | ✅ Complete | Auth, AppShell, Xero OAuth, Excel upload, base schema |
 | Phase 2a | ✅ Complete | Company + Division CRUD, Agents stub, migration 002 |
-| Phase 2b | Planned | Financial chart components, dashboard analytics |
+| Phase 2b | ✅ Complete | Dashboard 4-card layout, user settings, group colour, period navigation |
 | Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
+
+---
+
+## Phase 2b — Number Formatting Convention
+
+`formatCurrency` signature changed in Phase 2b:
+```typescript
+// OLD (Phase 1): formatCurrency(cents, currency?)
+// NEW (Phase 2b): formatCurrency(amount, format, currency?)
+formatCurrency(amount: number | null, format: 'thousands'|'full'|'smart', currency?: string): string
+```
+User's `number_format` preference is loaded from `/api/settings` and passed as `format` everywhere.
+All amounts remain stored as integer cents. Format only at render time.
+
+### Dashboard summary rollup logic
+- For each company: if any division has snapshot data → use division data; else use company data
+- Prevents double-counting when both company and division snapshots exist for same period
+- QTD / Last Qtr use calendar quarters; YTD uses Australian financial year (July 1 start)
+- `null` means no data available for that field
+
+### Settings page is now a client component
+Settings page fetches `/api/groups/active` to get group info and user role client-side.
+Admin-only group colour section conditionally rendered based on `is_admin` flag.
+Group colour updates CSS var immediately on save: `document.documentElement.style.setProperty('--group-primary', color)`.
 
 ---
 
 ## Next Steps
 
-1. Build financial chart components consuming `financial_snapshots` data
-2. Add multi-tenant user management page (invite users, assign roles/divisions)
-3. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
-4. Add `error.tsx` files for each route segment
-5. Connect Xero connect button to real entities in integrations page
-6. Add loading skeletons to dashboard page
-7. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)
+1. Add multi-tenant user management page (invite users, assign roles/divisions)
+2. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
+3. Add `error.tsx` files for each route segment
+4. Connect Xero connect button to real entities in integrations page
+5. Wire up real company Xero status in Dashboard Card 4 (Data Status) — currently shows stub data
+6. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)

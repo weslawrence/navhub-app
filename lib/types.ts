@@ -117,6 +117,67 @@ export interface FinancialRow {
 }
 
 // ============================================================
+// User settings
+// ============================================================
+
+export type NumberFormat = 'thousands' | 'full' | 'smart'
+export type SupportedCurrency = 'AUD' | 'NZD' | 'USD' | 'GBP' | 'SGD'
+
+export interface UserSettings {
+  user_id:       string
+  currency:      SupportedCurrency
+  number_format: NumberFormat
+  created_at:    string
+  updated_at:    string
+}
+
+// ─── Dashboard summary types ────────────────────────────────────────────────
+
+export interface AppSummary {
+  company_count:       number
+  division_count:      number
+  active_agent_count:  number
+  alert_count:         number
+  companies_with_xero: number
+  last_synced_at:      string | null
+}
+
+export interface CurrentPosition {
+  cash:                          number | null
+  receivables:                   number | null
+  total_current_assets:          number | null
+  total_non_current_assets:      number | null
+  payables:                      number | null
+  total_current_liabilities:     number | null
+  total_non_current_liabilities: number | null
+  net_position:                  number | null
+  as_at_period:                  string
+  companies_included:            number
+  companies_missing_data:        number
+}
+
+export interface PLBlock {
+  revenue:             number | null
+  cogs:                number | null
+  gross_profit:        number | null
+  operating_expenses:  number | null
+  ebitda:              number | null
+  periods_included:    string[]
+}
+
+export interface Performance {
+  qtd:      PLBlock
+  last_qtr: PLBlock
+  ytd:      PLBlock
+}
+
+export interface DashboardSummary {
+  app_summary:       AppSummary
+  current_position:  CurrentPosition
+  performance:       Performance
+}
+
+// ============================================================
 // API response types
 // ============================================================
 

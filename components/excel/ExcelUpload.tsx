@@ -2,8 +2,7 @@
 
 import { useCallback, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2 } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
+import { FileSpreadsheet, CheckCircle, XCircle, Loader2 } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'

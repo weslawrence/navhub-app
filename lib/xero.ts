@@ -13,7 +13,8 @@ export const XERO_SCOPES = [
   'openid',
   'profile',
   'email',
-  'accounting.reports.read',
+  'accounting.reports.balancesheet.read',
+  'accounting.reports.tenninetynine.read',
   'accounting.settings.read',
   'offline_access',
 ].join(' ')

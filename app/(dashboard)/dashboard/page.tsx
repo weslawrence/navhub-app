@@ -29,6 +29,7 @@ import {
   getCurrentQuarterMonths,
   getYTDMonths,
   formatPeriod,
+  cn,
 } from '@/lib/utils'
 import type { DashboardSummary, NumberFormat } from '@/lib/types'
 
@@ -171,19 +172,25 @@ export default function DashboardPage() {
     setSyncing(true)
     setSyncMsg(null)
     try {
-      const res  = await fetch('/api/xero/sync/all', { method: 'POST' })
+      const res  = await fetch('/api/xero/sync/all', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ period }),
+      })
       const json = await res.json()
       const d    = json.data
       if (d?.synced !== undefined) {
         const msg = d.errors?.length > 0
           ? `Synced ${d.synced} reports · ${d.errors.length} error(s)`
-          : `Synced ${d.synced} reports successfully`
+          : `Synced ${d.synced} reports`
         setSyncMsg(msg)
       } else {
-        setSyncMsg('Sync complete.')
+        setSyncMsg('Sync complete')
       }
+      // Re-fetch dashboard data for the current period
+      await fetchAll(period)
     } catch {
-      setSyncMsg('Sync request failed.')
+      setSyncMsg('Sync failed')
     } finally {
       setSyncing(false)
     }
@@ -223,23 +230,38 @@ export default function DashboardPage() {
             Financial overview · <span className="font-medium text-foreground">{formatPeriodLabel(period)}</span>
           </p>
         </div>
-        {/* Period selector */}
-        <div className="flex items-center gap-1 border rounded-md px-2 py-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handlePrev}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span className="text-sm font-medium px-2 min-w-[120px] text-center">
-            {formatPeriod(period)}
-          </span>
+        {/* Period selector + Refresh */}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 border rounded-md px-2 py-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handlePrev}>
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="text-sm font-medium px-2 min-w-[120px] text-center">
+              {formatPeriod(period)}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={handleNext}
+              disabled={isCurrentMonth}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
           <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={handleNext}
-            disabled={isCurrentMonth}
+            size="sm"
+            variant="outline"
+            onClick={handleSyncAll}
+            disabled={syncing || loading}
+            className="h-9"
           >
-            <ChevronRight className="h-4 w-4" />
+            <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', syncing && 'animate-spin')} />
+            {syncing ? 'Refreshing…' : 'Refresh'}
           </Button>
+          {syncMsg && (
+            <span className="text-xs text-muted-foreground hidden sm:block">{syncMsg}</span>
+          )}
         </div>
       </div>
 

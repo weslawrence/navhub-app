@@ -74,21 +74,27 @@ app/
           [divisionId]/
             page.tsx        # Division detail — Xero section
             edit/page.tsx   # Edit division + Danger Zone
-    integrations/page.tsx   # Xero connection status + Excel upload
+    integrations/page.tsx   # Xero connection status + Excel upload + ConnectXero
     settings/page.tsx       # Display prefs (number format, currency) + group colour (admin)
+    reports/
+      profit-loss/page.tsx  # P&L detail — period selector, summary/detail toggle, company columns
+      balance-sheet/page.tsx # Balance Sheet detail — same layout + Net Assets highlight
   api/
     companies/
-      route.ts              # GET (list + division_count) | POST (create + slug)
+      route.ts              # GET (list + division_count + has_xero + last_synced_at) | POST
       [id]/route.ts         # GET (single + divisions) | PATCH | DELETE (soft)
     divisions/
       route.ts              # GET (list by company_id) | POST (create + slug)
       [id]/route.ts         # GET (single + parent) | PATCH | DELETE (soft)
     dashboard/
       summary/route.ts      # GET — aggregated metrics for active group (Phase 2b)
+    reports/
+      periods/route.ts      # GET — distinct periods available in financial_snapshots
+      data/route.ts         # GET — snapshot data per company for ?type=&period=
     settings/route.ts       # GET (user prefs) | PATCH (upsert)
     groups/
       active/route.ts       # GET — active group + user role (used by settings page)
-      [id]/route.ts         # PATCH — update group fields (primary_color; admin only)
+      [id]/route.ts         # PATCH — update group fields (palette_id; admin only)
     xero/
       connect/route.ts      # GET — start Xero OAuth flow
       callback/route.ts     # GET — handle Xero OAuth callback, store tokens
@@ -96,7 +102,7 @@ app/
         profit-loss/route.ts
         balance-sheet/route.ts
         cashflow/route.ts
-        all/route.ts        # POST — stub to queue sync-all (Phase 2b)
+        all/route.ts        # POST — sync all connections; accepts optional { period? } body
     cron/
       xero-sync/route.ts    # GET — nightly batch sync (Vercel Cron)
     excel/
@@ -120,15 +126,18 @@ components/
     toggle-switch.tsx       # Radix Switch wrapper (Phase 2a)
     confirm-dialog.tsx      # Radix AlertDialog wrapper (Phase 2a)
   layout/
-    AppShell.tsx            # CLIENT: top bar + collapsible sidebar + mobile overlay
+    AppShell.tsx            # CLIENT: top bar + collapsible sidebar + Reports nav group
     GroupSwitcher.tsx       # CLIENT: group dropdown with colour swatches
   companies/
     CompanyForm.tsx         # CLIENT: reusable create/edit form for companies
     DivisionForm.tsx        # CLIENT: reusable create/edit form for divisions
   dashboard/
     DashboardCard.tsx       # CLIENT: wrapper with loading skeleton + error state (Phase 2b)
+  integrations/
+    ConnectXero.tsx         # CLIENT: entity selector + confirm dialog + OAuth popup
+    SyncButton.tsx          # CLIENT: period selector + sync P&L/Balance Sheet buttons
   excel/
-    ExcelUpload.tsx         # CLIENT: drag-and-drop uploader + entity selector
+    ExcelUpload.tsx         # CLIENT: drag-and-drop uploader, Step 1/Step 2 progression
 
 lib/
   supabase/
@@ -137,6 +146,7 @@ lib/
     admin.ts                # Admin client (service role, bypasses RLS, server only)
   xero.ts                   # Xero OAuth helpers + token management + data normalisation
   themes.ts                 # Palette definitions + getPalette() + buildPaletteCSS() (Phase 2c)
+  financial.ts              # extractRows(), getRowValue(), sumGroupTotal(), getPeriodLabel() (Phase 2d)
   types.ts                  # TypeScript types for all DB entities + financial data
   utils.ts                  # cn(), formatCurrency(amount,format,currency), formatVariance(), period helpers, generateSlug()
 
@@ -398,6 +408,7 @@ Use `companies!inner(group_id)` in Supabase join and filter by `companies.group_
 | Phase 2a | ✅ Complete | Company + Division CRUD, Agents stub, migration 002 |
 | Phase 2b | ✅ Complete | Dashboard 4-card layout, user settings, group colour, period navigation |
 | Phase 2c | ✅ Complete | Palette system, sidebar polish, real Xero status, Excel UX, sync/all |
+| Phase 2d | ✅ Complete | Financial report pages (P&L, Balance Sheet), Reports nav, ConnectXero UX, period-aware sync |
 | Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
 
 ---
@@ -485,10 +496,81 @@ Step 2 (dropzone) is dimmed and non-interactive until Step 1 (entity selection) 
 
 ---
 
+## Phase 2d — Financial Detail Views
+
+### New report pages
+- `/reports/profit-loss` — P&L report; period selector, summary/detail toggle, company columns, Group Total
+- `/reports/balance-sheet` — Balance Sheet; same layout with special divider rows + Net Assets highlight
+
+### Report table conventions
+- Companies are columns; account names are rows (order from first company with data)
+- **Section rows** (`row_type === 'section'`): grey bg, uppercase tiny text, no amount
+- **Summary rows** (`row_type === 'summaryRow'`): bold, `bg-muted/20`
+- **Divider rows** (Total Assets / Total Liabilities / Total Equity / Net Assets): `border-t-2` separator
+- **Net Assets**: `bg-primary/10 font-bold text-primary` highlight
+- **Group Total** column only shown when > 1 company
+- Negative amounts shown in red (`text-red-600 dark:text-red-400`)
+- Missing data: amber banner warning, badge on column header
+
+### lib/financial.ts
+```typescript
+export function extractRows(data: FinancialData | null, mode: 'summary'|'detail'): DisplayRow[]
+export function getRowValue(data: FinancialData | null, accountName: string): number | null
+export function sumGroupTotal(datasets: (FinancialData | null)[], accountName: string): number | null
+export function getPeriodLabel(period: string): string  // "2026-01" → "Jan 2026"
+```
+`extractRows` flattens the nested row tree. Summary mode: sections + summaryRows only. Detail: all.
+
+### API routes (Phase 2d)
+```
+GET /api/reports/periods
+  → { data: { periods: string[], report_types: Record<period, string[]> } }
+  → ordered most-recent first; scoped to active group
+
+GET /api/reports/data?type=profit_loss|balance_sheet|cashflow&period=YYYY-MM
+  → { data: { company_id, company_name, data: FinancialData | null }[] }
+  → rollup: division snapshots preferred over company-level (same as dashboard)
+```
+
+### ConnectXero component (`components/integrations/ConnectXero.tsx`)
+- `<optgroup>` dropdown: Companies + Divisions sections
+- On "Connect" click: shows confirm panel with entity name
+- On "Open Xero": `window.open('/api/xero/connect?entity_type=...&entity_id=...', '_blank')`
+
+### SyncButton component (`components/integrations/SyncButton.tsx`)
+- Period selector (last 6 months)
+- "Sync P&L" → POST `/api/xero/sync/profit-loss`
+- "Sync Balance Sheet" → POST `/api/xero/sync/balance-sheet`
+- Shows relative "Last synced" time
+
+### Dashboard Refresh button
+- "Refresh" button added next to period navigation arrows in dashboard header
+- Calls `POST /api/xero/sync/all` with `{ period }` body for the current period
+- After sync completes, re-fetches all dashboard data via `fetchAll(period)`
+- sync/all now accepts optional `{ period? }` — if omitted, syncs last 3 months
+
+### Reports nav (AppShell)
+- Expandable "Reports" group in sidebar between Dashboard and Companies
+- Sub-items: Profit & Loss → `/reports/profit-loss`, Balance Sheet → `/reports/balance-sheet`
+- Defaults open when `pathname.startsWith('/reports')`
+- Indicator: `ChevronDown` rotates to `ChevronUp` when expanded
+
+### void for fire-and-forget Supabase inserts
+Supabase `PostgrestFilterBuilder` does not have `.catch()`. Use `void` prefix:
+```typescript
+// ✅ Correct
+void admin.from('sync_logs').insert({ ... })
+// ❌ Wrong — TS error: Property 'catch' does not exist
+await admin.from('sync_logs').insert({ ... }).catch(() => {})
+```
+
+---
+
 ## Next Steps
 
 1. Add multi-tenant user management page (invite users, assign roles/divisions)
 2. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
 3. Add `error.tsx` files for each route segment
-4. Connect Xero connect button to real entities in integrations page
-5. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)
+4. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)
+5. Add cashflow report page at `/reports/cashflow`
+6. Add chart visualisations to report pages (trend lines, bar charts)

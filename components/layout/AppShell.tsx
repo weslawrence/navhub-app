@@ -17,6 +17,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
+  BarChart2,
+  ChevronDown,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -40,11 +42,19 @@ import { getPalette } from '@/lib/themes'
 import type { Group, UserGroup } from '@/lib/types'
 
 // ============================================================
-// Nav items — Dashboard · Companies · Integrations · Agents · Settings
+// Nav structure — flat links + one grouped section for Reports
 // ============================================================
 
-const NAV_ITEMS = [
+const REPORT_CHILDREN = [
+  { label: 'Profit & Loss',  href: '/reports/profit-loss' },
+  { label: 'Balance Sheet',  href: '/reports/balance-sheet' },
+]
+
+const TOP_NAV = [
   { label: 'Dashboard',    href: '/dashboard',    Icon: LayoutDashboard },
+] as const
+
+const BOTTOM_NAV = [
   { label: 'Companies',    href: '/companies',    Icon: Building2 },
   { label: 'Integrations', href: '/integrations', Icon: Plug },
   { label: 'Agents',       href: '/agents',       Icon: Bot },
@@ -70,10 +80,11 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
 
-  // Sidebar collapse state — persisted in localStorage
-  const [collapsed,  setCollapsed]  = useState(false)
-  const [mobileOpen, setMobileOpen] = useState(false)
-  const [mounted,    setMounted]    = useState(false)
+  const [collapsed,    setCollapsed]    = useState(false)
+  const [mobileOpen,   setMobileOpen]   = useState(false)
+  const [mounted,      setMounted]      = useState(false)
+  // Reports group defaults to open when on a /reports/* route
+  const [reportsOpen,  setReportsOpen]  = useState(() => pathname.startsWith('/reports'))
 
   // Apply full palette CSS vars on mount / group change
   useEffect(() => {
@@ -85,12 +96,17 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     document.documentElement.style.setProperty('--group-primary',     palette.primary)
   }, [activeGroup.palette_id])
 
-  // Load sidebar state from localStorage after mount (avoids hydration mismatch)
+  // Load sidebar state from localStorage after mount
   useEffect(() => {
     setMounted(true)
     const saved = localStorage.getItem('navhub-sidebar')
     if (saved === 'collapsed') setCollapsed(true)
   }, [])
+
+  // Expand reports group when navigating to a reports route
+  useEffect(() => {
+    if (pathname.startsWith('/reports')) setReportsOpen(true)
+  }, [pathname])
 
   function toggleSidebar() {
     const next = !collapsed
@@ -99,10 +115,128 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   }
 
   const userInitials = user.email.slice(0, 2).toUpperCase()
+  const reportsActive = pathname.startsWith('/reports')
 
   // ────────────────────────────────────────────────────────
   // Sidebar
   // ────────────────────────────────────────────────────────
+
+  function NavLink({
+    href, label, Icon, mobile = false,
+  }: { href: string; label: string; Icon: React.ComponentType<{ className?: string }>; mobile?: boolean }) {
+    const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Link
+            href={href}
+            onClick={() => setMobileOpen(false)}
+            className={cn(
+              'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+              active
+                ? 'bg-white/10 text-white'
+                : 'text-white/60 hover:text-white hover:bg-white/10',
+              collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+            )}
+            style={
+              active
+                ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
+                : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
+            }
+          >
+            <Icon className="h-5 w-5 shrink-0" />
+            {(!collapsed || mobile) && <span>{label}</span>}
+          </Link>
+        </TooltipTrigger>
+        {collapsed && !mobile && (
+          <TooltipContent side="right">{label}</TooltipContent>
+        )}
+      </Tooltip>
+    )
+  }
+
+  function ReportsGroup({ mobile = false }: { mobile?: boolean }) {
+    const expanded = !collapsed || mobile
+
+    return (
+      <div>
+        {/* Group header */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => {
+                if (collapsed && !mobile) {
+                  // Expand sidebar first, then open group
+                  toggleSidebar()
+                  setReportsOpen(true)
+                } else {
+                  setReportsOpen(o => !o)
+                }
+              }}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                reportsActive
+                  ? 'text-white'
+                  : 'text-white/60 hover:text-white hover:bg-white/10',
+                collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+              )}
+              style={{
+                borderLeft: reportsActive
+                  ? '3px solid var(--palette-primary)'
+                  : '3px solid transparent',
+                paddingLeft: '5px',
+              }}
+            >
+              <BarChart2 className="h-5 w-5 shrink-0" />
+              {expanded && (
+                <>
+                  <span className="flex-1 text-left">Reports</span>
+                  <ChevronDown
+                    className={cn(
+                      'h-4 w-4 text-white/40 transition-transform duration-150',
+                      reportsOpen && 'rotate-180'
+                    )}
+                  />
+                </>
+              )}
+            </button>
+          </TooltipTrigger>
+          {collapsed && !mobile && (
+            <TooltipContent side="right">Reports</TooltipContent>
+          )}
+        </Tooltip>
+
+        {/* Sub-items */}
+        {reportsOpen && expanded && (
+          <div className="mt-0.5 ml-4 space-y-0.5">
+            {REPORT_CHILDREN.map(child => {
+              const active = pathname === child.href
+              return (
+                <Link
+                  key={child.href}
+                  href={child.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                    active
+                      ? 'text-white bg-white/10'
+                      : 'text-white/50 hover:text-white hover:bg-white/10'
+                  )}
+                  style={
+                    active
+                      ? { borderLeft: '2px solid var(--palette-accent)' }
+                      : { borderLeft: '2px solid transparent' }
+                  }
+                >
+                  {child.label}
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   function Sidebar({ mobile = false }: { mobile?: boolean }) {
     return (
@@ -120,37 +254,18 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
           style={{ backgroundColor: 'var(--palette-surface)' }}
         >
           <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
-            {NAV_ITEMS.map(({ label, href, Icon }) => {
-              const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
-              return (
-                <Tooltip key={href}>
-                  <TooltipTrigger asChild>
-                    <Link
-                      href={href}
-                      onClick={() => setMobileOpen(false)}
-                      className={cn(
-                        'flex items-center gap-3 rounded-md px-2 py-2 text-sm font-medium transition-colors',
-                        active
-                          ? 'bg-white/10 text-white'
-                          : 'text-white/60 hover:text-white hover:bg-white/10',
-                        collapsed && !mobile ? 'justify-center' : ''
-                      )}
-                      style={
-                        active
-                          ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
-                          : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
-                      }
-                    >
-                      <Icon className="h-5 w-5 shrink-0" />
-                      {(!collapsed || mobile) && <span>{label}</span>}
-                    </Link>
-                  </TooltipTrigger>
-                  {collapsed && !mobile && (
-                    <TooltipContent side="right">{label}</TooltipContent>
-                  )}
-                </Tooltip>
-              )
-            })}
+            {/* Top nav items */}
+            {TOP_NAV.map(item => (
+              <NavLink key={item.href} {...item} mobile={mobile} />
+            ))}
+
+            {/* Reports group */}
+            <ReportsGroup mobile={mobile} />
+
+            {/* Bottom nav items */}
+            {BOTTOM_NAV.map(item => (
+              <NavLink key={item.href} {...item} mobile={mobile} />
+            ))}
           </nav>
 
           {/* Collapse toggle — desktop only */}
@@ -185,7 +300,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
         {/* Mobile sidebar toggle */}
         <button
           className="lg:hidden text-muted-foreground hover:text-foreground"
-          onClick={() => setMobileOpen((o) => !o)}
+          onClick={() => setMobileOpen(o => !o)}
           aria-label="Toggle navigation"
         >
           {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}

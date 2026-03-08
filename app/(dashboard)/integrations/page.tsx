@@ -1,16 +1,16 @@
 import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
+import { Badge }       from '@/components/ui/badge'
 import { Plug, FileSpreadsheet } from 'lucide-react'
-import SyncButton from '@/components/integrations/SyncButton'
-import ExcelUpload from '@/components/excel/ExcelUpload'
-import type { XeroConnection, Company } from '@/lib/types'
+import SyncButton   from '@/components/integrations/SyncButton'
+import ConnectXero  from '@/components/integrations/ConnectXero'
+import ExcelUpload  from '@/components/excel/ExcelUpload'
+import type { XeroConnection, Company, Division } from '@/lib/types'
 
 export default async function IntegrationsPage() {
-  const supabase    = createClient()
-  const cookieStore = cookies()
+  const supabase      = createClient()
+  const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
 
   if (!activeGroupId) {
@@ -19,24 +19,49 @@ export default async function IntegrationsPage() {
     )
   }
 
-  // Load companies for this group
+  // ── Load companies + divisions for this group ────────────────────────────
+
   const { data: companies } = await supabase
     .from('companies')
     .select('id, name')
     .eq('group_id', activeGroupId)
+    .eq('is_active', true)
     .order('name')
 
-  const companyIds = companies?.map((c: { id: string; name: string }) => c.id) ?? []
+  const companyList = (companies ?? []) as Pick<Company, 'id' | 'name'>[]
+  const companyIds  = companyList.map(c => c.id)
 
-  // Load xero connections
+  // Load divisions with their company name for the ConnectXero dropdown
+  const { data: divisionsRaw } = companyIds.length > 0
+    ? await supabase
+        .from('divisions')
+        .select('id, name, company_id, companies:companies(name)')
+        .in('company_id', companyIds)
+        .eq('is_active', true)
+        .order('name')
+    : { data: [] }
+
+  const divisionList = (divisionsRaw ?? []).map((d: {
+    id: string; name: string; company_id: string;
+    companies: { name: string }[] | null
+  }) => ({
+    id:           d.id,
+    name:         d.name,
+    company_id:   d.company_id,
+    company_name: d.companies?.[0]?.name ?? '',
+  }))
+
+  // ── Load Xero connections ─────────────────────────────────────────────────
+
   const { data: xeroConnections } = companyIds.length > 0
     ? await supabase
         .from('xero_connections')
         .select('*, company:companies(name), division:divisions(name)')
-        .in('company_id', companyIds)
+        .or(`company_id.in.(${companyIds.join(',')}),division_id.in.(${divisionList.map(d => d.id).join(',') || 'null'})`)
     : { data: [] }
 
-  // Load recent sync logs
+  // ── Load recent sync logs ─────────────────────────────────────────────────
+
   const { data: syncLogs } = companyIds.length > 0
     ? await supabase
         .from('sync_logs')
@@ -46,9 +71,7 @@ export default async function IntegrationsPage() {
         .limit(10)
     : { data: [] }
 
-  const connected = Boolean(
-    xeroConnections && xeroConnections.length > 0
-  )
+  const connected = Boolean(xeroConnections && xeroConnections.length > 0)
 
   return (
     <div className="space-y-8">
@@ -65,9 +88,13 @@ export default async function IntegrationsPage() {
           <Plug className="h-5 w-5 text-primary" /> Xero
         </h2>
 
-        {connected ? (
+        {/* Existing connections */}
+        {connected && (
           <div className="space-y-3">
-            {xeroConnections!.map((conn: XeroConnection & { company?: { name: string }; division?: { name: string } }) => (
+            {(xeroConnections as (XeroConnection & {
+              company?:  { name: string }
+              division?: { name: string }
+            })[]).map(conn => (
               <Card key={conn.id}>
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
@@ -75,41 +102,29 @@ export default async function IntegrationsPage() {
                       <CardTitle className="text-sm">
                         {conn.company?.name ?? conn.division?.name ?? 'Unknown entity'}
                       </CardTitle>
-                      <CardDescription className="text-xs mt-0.5">
-                        Tenant: {conn.xero_tenant_id}
+                      <CardDescription className="text-xs mt-0.5 font-mono">
+                        {conn.xero_tenant_id}
                       </CardDescription>
                     </div>
                     <Badge variant="success">Connected</Badge>
                   </div>
                 </CardHeader>
-                <CardContent className="flex gap-2">
-                  <CardContent className="flex gap-2">
-                    <SyncButton 
-                      connectionId={conn.id} 
-                      period={new Date().toISOString().slice(0, 7)} 
-                    />
-                  </CardContent>
+                <CardContent>
+                  <SyncButton
+                    connectionId={conn.id}
+                    lastSyncedAt={conn.connected_at}
+                  />
                 </CardContent>
               </Card>
             ))}
           </div>
-        ) : (
-          <Card>
-            <CardContent className="flex flex-col items-center justify-center h-36 text-muted-foreground">
-              <Plug className="h-8 w-8 mb-2 opacity-40" />
-              <p className="text-sm mb-3">No Xero connections yet</p>
-              {companies && companies.length > 0 ? (
-                <a href={`/api/xero/connect?entity_type=company&entity_id=${companies[0].id}`}>
-                  <Button size="sm">Connect Xero</Button>
-                </a>
-              ) : (
-                <p className="text-xs text-center max-w-xs">
-                  Add companies first, then connect Xero to each one
-                </p>
-              )}
-            </CardContent>
-          </Card>
         )}
+
+        {/* Add new connection */}
+        <ConnectXero
+          companies={companyList}
+          divisions={divisionList}
+        />
       </section>
 
       {/* ── Excel Upload ── */}
@@ -118,7 +133,8 @@ export default async function IntegrationsPage() {
           <FileSpreadsheet className="h-5 w-5 text-primary" /> Excel Upload
         </h2>
         <ExcelUpload
-          companies={companies?.map((c: Pick<Company, 'id' | 'name'>) => ({ id: c.id, name: c.name })) ?? []}
+          companies={companyList}
+          divisions={divisionList.map(d => ({ id: d.id, name: d.name }))}
         />
       </section>
 
@@ -139,7 +155,7 @@ export default async function IntegrationsPage() {
               <tbody>
                 {syncLogs.map((log) => (
                   <tr key={log.id} className="border-t">
-                    <td className="px-4 py-2">{log.source}</td>
+                    <td className="px-4 py-2 capitalize">{log.source}</td>
                     <td className="px-4 py-2">
                       <Badge variant={log.status === 'success' ? 'success' : 'error'}>
                         {log.status}
@@ -148,7 +164,7 @@ export default async function IntegrationsPage() {
                     <td className="px-4 py-2 text-muted-foreground text-xs max-w-xs truncate">
                       {log.message ?? '—'}
                     </td>
-                    <td className="px-4 py-2 text-xs text-muted-foreground">
+                    <td className="px-4 py-2 text-xs text-muted-foreground whitespace-nowrap">
                       {new Date(log.created_at).toLocaleString('en-AU')}
                     </td>
                   </tr>

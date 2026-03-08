@@ -12,7 +12,10 @@ import type { ReportType }  from '@/lib/types'
 
 // ─── POST /api/xero/sync/all ─────────────────────────────────────────────────
 // Syncs Xero data for all connections in the active group.
-// Loops over: all connections × last 3 months × 3 report types.
+// Body (optional): { period?: string }  e.g. { period: "2026-01" }
+//   - If period is provided → sync only that one period.
+//   - If omitted → sync the last 3 months (default).
+// Loops over: all connections × period(s) × 3 report types.
 // Returns { synced: number, errors: string[] }
 
 const REPORT_TYPES: ReportType[] = ['profit_loss', 'balance_sheet', 'cashflow']
@@ -31,7 +34,7 @@ function lastNMonths(fromPeriod: string, n: number): string[] {
   return result
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   const supabase      = createClient()
   const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
@@ -42,6 +45,17 @@ export async function POST() {
   }
   if (!activeGroupId) {
     return NextResponse.json({ error: 'No active group' }, { status: 400 })
+  }
+
+  // Optional body: { period?: string }
+  let requestedPeriod: string | undefined
+  try {
+    const body = await request.json() as { period?: string }
+    if (typeof body.period === 'string' && /^\d{4}-\d{2}$/.test(body.period)) {
+      requestedPeriod = body.period
+    }
+  } catch {
+    // No body / invalid JSON — use default (last 3 months)
   }
 
   // ── Find all companies + divisions for this group ───────────────────────
@@ -86,7 +100,10 @@ export async function POST() {
 
   // ── Sync each connection × period × report_type ─────────────────────────
 
-  const periods     = lastNMonths(getCurrentPeriod(), 3)
+  // Use requested period OR fall back to last 3 months
+  const periods = requestedPeriod
+    ? [requestedPeriod]
+    : lastNMonths(getCurrentPeriod(), 3)
   let   syncedCount = 0
   const errors:   string[] = []
 

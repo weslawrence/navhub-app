@@ -6,7 +6,7 @@ import { Plug, FileSpreadsheet } from 'lucide-react'
 import SyncButton   from '@/components/integrations/SyncButton'
 import ConnectXero  from '@/components/integrations/ConnectXero'
 import ExcelUpload  from '@/components/excel/ExcelUpload'
-import type { XeroConnection, Company, Division } from '@/lib/types'
+  import type { XeroConnection, Company } from '@/lib/types'
 
 export default async function IntegrationsPage() {
   const supabase      = createClient()

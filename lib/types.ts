@@ -179,6 +179,31 @@ export interface DashboardSummary {
 }
 
 // ============================================================
+// Forecast types  (Phase 2e)
+// ============================================================
+
+export interface ForecastStream {
+  id:                  string
+  group_id:            string
+  name:                string
+  tag:                 string
+  color:               string
+  y1_baseline:         number   // cents
+  default_growth_rate: number   // integer percentage, e.g. 20 = 20%
+  default_gp_margin:   number   // integer percentage, e.g. 40 = 40%
+  sort_order:          number
+  is_active:           boolean
+}
+
+export interface ForecastUserState {
+  year:    number
+  showGP:  boolean
+  showAll: boolean
+  rates:   Record<string, { gr: number; gp: number }>
+    // key = stream id; gr = growth rate %; gp = GP margin %
+}
+
+// ============================================================
 // API response types
 // ============================================================
 

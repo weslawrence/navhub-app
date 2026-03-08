@@ -79,6 +79,10 @@ app/
     reports/
       profit-loss/page.tsx  # P&L detail — period selector, summary/detail toggle, company columns
       balance-sheet/page.tsx # Balance Sheet detail — same layout + Net Assets highlight
+    forecasting/
+      page.tsx              # Redirect → /forecasting/revenue
+      revenue/page.tsx      # Interactive 7-year revenue model (client, sliders + charts)
+      setup/page.tsx        # Stream configuration — admin creates/edits/reorders streams
   api/
     companies/
       route.ts              # GET (list + division_count + has_xero + last_synced_at) | POST
@@ -91,6 +95,10 @@ app/
     reports/
       periods/route.ts      # GET — distinct periods available in financial_snapshots
       data/route.ts         # GET — snapshot data per company for ?type=&period=
+    forecast/
+      streams/route.ts      # GET (active streams by sort_order) | POST (admin only)
+      streams/[id]/route.ts # PATCH (update fields) | DELETE (soft delete, admin only)
+      state/route.ts        # GET (user state or defaults) | PATCH (upsert state)
     settings/route.ts       # GET (user prefs) | PATCH (upsert)
     groups/
       active/route.ts       # GET — active group + user role (used by settings page)
@@ -156,6 +164,7 @@ supabase/
     002_companies_divisions.sql  # ADD description, industry, is_active to companies + divisions
     003_user_settings.sql   # user_settings table with currency + number_format prefs (Phase 2b)
     004_group_palette.sql   # ADD palette_id to groups (Phase 2c)
+    005_forecast.sql        # forecast_streams + forecast_user_state tables + RLS (Phase 2e)
 
 docs/
   AI_Agent_Module_Build_Spec.md  # Agent module spec (Claude API integration plan)
@@ -409,6 +418,7 @@ Use `companies!inner(group_id)` in Supabase join and filter by `companies.group_
 | Phase 2b | ✅ Complete | Dashboard 4-card layout, user settings, group colour, period navigation |
 | Phase 2c | ✅ Complete | Palette system, sidebar polish, real Xero status, Excel UX, sync/all |
 | Phase 2d | ✅ Complete | Financial report pages (P&L, Balance Sheet), Reports nav, ConnectXero UX, period-aware sync |
+| Phase 2e | ✅ Complete | Revenue Forecast Model — streams, 7-year projection, sliders, share link, auto-save |
 | Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
 
 ---
@@ -566,6 +576,61 @@ await admin.from('sync_logs').insert({ ... }).catch(() => {})
 
 ---
 
+## Phase 2e — Revenue Forecast Model
+
+### Database tables
+- **`forecast_streams`** — per-group revenue stream config; soft-delete with `is_active`
+- **`forecast_user_state`** — per-user per-group UI state (year, showGP, showAll, rates); PRIMARY KEY (user_id, group_id)
+
+### Forecast math
+```typescript
+// Y1 = y1_baseline (baseline / starting position, in cents)
+// Yn = baseline × (1 + gr/100)^(n-1)
+function streamRevenue(baseline: number, gr: number, year: number): number
+function streamGP(revenue: number, gp: number): number
+```
+
+### ForecastStream fields
+- `y1_baseline` — bigint cents (same convention as financial_snapshots)
+- `default_growth_rate` / `default_gp_margin` — integer percentages (e.g. 20 = 20%)
+- `sort_order` — display order; swapped pairwise via PATCH for reorder
+- `color` — hex string, used directly for dots/bars/chart segments
+
+### API routes
+```
+GET  /api/forecast/streams           → all active streams, sorted by sort_order
+POST /api/forecast/streams           → create stream (admin only)
+PATCH  /api/forecast/streams/[id]    → update fields (admin only)
+DELETE /api/forecast/streams/[id]    → soft delete (admin only)
+GET  /api/forecast/state             → user's saved state or defaults
+PATCH /api/forecast/state            → upsert state (user scoped)
+```
+
+### Revenue Model page (`/forecasting/revenue`)
+- Left panel (w-72): year slider (Y1-Y7), growth rate sliders per stream (0-120%, step 5), GP margin sliders per stream (5-85%, step 1), display toggles, action buttons
+- Right panel: total card, revenue mix proportional bar, bar chart (stacked/single mode), stream cards grid, summary table (Y1-Y7 columns)
+- Auto-save state 2s debounce; manual "Save view" button
+- Share link: `/forecasting/revenue?yr=N&{streamId}_gr=X&{streamId}_gp=Y` — restored on page load, URL params take priority over saved state
+- Streams with `y1_baseline ≤ 0` return 0 revenue (no negative forecasts)
+- Sliders styled with stream's `color` as `accentColor`
+
+### Stream Setup page (`/forecasting/setup`)
+- Admin only controls (edit/delete/add buttons hidden for non-admins)
+- Inline add form (card) + inline edit form (replaces row)
+- Up/Down arrow buttons for sort_order — PATCH both swapped items simultaneously
+- Delete shows inline confirm panel before soft-deleting
+- Y1 baseline input is in dollars, converted to/from cents on save/display
+- Role check: fetches `/api/groups/active` to determine admin status
+
+### AppShell Forecasting nav
+- `ForecastGroup` component — same pattern as `ReportsGroup`
+- Derives `isAdmin` from `groups.find(g => g.group_id === activeGroup.id)?.role`
+- Stream Setup sub-item filtered out for non-admins in `FORECAST_CHILDREN_BASE`
+- Defaults open when `pathname.startsWith('/forecasting')`
+- `TrendingUp` icon; `ChevronDown` rotates when expanded
+
+---
+
 ## Next Steps
 
 1. Add multi-tenant user management page (invite users, assign roles/divisions)
@@ -573,4 +638,4 @@ await admin.from('sync_logs').insert({ ... }).catch(() => {})
 3. Add `error.tsx` files for each route segment
 4. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)
 5. Add cashflow report page at `/reports/cashflow`
-6. Add chart visualisations to report pages (trend lines, bar charts)
+6. Add chart visualisations to financial report pages (trend lines, bar charts)

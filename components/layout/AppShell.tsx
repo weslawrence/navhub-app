@@ -19,6 +19,7 @@ import {
   ChevronRight,
   BarChart2,
   ChevronDown,
+  TrendingUp,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -48,6 +49,12 @@ import type { Group, UserGroup } from '@/lib/types'
 const REPORT_CHILDREN = [
   { label: 'Profit & Loss',  href: '/reports/profit-loss' },
   { label: 'Balance Sheet',  href: '/reports/balance-sheet' },
+]
+
+// Forecasting sub-items — Stream Setup only visible to admins (filtered at render time)
+const FORECAST_CHILDREN_BASE = [
+  { label: 'Revenue Model', href: '/forecasting/revenue', adminOnly: false },
+  { label: 'Stream Setup',  href: '/forecasting/setup',   adminOnly: true  },
 ]
 
 const TOP_NAV = [
@@ -80,11 +87,17 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
 
-  const [collapsed,    setCollapsed]    = useState(false)
-  const [mobileOpen,   setMobileOpen]   = useState(false)
-  const [mounted,      setMounted]      = useState(false)
+  const [collapsed,      setCollapsed]      = useState(false)
+  const [mobileOpen,     setMobileOpen]     = useState(false)
+  const [mounted,        setMounted]        = useState(false)
   // Reports group defaults to open when on a /reports/* route
-  const [reportsOpen,  setReportsOpen]  = useState(() => pathname.startsWith('/reports'))
+  const [reportsOpen,    setReportsOpen]    = useState(() => pathname.startsWith('/reports'))
+  // Forecasting group defaults to open when on a /forecasting/* route
+  const [forecastOpen,   setForecastOpen]   = useState(() => pathname.startsWith('/forecasting'))
+
+  // Derive admin status from active group membership
+  const activeRole = groups.find(g => g.group_id === activeGroup.id)?.role
+  const isAdmin = activeRole === 'super_admin' || activeRole === 'group_admin'
 
   // Apply full palette CSS vars on mount / group change
   useEffect(() => {
@@ -103,9 +116,10 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     if (saved === 'collapsed') setCollapsed(true)
   }, [])
 
-  // Expand reports group when navigating to a reports route
+  // Expand nav groups when navigating to their routes
   useEffect(() => {
-    if (pathname.startsWith('/reports')) setReportsOpen(true)
+    if (pathname.startsWith('/reports'))     setReportsOpen(true)
+    if (pathname.startsWith('/forecasting')) setForecastOpen(true)
   }, [pathname])
 
   function toggleSidebar() {
@@ -114,8 +128,9 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     localStorage.setItem('navhub-sidebar', next ? 'collapsed' : 'expanded')
   }
 
-  const userInitials = user.email.slice(0, 2).toUpperCase()
-  const reportsActive = pathname.startsWith('/reports')
+  const userInitials     = user.email.slice(0, 2).toUpperCase()
+  const reportsActive    = pathname.startsWith('/reports')
+  const forecastActive   = pathname.startsWith('/forecasting')
 
   // ────────────────────────────────────────────────────────
   // Sidebar
@@ -238,6 +253,89 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     )
   }
 
+  function ForecastGroup({ mobile = false }: { mobile?: boolean }) {
+    const expanded = !collapsed || mobile
+    const forecastChildren = FORECAST_CHILDREN_BASE.filter(c => !c.adminOnly || isAdmin)
+
+    return (
+      <div>
+        {/* Group header */}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => {
+                if (collapsed && !mobile) {
+                  toggleSidebar()
+                  setForecastOpen(true)
+                } else {
+                  setForecastOpen(o => !o)
+                }
+              }}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                forecastActive
+                  ? 'text-white'
+                  : 'text-white/60 hover:text-white hover:bg-white/10',
+                collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+              )}
+              style={{
+                borderLeft: forecastActive
+                  ? '3px solid var(--palette-primary)'
+                  : '3px solid transparent',
+                paddingLeft: '5px',
+              }}
+            >
+              <TrendingUp className="h-5 w-5 shrink-0" />
+              {expanded && (
+                <>
+                  <span className="flex-1 text-left">Forecasting</span>
+                  <ChevronDown
+                    className={cn(
+                      'h-4 w-4 text-white/40 transition-transform duration-150',
+                      forecastOpen && 'rotate-180'
+                    )}
+                  />
+                </>
+              )}
+            </button>
+          </TooltipTrigger>
+          {collapsed && !mobile && (
+            <TooltipContent side="right">Forecasting</TooltipContent>
+          )}
+        </Tooltip>
+
+        {/* Sub-items */}
+        {forecastOpen && expanded && (
+          <div className="mt-0.5 ml-4 space-y-0.5">
+            {forecastChildren.map(child => {
+              const active = pathname === child.href || pathname.startsWith(child.href)
+              return (
+                <Link
+                  key={child.href}
+                  href={child.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                    active
+                      ? 'text-white bg-white/10'
+                      : 'text-white/50 hover:text-white hover:bg-white/10'
+                  )}
+                  style={
+                    active
+                      ? { borderLeft: '2px solid var(--palette-accent)' }
+                      : { borderLeft: '2px solid transparent' }
+                  }
+                >
+                  {child.label}
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   function Sidebar({ mobile = false }: { mobile?: boolean }) {
     return (
       <TooltipProvider delayDuration={0}>
@@ -261,6 +359,9 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
 
             {/* Reports group */}
             <ReportsGroup mobile={mobile} />
+
+            {/* Forecasting group */}
+            <ForecastGroup mobile={mobile} />
 
             {/* Bottom nav items */}
             {BOTTOM_NAV.map(item => (

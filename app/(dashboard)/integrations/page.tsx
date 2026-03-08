@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Plug, FileSpreadsheet, RefreshCw } from 'lucide-react'
+import SyncButton from '@/components/integrations/SyncButton'
 import ExcelUpload from '@/components/excel/ExcelUpload'
 import type { XeroConnection, Company } from '@/lib/types'
 
@@ -82,13 +83,12 @@ export default async function IntegrationsPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="flex gap-2">
-                  <form action={`/api/xero/sync/profit-loss`} method="POST">
-                    <input type="hidden" name="connection_id" value={conn.id} />
-                    <input type="hidden" name="period" value={new Date().toISOString().slice(0, 7)} />
-                    <Button type="submit" variant="outline" size="sm">
-                      <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Sync P&L
-                    </Button>
-                  </form>
+                  <CardContent className="flex gap-2">
+                    <SyncButton 
+                      connectionId={conn.id} 
+                      period={new Date().toISOString().slice(0, 7)} 
+                    />
+                  </CardContent>
                 </CardContent>
               </Card>
             ))}

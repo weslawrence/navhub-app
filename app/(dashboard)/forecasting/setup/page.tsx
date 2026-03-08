@@ -2,10 +2,9 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { ChevronRight, Plus, Pencil, Trash2, ChevronUp, ChevronDown, X, Check, AlertTriangle } from 'lucide-react'
+import { ChevronRight, Plus, Pencil, Trash2, ChevronUp, ChevronDown, X, AlertTriangle } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Badge }   from '@/components/ui/badge'
-import { cn }      from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import type { ForecastStream, NumberFormat } from '@/lib/types'
 

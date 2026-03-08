@@ -73,8 +73,8 @@ export default function RevenueModelPage() {
       })
 
       let resolvedYear  = saved.year  ?? 1
-      let resolvedShowGP  = saved.showGP  ?? false
-      let resolvedShowAll = saved.showAll ?? true
+      const resolvedShowGP  = saved.showGP  ?? false
+      const resolvedShowAll = saved.showAll ?? true
 
       // URL params take priority over saved state
       const params = new URLSearchParams(window.location.search)

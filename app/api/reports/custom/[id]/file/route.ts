@@ -3,10 +3,6 @@ import { cookies }           from 'next/headers'
 import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// ─── GET /api/reports/custom/[id]/file ───────────────────────────────────────
-// Returns a signed URL for the report file (valid 1 hour).
-// Any group member can access.
-
 export async function GET(
   _request: Request,
   { params }: { params: { id: string } }
@@ -19,7 +15,6 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
 
-  // Fetch report — RLS ensures user can only read their group's reports
   const { data: report } = await supabase
     .from('custom_reports')
     .select('file_path, name, group_id')
@@ -33,18 +28,20 @@ export async function GET(
   }
 
   const admin = createAdminClient()
-  const { data: signedData, error } = await admin.storage
+  const { data, error } = await admin.storage
     .from('report-files')
-    .createSignedUrl(report.file_path, 3600, {
-      download: false,
-    })
+    .download(report.file_path)
 
-  if (error || !signedData?.signedUrl) {
-    return NextResponse.json(
-      { error: error?.message ?? 'Failed to generate signed URL' },
-      { status: 500 }
-    )
+  if (error || !data) {
+    return NextResponse.json({ error: 'File not found' }, { status: 404 })
   }
 
-  return NextResponse.json({ data: { url: signedData.signedUrl, name: report.name } })
+  const text = await data.text()
+
+  return new NextResponse(text, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Disposition': 'inline',
+    },
+  })
 }

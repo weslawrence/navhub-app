@@ -9,46 +9,46 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn }     from '@/lib/utils'
 
-// ─── Report Viewer Page ───────────────────────────────────────────────────────
-
 export default function ReportViewerPage() {
   const params = useParams<{ id: string }>()
   const router = useRouter()
 
-  const [signedUrl, setSignedUrl]   = useState<string | null>(null)
   const [reportName, setReportName] = useState<string>('')
-  const [isAdmin,   setIsAdmin]     = useState(false)
-  const [loading,   setLoading]     = useState(true)
-  const [error,     setError]       = useState<string | null>(null)
-  const [deleting,  setDeleting]    = useState(false)
+  const [isAdmin,    setIsAdmin]    = useState(false)
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState<string | null>(null)
+  const [deleting,   setDeleting]   = useState(false)
+  const [ready,      setReady]      = useState(false)
 
-useEffect(() => {
-  async function load() {
-    setLoading(true)
-    setError(null)
-    try {
-      const [metaRes, groupRes] = await Promise.all([
-        fetch(`/api/reports/custom/${params.id}`),
-        fetch('/api/groups/active'),
-      ])
-      const metaJson  = await metaRes.json()
-      const groupJson = await groupRes.json()
+  const fileUrl = `/api/reports/custom/${params.id}/file`
 
-      if (!metaRes.ok) {
-        throw new Error(metaJson.error ?? 'Report not found')
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+      setError(null)
+      try {
+        const [metaRes, groupRes] = await Promise.all([
+          fetch(`/api/reports/custom/${params.id}`),
+          fetch('/api/groups/active'),
+        ])
+        const metaJson  = await metaRes.json()
+        const groupJson = await groupRes.json()
+
+        if (!metaRes.ok) {
+          throw new Error(metaJson.error ?? 'Report not found')
+        }
+
+        setReportName(metaJson.data.name)
+        if (groupJson.data) setIsAdmin(groupJson.data.is_admin)
+        setReady(true)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load report')
+      } finally {
+        setLoading(false)
       }
-
-      setReportName(metaJson.data.name)
-      if (groupJson.data) setIsAdmin(groupJson.data.is_admin)
-      setSignedUrl('ready') // just a truthy flag to show the iframe
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load report')
-    } finally {
-      setLoading(false)
     }
-  }
-  void load()
-}, [params.id])
+    void load()
+  }, [params.id])
 
   async function handleDelete() {
     if (!confirm(`Delete "${reportName}"? This cannot be undone.`)) return
@@ -63,8 +63,6 @@ useEffect(() => {
       setDeleting(false)
     }
   }
-
-  // ── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem-3rem)]" style={{ minHeight: 0 }}>
@@ -83,15 +81,15 @@ useEffect(() => {
         )}
 
         <div className="flex items-center gap-2 ml-auto flex-shrink-0">
-          {signedUrl && (
+          {ready && (
             <>
               <Button variant="outline" size="sm" asChild>
-                <a href={signedUrl} download={reportName || 'report.html'} target="_blank" rel="noreferrer">
+                <a href={fileUrl} download={reportName || 'report.html'} target="_blank" rel="noreferrer">
                   <Download className="h-4 w-4 mr-1.5" /> Download
                 </a>
               </Button>
               <Button variant="outline" size="sm" asChild>
-                <a href={signedUrl} target="_blank" rel="noreferrer">
+                <a href={fileUrl} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4 mr-1.5" /> Open in tab
                 </a>
               </Button>
@@ -136,9 +134,9 @@ useEffect(() => {
           </div>
         )}
 
-        {signedUrl && !loading && !error && (
+        {ready && !loading && !error && (
           <iframe
-            src={`/api/reports/custom/${params.id}/file`}
+            src={fileUrl}
             title={reportName || 'Custom Report'}
             className="w-full h-full border-0"
             sandbox="allow-scripts allow-same-origin"

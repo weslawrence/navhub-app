@@ -179,6 +179,42 @@ export interface DashboardSummary {
 }
 
 // ============================================================
+// Group management types  (Phase 2f)
+// ============================================================
+
+export interface GroupInvite {
+  id:          string
+  group_id:    string
+  email:       string
+  role:        string
+  invited_by:  string
+  accepted_at: string | null
+  created_at:  string
+}
+
+export interface GroupMember {
+  user_id:   string
+  email:     string
+  role:      string
+  is_default: boolean
+  joined_at: string
+}
+
+export interface CustomReport {
+  id:          string
+  group_id:    string
+  name:        string
+  description: string | null
+  file_path:   string
+  file_type:   string
+  uploaded_by: string
+  is_active:   boolean
+  sort_order:  number
+  created_at:  string
+  updated_at:  string
+}
+
+// ============================================================
 // Forecast types  (Phase 2e)
 // ============================================================
 

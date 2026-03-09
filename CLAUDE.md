@@ -75,10 +75,13 @@ app/
             page.tsx        # Division detail — Xero section
             edit/page.tsx   # Edit division + Danger Zone
     integrations/page.tsx   # Xero connection status + Excel upload + ConnectXero
-    settings/page.tsx       # Display prefs (number format, currency) + group colour (admin)
+    settings/page.tsx       # Display / Group / Members tabs — prefs, palette, invites (Phase 2f)
     reports/
       profit-loss/page.tsx  # P&L detail — period selector, summary/detail toggle, company columns
       balance-sheet/page.tsx # Balance Sheet detail — same layout + Net Assets highlight
+      custom/
+        page.tsx            # Reports Library — tile grid + upload panel (admin) (Phase 2f)
+        [id]/page.tsx       # Report viewer — full-height iframe + toolbar (Phase 2f)
     forecasting/
       page.tsx              # Redirect → /forecasting/revenue
       revenue/page.tsx      # Interactive 7-year revenue model (client, sliders + charts)
@@ -95,14 +98,23 @@ app/
     reports/
       periods/route.ts      # GET — distinct periods available in financial_snapshots
       data/route.ts         # GET — snapshot data per company for ?type=&period=
+      custom/
+        route.ts            # GET (list active reports) | POST (upload HTML file, multipart)
+        [id]/route.ts       # DELETE (soft delete + Storage remove)
+        [id]/file/route.ts  # GET — 1-hour signed URL for report file
     forecast/
       streams/route.ts      # GET (active streams by sort_order) | POST (admin only)
       streams/[id]/route.ts # PATCH (update fields) | DELETE (soft delete, admin only)
       state/route.ts        # GET (user state or defaults) | PATCH (upsert state)
     settings/route.ts       # GET (user prefs) | PATCH (upsert)
     groups/
+      route.ts              # GET (all user groups + counts) | POST (create new group) (Phase 2f)
       active/route.ts       # GET — active group + user role (used by settings page)
-      [id]/route.ts         # PATCH — update group fields (palette_id; admin only)
+      [id]/route.ts         # PATCH — update group fields (palette_id, name; admin only)
+      [id]/members/route.ts         # GET — list members with emails (admin only) (Phase 2f)
+      [id]/members/[userId]/route.ts # PATCH (role) | DELETE (remove member) (Phase 2f)
+      [id]/invites/route.ts         # GET (pending) | POST (create invite) (Phase 2f)
+      [id]/invites/[inviteId]/route.ts # DELETE — cancel invite (Phase 2f)
     xero/
       connect/route.ts      # GET — start Xero OAuth flow
       callback/route.ts     # GET — handle Xero OAuth callback, store tokens
@@ -165,6 +177,7 @@ supabase/
     003_user_settings.sql   # user_settings table with currency + number_format prefs (Phase 2b)
     004_group_palette.sql   # ADD palette_id to groups (Phase 2c)
     005_forecast.sql        # forecast_streams + forecast_user_state tables + RLS (Phase 2e)
+    006_group_management.sql # group_invites + custom_reports tables + RLS (Phase 2f)
 
 docs/
   AI_Agent_Module_Build_Spec.md  # Agent module spec (Claude API integration plan)
@@ -409,20 +422,6 @@ Use `companies!inner(group_id)` in Supabase join and filter by `companies.group_
 
 ---
 
-## Phase Status
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Phase 1 | ✅ Complete | Auth, AppShell, Xero OAuth, Excel upload, base schema |
-| Phase 2a | ✅ Complete | Company + Division CRUD, Agents stub, migration 002 |
-| Phase 2b | ✅ Complete | Dashboard 4-card layout, user settings, group colour, period navigation |
-| Phase 2c | ✅ Complete | Palette system, sidebar polish, real Xero status, Excel UX, sync/all |
-| Phase 2d | ✅ Complete | Financial report pages (P&L, Balance Sheet), Reports nav, ConnectXero UX, period-aware sync |
-| Phase 2e | ✅ Complete | Revenue Forecast Model — streams, 7-year projection, sliders, share link, auto-save |
-| Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
-
----
-
 ## Phase 2b — Number Formatting Convention
 
 `formatCurrency` signature changed in Phase 2b:
@@ -561,7 +560,7 @@ GET /api/reports/data?type=profit_loss|balance_sheet|cashflow&period=YYYY-MM
 
 ### Reports nav (AppShell)
 - Expandable "Reports" group in sidebar between Dashboard and Companies
-- Sub-items: Profit & Loss → `/reports/profit-loss`, Balance Sheet → `/reports/balance-sheet`
+- Sub-items: Profit & Loss → `/reports/profit-loss`, Balance Sheet → `/reports/balance-sheet`, Reports Library → `/reports/custom`
 - Defaults open when `pathname.startsWith('/reports')`
 - Indicator: `ChevronDown` rotates to `ChevronUp` when expanded
 
@@ -631,9 +630,94 @@ PATCH /api/forecast/state            → upsert state (user scoped)
 
 ---
 
+## Phase 2f — Group Management + Custom Reports Library
+
+### Database (migration 006)
+- **`group_invites`** — pending email invites; `UNIQUE(group_id, email)`; no email sending — record only
+- **`custom_reports`** — HTML report files; soft-delete with `is_active`; `sort_order` for future reordering
+- RLS: admins can manage both tables; members can read their own invites + active reports
+- Storage bucket `report-files` must be created **manually** in Supabase dashboard (private, no public access)
+
+### Group Management API
+```
+GET  /api/groups                          → all groups for user (role, member_count, company_count)
+POST /api/groups                          → create new group (body: { name }) → auto-slug, add creator as super_admin
+GET  /api/groups/[id]/members             → list members with emails (admin only; uses admin.auth.admin.getUserById)
+PATCH  /api/groups/[id]/members/[userId]  → update role (admin only; blocks last super_admin change)
+DELETE /api/groups/[id]/members/[userId]  → remove member (admin only; blocks last super_admin removal)
+GET  /api/groups/[id]/invites             → list pending invites (accepted_at IS NULL)
+POST /api/groups/[id]/invites             → create/upsert invite (body: { email, role })
+DELETE /api/groups/[id]/invites/[id]      → cancel (hard delete) invite
+```
+
+Also extended: `PATCH /api/groups/[id]` now accepts `{ name }` in addition to `{ palette_id }`.
+
+### Custom Reports API
+```
+GET  /api/reports/custom                  → list active reports (sort_order ASC)
+POST /api/reports/custom                  → upload HTML file (multipart: file + name + description); max 5 MB
+DELETE /api/reports/custom/[id]           → soft delete (is_active = false) + Storage hard delete
+GET  /api/reports/custom/[id]/file        → 1-hour signed URL { url, name }
+```
+
+Storage path pattern: `{group_id}/reports/{timestamp}_{sanitisedFilename}`
+
+### Settings Page (tabbed — Phase 2f)
+Three tabs: **Display** | **Group** | **Members**
+- **Display**: number format radios + currency select + account info card (unchanged behaviour)
+- **Group**: editable group name (admin), palette selector (admin), create new group inline form (any user)
+- **Members** (admin only, lazy-loaded on first open):
+  - Member list with role `<select>` (PATCH on change) + inline "Remove" confirm
+  - Pending invites list with inline "Revoke" confirm
+  - Invite form: email + role select + Invite button
+
+### Custom Reports UI
+- **`/reports/custom`** — tile grid (3-col on desktop). Admin sees Upload panel (drag & drop + name/desc). Delete button per tile (admin only).
+- **`/reports/custom/[id]`** — full-height iframe with `sandbox="allow-scripts allow-same-origin"`. Toolbar: Back · Download · Open in tab · Delete (admin).
+- Signed URL fetched fresh on each page load (1-hour TTL from Supabase Storage).
+
+### Members email lookup
+`auth.users` is not queryable via anon/server client. Use `admin.auth.admin.getUserById(uid)` in parallel for each member. Acceptable for small groups (typical: < 50 members).
+
+### Last super_admin protection
+`PATCH` and `DELETE` on `/api/groups/[id]/members/[userId]` check if the target user is the only remaining `super_admin`. Returns 422 if so.
+
+### Manual setup required (Supabase dashboard)
+1. Create Storage bucket: **`report-files`** — private (not public)
+2. Add Storage RLS policy (SELECT for group members):
+   ```sql
+   USING ((storage.foldername(name))[1] IN (
+     SELECT group_id::text FROM user_groups WHERE user_id = auth.uid()
+   ))
+   ```
+3. Add Storage RLS policy (SELECT + INSERT + DELETE for group admins):
+   ```sql
+   USING ((storage.foldername(name))[1] IN (
+     SELECT group_id::text FROM user_groups
+     WHERE user_id = auth.uid() AND role IN ('super_admin', 'group_admin')
+   ))
+   ```
+
+---
+
+## Phase Status
+
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Phase 1 | ✅ Complete | Auth, AppShell, Xero OAuth, Excel upload, base schema |
+| Phase 2a | ✅ Complete | Company + Division CRUD, Agents stub, migration 002 |
+| Phase 2b | ✅ Complete | Dashboard 4-card layout, user settings, group colour, period navigation |
+| Phase 2c | ✅ Complete | Palette system, sidebar polish, real Xero status, Excel UX, sync/all |
+| Phase 2d | ✅ Complete | Financial report pages (P&L, Balance Sheet), Reports nav, ConnectXero UX, period-aware sync |
+| Phase 2e | ✅ Complete | Revenue Forecast Model — streams, 7-year projection, sliders, share link, auto-save |
+| Phase 2f | ✅ Complete | Group management (members/invites), Settings tabs, Custom Reports library + viewer |
+| Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
+
+---
+
 ## Next Steps
 
-1. Add multi-tenant user management page (invite users, assign roles/divisions)
+1. Set up Supabase Storage bucket `report-files` with RLS policies (manual — see Phase 2f section)
 2. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
 3. Add `error.tsx` files for each route segment
 4. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)

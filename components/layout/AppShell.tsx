@@ -47,8 +47,9 @@ import type { Group, UserGroup } from '@/lib/types'
 // ============================================================
 
 const REPORT_CHILDREN = [
-  { label: 'Profit & Loss',  href: '/reports/profit-loss' },
-  { label: 'Balance Sheet',  href: '/reports/balance-sheet' },
+  { label: 'Profit & Loss',    href: '/reports/profit-loss' },
+  { label: 'Balance Sheet',    href: '/reports/balance-sheet' },
+  { label: 'Reports Library',  href: '/reports/custom' },
 ]
 
 // Forecasting sub-items — Stream Setup only visible to admins (filtered at render time)

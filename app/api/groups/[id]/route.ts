@@ -7,9 +7,9 @@ import { PALETTES, getPalette } from '@/lib/themes'
 type Params = { params: { id: string } }
 
 // ─── PATCH /api/groups/[id] ──────────────────────────────────────────────────
-// Updates mutable group fields (currently: palette_id).
+// Updates mutable group fields: name, palette_id.
 // Requires group_admin or super_admin role.
-// Body: { palette_id? }
+// Body: { name?, palette_id? }
 export async function PATCH(request: Request, { params }: Params) {
   const supabase      = createClient()
   const cookieStore   = cookies()
@@ -46,6 +46,14 @@ export async function PATCH(request: Request, { params }: Params) {
   }
 
   const updates: Record<string, unknown> = {}
+
+  if (typeof body.name === 'string') {
+    const name = body.name.trim()
+    if (name.length < 2) {
+      return NextResponse.json({ error: 'Group name must be at least 2 characters' }, { status: 422 })
+    }
+    updates.name = name
+  }
 
   if (typeof body.palette_id === 'string') {
     const paletteId = body.palette_id.trim()

@@ -1,0 +1,144 @@
+import { NextResponse }      from 'next/server'
+import { createClient }      from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { getPalette }        from '@/lib/themes'
+import { generateSlug }      from '@/lib/utils'
+
+const ADMIN_ROLES = ['super_admin', 'group_admin']
+
+// ─── GET /api/groups ──────────────────────────────────────────────────────────
+// Returns all groups the current user belongs to, with role + member/company counts.
+
+export async function GET() {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  }
+
+  // Get user's group memberships + group details
+  const { data: userGroups, error } = await supabase
+    .from('user_groups')
+    .select('group_id, role, is_default, groups(id, name, palette_id, primary_color)')
+    .eq('user_id', session.user.id)
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  const rows = userGroups ?? []
+  if (rows.length === 0) {
+    return NextResponse.json({ data: [] })
+  }
+
+  const groupIds = rows.map(r => r.group_id)
+  const admin    = createAdminClient()
+
+  // Fetch member counts + company counts in parallel (admin bypasses RLS)
+  const [membersRes, companiesRes] = await Promise.all([
+    admin.from('user_groups').select('group_id').in('group_id', groupIds),
+    admin.from('companies').select('group_id').in('group_id', groupIds).eq('is_active', true),
+  ])
+
+  const memberMap: Record<string, number>  = {}
+  const companyMap: Record<string, number> = {}
+
+  ;(membersRes.data ?? []).forEach((m: { group_id: string }) => {
+    memberMap[m.group_id] = (memberMap[m.group_id] ?? 0) + 1
+  })
+  ;(companiesRes.data ?? []).forEach((c: { group_id: string }) => {
+    companyMap[c.group_id] = (companyMap[c.group_id] ?? 0) + 1
+  })
+
+  const data = rows.map(ug => {
+    // Supabase returns joined relation as object or array — handle both
+    const g = Array.isArray(ug.groups) ? ug.groups[0] : ug.groups
+    return {
+      id:            g?.id            ?? ug.group_id,
+      name:          g?.name          ?? '',
+      palette_id:    g?.palette_id    ?? 'ocean',
+      primary_color: g?.primary_color ?? '#0ea5e9',
+      role:          ug.role,
+      is_default:    ug.is_default,
+      member_count:  memberMap[ug.group_id]  ?? 0,
+      company_count: companyMap[ug.group_id] ?? 0,
+    }
+  })
+
+  return NextResponse.json({ data })
+}
+
+// ─── POST /api/groups ─────────────────────────────────────────────────────────
+// Creates a new group. Adds creator as super_admin.
+// Body: { name: string, palette_id?: string }
+
+export async function POST(request: Request) {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  }
+
+  let body: Record<string, unknown>
+  try { body = await request.json() }
+  catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
+
+  const name      = typeof body.name === 'string' ? body.name.trim() : ''
+  const paletteId = typeof body.palette_id === 'string' ? body.palette_id : 'ocean'
+
+  if (name.length < 2) {
+    return NextResponse.json({ error: 'Group name must be at least 2 characters' }, { status: 400 })
+  }
+
+  const palette   = getPalette(paletteId)
+  const slug      = generateSlug(name)
+  const admin     = createAdminClient()
+
+  // Check slug uniqueness
+  const { data: existing } = await admin
+    .from('groups')
+    .select('id')
+    .eq('slug', slug)
+    .single()
+
+  if (existing) {
+    return NextResponse.json(
+      { error: 'A group with this name already exists. Try a different name.' },
+      { status: 409 }
+    )
+  }
+
+  // Determine if this will be the user's first (default) group
+  const { data: existingMemberships } = await admin
+    .from('user_groups')
+    .select('group_id')
+    .eq('user_id', session.user.id)
+
+  const isFirstGroup = !existingMemberships || existingMemberships.length === 0
+
+  // Create group
+  const { data: group, error: groupError } = await admin
+    .from('groups')
+    .insert({
+      name,
+      slug,
+      palette_id:    palette.id,
+      primary_color: palette.primary,
+    })
+    .select()
+    .single()
+
+  if (groupError || !group) {
+    return NextResponse.json({ error: groupError?.message ?? 'Failed to create group' }, { status: 500 })
+  }
+
+  // Add creator as super_admin
+  await admin.from('user_groups').insert({
+    user_id:    session.user.id,
+    group_id:   group.id,
+    role:       'super_admin',
+    is_default: isFirstGroup,
+  })
+
+  return NextResponse.json({ data: group }, { status: 201 })
+}

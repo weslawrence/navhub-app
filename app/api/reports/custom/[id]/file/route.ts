@@ -35,7 +35,9 @@ export async function GET(
   const admin = createAdminClient()
   const { data: signedData, error } = await admin.storage
     .from('report-files')
-    .createSignedUrl(report.file_path, 3600)  // 1 hour
+    .createSignedUrl(report.file_path, 3600, {
+      download: false,
+    })
 
   if (error || !signedData?.signedUrl) {
     return NextResponse.json(

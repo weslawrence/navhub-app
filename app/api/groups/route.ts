@@ -4,7 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getPalette }        from '@/lib/themes'
 import { generateSlug }      from '@/lib/utils'
 
-const ADMIN_ROLES = ['super_admin', 'group_admin']
+
 
 // ─── GET /api/groups ──────────────────────────────────────────────────────────
 // Returns all groups the current user belongs to, with role + member/company counts.

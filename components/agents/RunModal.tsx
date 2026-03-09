@@ -5,7 +5,6 @@ import { useRouter }  from 'next/navigation'
 import { Play, X, Loader2 } from 'lucide-react'
 import { Button }    from '@/components/ui/button'
 import { Label }     from '@/components/ui/label'
-import { cn }        from '@/lib/utils'
 import type { Agent, Company } from '@/lib/types'
 
 // ─── Run Modal ─────────────────────────────────────────────────────────────────

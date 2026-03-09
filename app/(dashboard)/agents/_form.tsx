@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  ArrowLeft, Check, Plus, X, Eye, EyeOff, Loader2, Trash2,
+  ArrowLeft, Check, Plus, Eye, EyeOff, Loader2, Trash2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'

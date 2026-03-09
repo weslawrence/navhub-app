@@ -1,36 +1,210 @@
-import { Bot } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
+'use client'
+
+import { useState, useEffect } from 'react'
+import Link from 'next/link'
+import {
+  Bot, Plus, Play, Pencil, Clock, Zap,
+} from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Button }  from '@/components/ui/button'
+import { Badge }   from '@/components/ui/badge'
+import { cn }      from '@/lib/utils'
+import RunModal    from '@/components/agents/RunModal'
+import type { Agent, AgentTool } from '@/lib/types'
+
+// ─── Tool display config ──────────────────────────────────────────────────────
+
+const TOOL_LABELS: Record<AgentTool, string> = {
+  read_financials:  'Financials',
+  read_companies:   'Companies',
+  generate_report:  'Reports',
+  send_slack:       'Slack',
+  send_email:       'Email',
+}
+
+// ─── Agent avatar ─────────────────────────────────────────────────────────────
+
+function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' | 'lg' }) {
+  const initials = agent.name
+    .split(' ')
+    .slice(0, 2)
+    .map(w => w[0])
+    .join('')
+    .toUpperCase()
+
+  const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : size === 'lg' ? 'h-14 w-14 text-xl' : 'h-10 w-10 text-sm'
+
+  return (
+    <div
+      className={cn('rounded-full flex items-center justify-center font-semibold text-white shrink-0', sizeClass)}
+      style={{ backgroundColor: agent.avatar_color }}
+    >
+      {initials}
+    </div>
+  )
+}
+
+// ─── Agents list page ─────────────────────────────────────────────────────────
 
 export default function AgentsPage() {
+  const [agents,   setAgents]   = useState<Agent[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [isAdmin,  setIsAdmin]  = useState(false)
+  const [runTarget, setRunTarget] = useState<Agent | null>(null)
+
+  useEffect(() => {
+    async function load() {
+      const [agRes, grRes] = await Promise.all([
+        fetch('/api/agents'),
+        fetch('/api/groups/active'),
+      ])
+      const agJson = await agRes.json()
+      const grJson = await grRes.json()
+      if (agJson.data) setAgents(agJson.data)
+      if (grJson.data) setIsAdmin(grJson.data.is_admin)
+      setLoading(false)
+    }
+    void load()
+  }, [])
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">AI Agents</h1>
-        <p className="text-muted-foreground text-sm mt-1">
-          Configure and manage AI agents across your companies. Coming in a future phase.
-        </p>
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <Bot className="h-6 w-6" /> AI Agents
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">
+            Configure and run AI agents that analyse your financial data and take action
+          </p>
+        </div>
+        {isAdmin && (
+          <Button size="sm" asChild>
+            <Link href="/agents/new">
+              <Plus className="h-4 w-4 mr-1.5" /> New Agent
+            </Link>
+          </Button>
+        )}
       </div>
 
-      <Card className="max-w-md">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
-                <Bot className="h-5 w-5 text-muted-foreground" />
+      {/* Content */}
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => (
+            <Card key={i} className="animate-pulse">
+              <CardContent className="p-5 space-y-3">
+                <div className="flex gap-3">
+                  <div className="h-10 w-10 rounded-full bg-muted" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 bg-muted rounded w-3/4" />
+                    <div className="h-3 bg-muted rounded w-1/2" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      ) : agents.length === 0 ? (
+        <Card>
+          <CardContent className="py-16 text-center">
+            <Bot className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
+            <p className="text-base font-medium text-muted-foreground">No agents yet</p>
+            {isAdmin ? (
+              <div className="mt-4">
+                <Button size="sm" asChild>
+                  <Link href="/agents/new"><Plus className="h-4 w-4 mr-1.5" /> Create your first agent</Link>
+                </Button>
               </div>
-              <CardTitle className="text-base">AI Agents Module</CardTitle>
-            </div>
-            <Badge variant="secondary">Coming Soon</Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Agents will be able to monitor financial performance, surface anomalies,
-            and generate insights across companies and divisions — all scoped to your group.
-          </p>
-        </CardContent>
-      </Card>
+            ) : (
+              <p className="text-sm text-muted-foreground mt-1">Your group admins haven&apos;t created any agents yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {agents.map(agent => (
+            <AgentCard
+              key={agent.id}
+              agent={agent}
+              isAdmin={isAdmin}
+              onRun={() => setRunTarget(agent)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Run Modal */}
+      {runTarget && (
+        <RunModal agent={runTarget} onClose={() => setRunTarget(null)} />
+      )}
     </div>
+  )
+}
+
+// ─── Agent card ───────────────────────────────────────────────────────────────
+
+function AgentCard({
+  agent, isAdmin, onRun,
+}: {
+  agent:   Agent
+  isAdmin: boolean
+  onRun:   () => void
+}) {
+  const modelShort = agent.model === 'gpt-4o' ? 'GPT-4o'
+    : agent.model.includes('opus') ? 'Opus 4'
+    : 'Sonnet 4'
+
+  return (
+    <Card className="hover:border-primary/40 transition-colors">
+      <CardContent className="p-5 space-y-4">
+        {/* Header */}
+        <div className="flex items-start gap-3">
+          <AgentAvatar agent={agent} />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold truncate">{agent.name}</p>
+            {agent.description && (
+              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{agent.description}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Meta */}
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Zap className="h-3 w-3" />
+            <span>{modelShort}</span>
+          </div>
+          {agent.tools.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {agent.tools.map(tool => (
+                <Badge key={tool} variant="secondary" className="text-[10px] px-1.5 py-0">
+                  {TOOL_LABELS[tool] ?? tool}
+                </Badge>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" className="flex-1" onClick={onRun}>
+            <Play className="h-3.5 w-3.5 mr-1.5" /> Run
+          </Button>
+          {isAdmin && (
+            <Button size="sm" variant="outline" asChild>
+              <Link href={`/agents/${agent.id}/edit`}>
+                <Pencil className="h-3.5 w-3.5" />
+              </Link>
+            </Button>
+          )}
+          <Button size="sm" variant="outline" asChild>
+            <Link href={`/agents/${agent.id}/runs`}>
+              <Clock className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

@@ -62,7 +62,15 @@ app/
   (dashboard)/
     layout.tsx              # Auth check, loads active group, injects --group-primary
     dashboard/page.tsx      # Dashboard — 4-card layout: Overview, Position, Performance, Status
-    agents/page.tsx         # AI Agents stub — "Coming Soon"
+    agents/
+      page.tsx              # Agent list — 3-col grid, Run/Edit/History buttons (Phase 3a)
+      _form.tsx             # Shared create/edit form — 4 tabs: Identity, Behaviour, Tools, Credentials
+      new/page.tsx          # Create agent
+      [id]/
+        edit/page.tsx       # Edit agent
+        runs/page.tsx       # Run history — paginated table
+      runs/
+        [runId]/page.tsx    # Run stream view — SSE display + tool call blocks
     companies/
       page.tsx              # Companies list — client component, is_active toggle
       new/page.tsx          # Create company form
@@ -125,6 +133,15 @@ app/
         all/route.ts        # POST — sync all connections; accepts optional { period? } body
     cron/
       xero-sync/route.ts    # GET — nightly batch sync (Vercel Cron)
+    agents/
+      route.ts              # GET (list active agents) | POST (create, admin) (Phase 3a)
+      [id]/route.ts         # GET | PATCH | DELETE (soft) (Phase 3a)
+      [id]/credentials/route.ts # GET (no values) | POST (encrypt + store) (Phase 3a)
+      [id]/credentials/[credId]/route.ts # PATCH (re-encrypt) | DELETE (hard) (Phase 3a)
+      [id]/run/route.ts     # POST — create queued run record → returns run_id (Phase 3a)
+      [id]/runs/route.ts    # GET — paginated run history (Phase 3a)
+      runs/[runId]/info/route.ts  # GET — run + agent metadata (Phase 3a)
+      runs/[runId]/stream/route.ts # GET — SSE stream; executes or replays run (Phase 3a)
     excel/
       upload/route.ts       # POST — upload+parse Excel, upsert financial_snapshots
   layout.tsx                # Root HTML shell — ThemeProvider, metadata
@@ -156,6 +173,8 @@ components/
   integrations/
     ConnectXero.tsx         # CLIENT: entity selector + confirm dialog + OAuth popup
     SyncButton.tsx          # CLIENT: period selector + sync P&L/Balance Sheet buttons
+  agents/
+    RunModal.tsx            # CLIENT: period/company selector + POST run → navigate to stream (Phase 3a)
   excel/
     ExcelUpload.tsx         # CLIENT: drag-and-drop uploader, Step 1/Step 2 progression
 
@@ -167,8 +186,11 @@ lib/
   xero.ts                   # Xero OAuth helpers + token management + data normalisation
   themes.ts                 # Palette definitions + getPalette() + buildPaletteCSS() (Phase 2c)
   financial.ts              # extractRows(), getRowValue(), sumGroupTotal(), getPeriodLabel() (Phase 2d)
-  types.ts                  # TypeScript types for all DB entities + financial data
+  types.ts                  # TypeScript types for all DB entities + financial data + agent types
   utils.ts                  # cn(), formatCurrency(amount,format,currency), formatVariance(), period helpers, generateSlug()
+  encryption.ts             # AES-256-GCM encrypt/decrypt — server only (Phase 3a)
+  agent-tools.ts            # Tool implementations: read_financials, send_email etc (Phase 3a)
+  agent-runner.ts           # Execution engine: streaming Claude/GPT-4o, tool loop, run persistence (Phase 3a)
 
 supabase/
   migrations/
@@ -178,6 +200,7 @@ supabase/
     004_group_palette.sql   # ADD palette_id to groups (Phase 2c)
     005_forecast.sql        # forecast_streams + forecast_user_state tables + RLS (Phase 2e)
     006_group_management.sql # group_invites + custom_reports tables + RLS (Phase 2f)
+    007_agents.sql          # agents + agent_credentials + agent_runs + agent_schedules (Phase 3a)
 
 docs/
   AI_Agent_Module_Build_Spec.md  # Agent module spec (Claude API integration plan)
@@ -711,7 +734,73 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 2d | ✅ Complete | Financial report pages (P&L, Balance Sheet), Reports nav, ConnectXero UX, period-aware sync |
 | Phase 2e | ✅ Complete | Revenue Forecast Model — streams, 7-year projection, sliders, share link, auto-save |
 | Phase 2f | ✅ Complete | Group management (members/invites), Settings tabs, Custom Reports library + viewer |
-| Phase 3 | Planned | AI Agents (Claude API integration) — see docs/AI_Agent_Module_Build_Spec.md |
+| Phase 3a | ✅ Complete | AI Agent Foundation — CRUD, credentials, streaming execution engine, run history |
+| Phase 3b | Planned | Agent scheduling, email inbound triggers, Slack slash commands |
+
+---
+
+## Phase 3a — AI Agent Foundation
+
+### Database (migration 007)
+- **`agents`** — per-group agent config (model, persona, tools, scope, email/Slack settings)
+- **`agent_credentials`** — AES-256-GCM encrypted credentials per agent; value never returned to client
+- **`agent_runs`** — run history with streamed output, tool call log, token usage
+- **`agent_schedules`** — stub table for future cron-based scheduling
+- `groups` table extended with `slack_webhook_url`, `slack_default_channel`, email domain fields
+- `custom_reports` extended with `is_draft`, `draft_notes`, `agent_run_id`
+
+### Encryption (`lib/encryption.ts`)
+- AES-256-GCM, 96-bit IV, server-side only
+- Key: `NAVHUB_ENCRYPTION_KEY` env var (64-char hex = 32 bytes)
+- Format: `base64(iv):base64(authTag):base64(ciphertext)`
+
+### Agent tools (`lib/agent-tools.ts`)
+Five callable tools:
+- `read_financials` — queries financial_snapshots, returns summary string
+- `read_companies` — lists companies + Xero status
+- `generate_report` — converts markdown → styled HTML → saves to Storage as draft
+- `send_slack` — posts to group's Slack webhook
+- `send_email` — sends via Resend API from agent's email address
+
+### Agent runner (`lib/agent-runner.ts`)
+- Builds system prompt with context (date, period, company scope, available periods)
+- Supports Claude (Anthropic API, streaming SSE) and GPT-4o (OpenAI API)
+- Agentic loop: calls model → executes tool calls → continues until no more tools
+- Emits `RunEvent` stream: `text` | `tool_start` | `tool_end` | `error` | `done`
+- Saves completed output + tool_calls to `agent_runs` on completion
+
+### API routes
+```
+GET  /api/agents                                  → list agents (active group)
+POST /api/agents                                  → create agent (admin)
+GET  /api/agents/[id]                             → single agent
+PATCH  /api/agents/[id]                           → update agent (admin)
+DELETE /api/agents/[id]                           → soft delete (admin)
+GET  /api/agents/[id]/credentials                 → list credentials (no values)
+POST /api/agents/[id]/credentials                 → add credential (encrypted)
+PATCH  /api/agents/[id]/credentials/[credId]      → update/re-encrypt credential
+DELETE /api/agents/[id]/credentials/[credId]      → hard delete credential
+POST /api/agents/[id]/run                         → create run record → returns run_id
+GET  /api/agents/[id]/runs                        → run history (paginated)
+GET  /api/agents/runs/[runId]/info                → run + agent metadata
+GET  /api/agents/runs/[runId]/stream              → SSE stream (executes or replays run)
+```
+
+### Agent UI pages
+- `/agents` — grid of agent cards with Run / Edit / History buttons
+- `/agents/new` — create agent (Identity → Behaviour → Tools tabs)
+- `/agents/[id]/edit` — edit agent (4 tabs including Credentials tab)
+- `/agents/[id]/runs` — paginated run history table
+- `/agents/runs/[runId]` — real-time stream view with tool call blocks + output
+
+### Required environment variables
+- `NAVHUB_ENCRYPTION_KEY` — 32-byte hex (MUST be in Vercel env vars)
+- `ANTHROPIC_API_KEY` — from console.anthropic.com (MUST be in Vercel env vars)
+- `RESEND_API_KEY` — from resend.com (required for send_email tool)
+- `RESEND_FROM_DOMAIN` — e.g. `navhub.co`
+
+### AppShell note
+Agents nav item already existed as Bot icon → `/agents`. No change needed to sidebar.
 
 ---
 
@@ -719,7 +808,8 @@ Three tabs: **Display** | **Group** | **Members**
 
 1. Set up Supabase Storage bucket `report-files` with RLS policies (manual — see Phase 2f section)
 2. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
-3. Add `error.tsx` files for each route segment
-4. Build AI Agent module (see `docs/AI_Agent_Module_Build_Spec.md`)
-5. Add cashflow report page at `/reports/cashflow`
-6. Add chart visualisations to financial report pages (trend lines, bar charts)
+3. Add `NAVHUB_ENCRYPTION_KEY` and `ANTHROPIC_API_KEY` to Vercel environment variables
+4. Run migration `007_agents.sql` in Supabase dashboard
+5. Add `error.tsx` files for each route segment
+6. Add cashflow report page at `/reports/cashflow`
+7. Add chart visualisations to financial report pages (trend lines, bar charts)

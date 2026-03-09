@@ -1,0 +1,59 @@
+import { NextResponse }     from 'next/server'
+import { cookies }           from 'next/headers'
+import { createClient }      from '@/lib/supabase/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+
+export const runtime = 'nodejs'
+
+// ── POST /api/agents/[id]/run ─────────────────────────────────────────────────
+// Creates an agent_run record and returns the run_id.
+// Actual execution happens via the SSE stream endpoint.
+
+export async function POST(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase   = createClient()
+  const cookieStore = cookies()
+  const activeGroupId = cookieStore.get('active_group_id')?.value
+
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
+
+  // Verify agent exists and user has access (RLS)
+  const { data: agent } = await supabase
+    .from('agents')
+    .select('id, group_id, is_active')
+    .eq('id', params.id)
+    .eq('group_id', activeGroupId)
+    .single()
+
+  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+  if (!agent.is_active) return NextResponse.json({ error: 'Agent is inactive' }, { status: 422 })
+
+  let body: Record<string, unknown> = {}
+  try { body = await request.json() } catch { /* body optional */ }
+
+  const admin = createAdminClient()
+  const { data: run, error } = await admin
+    .from('agent_runs')
+    .insert({
+      agent_id:          params.id,
+      group_id:          activeGroupId,
+      triggered_by:      'manual',
+      triggered_by_user: session.user.id,
+      status:            'queued',
+      input_context:     {
+        period:               typeof body.period              === 'string' ? body.period : undefined,
+        company_ids:          Array.isArray(body.company_ids) ? body.company_ids : undefined,
+        extra_instructions:   typeof body.extra_instructions  === 'string' ? body.extra_instructions : undefined,
+      },
+    })
+    .select('id')
+    .single()
+
+  if (error || !run) return NextResponse.json({ error: error?.message ?? 'Failed to create run' }, { status: 500 })
+
+  return NextResponse.json({ data: { run_id: run.id } }, { status: 201 })
+}

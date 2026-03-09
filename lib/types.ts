@@ -240,6 +240,139 @@ export interface ForecastUserState {
 }
 
 // ============================================================
+// Agent types  (Phase 3a)
+// ============================================================
+
+export type AgentModel =
+  | 'claude-sonnet-4-20250514'
+  | 'claude-opus-4-20250514'
+  | 'gpt-4o'
+
+export type AgentTool =
+  | 'read_financials'
+  | 'read_companies'
+  | 'generate_report'
+  | 'send_slack'
+  | 'send_email'
+
+export type PersonaPreset =
+  | 'executive_analyst'
+  | 'business_writer'
+  | 'operations_assistant'
+  | 'custom'
+
+export type RunStatus =
+  | 'queued' | 'running' | 'success' | 'error' | 'cancelled'
+
+export interface Agent {
+  id:                 string
+  group_id:           string
+  name:               string
+  description:        string | null
+  avatar_color:       string
+  model:              AgentModel
+  persona_preset:     PersonaPreset
+  persona:            string | null
+  instructions:       string | null
+  tools:              AgentTool[]
+  company_scope:      string[] | null
+  email_address:      string | null
+  email_display_name: string | null
+  email_recipients:   string[] | null
+  slack_channel:      string | null
+  is_active:          boolean
+  created_at:         string
+  updated_at:         string
+}
+
+export interface AgentCredential {
+  id:           string
+  agent_id:     string
+  name:         string
+  key:          string
+  description:  string | null
+  last_used_at: string | null
+  expires_at:   string | null
+  is_active:    boolean
+  created_at:   string
+  // value is NEVER returned to client
+}
+
+export interface ToolCallLog {
+  tool:        string
+  input:       Record<string, unknown>
+  output:      string
+  timestamp:   string
+  duration_ms: number
+}
+
+export interface AgentRun {
+  id:                string
+  agent_id:          string
+  group_id:          string
+  triggered_by:      string
+  triggered_by_user: string | null
+  status:            RunStatus
+  input_context: {
+    period?:              string
+    company_ids?:         string[]
+    extra_instructions?:  string
+  }
+  output:           string | null
+  output_type:      string
+  tool_calls:       ToolCallLog[]
+  model_used:       string | null
+  tokens_used:      number | null
+  error_message:    string | null
+  draft_report_id:  string | null
+  started_at:       string | null
+  completed_at:     string | null
+  created_at:       string
+}
+
+export const PERSONA_PRESETS: Record<PersonaPreset, string> = {
+  executive_analyst:
+    'You communicate in a formal, concise tone suited for executive audiences. ' +
+    'Lead with key numbers and insights. Structure responses with an executive ' +
+    'summary first, detail second. Flag risks clearly without being alarmist. Be direct.',
+  business_writer:
+    'You write in clear, engaging prose with a professional but approachable tone. ' +
+    'Use narrative structure to tell the story behind the numbers. Avoid jargon. ' +
+    'Make complex financial information accessible to non-finance readers.',
+  operations_assistant:
+    'You are practical and action-oriented. Use bullet points and checklists. ' +
+    'Prioritise next steps and actionable recommendations. Keep responses concise. ' +
+    'Flag blockers and dependencies clearly.',
+  custom: '',
+}
+
+export const MODEL_OPTIONS: Array<{
+  value:       AgentModel
+  label:       string
+  description: string
+  tier:        'standard' | 'advanced' | 'external'
+}> = [
+  {
+    value:       'claude-sonnet-4-20250514',
+    label:       'Claude Sonnet 4',
+    description: 'Fast and cost-effective. Best for routine tasks.',
+    tier:        'standard',
+  },
+  {
+    value:       'claude-opus-4-20250514',
+    label:       'Claude Opus 4',
+    description: 'Most capable. Best for complex analysis.',
+    tier:        'advanced',
+  },
+  {
+    value:       'gpt-4o',
+    label:       'GPT-4o',
+    description: 'OpenAI model. Requires OPENAI_API_KEY credential.',
+    tier:        'external',
+  },
+]
+
+// ============================================================
 // API response types
 // ============================================================
 

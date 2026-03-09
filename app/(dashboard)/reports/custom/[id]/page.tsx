@@ -22,34 +22,33 @@ export default function ReportViewerPage() {
   const [error,     setError]       = useState<string | null>(null)
   const [deleting,  setDeleting]    = useState(false)
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
-      setError(null)
-      try {
-        // Load signed URL + admin status in parallel
-        const [fileRes, groupRes] = await Promise.all([
-          fetch(`/api/reports/custom/${params.id}/file`),
-          fetch('/api/groups/active'),
-        ])
-        const fileJson  = await fileRes.json()
-        const groupJson = await groupRes.json()
+useEffect(() => {
+  async function load() {
+    setLoading(true)
+    setError(null)
+    try {
+      const [metaRes, groupRes] = await Promise.all([
+        fetch(`/api/reports/custom/${params.id}`),
+        fetch('/api/groups/active'),
+      ])
+      const metaJson  = await metaRes.json()
+      const groupJson = await groupRes.json()
 
-        if (!fileRes.ok) {
-          throw new Error(fileJson.error ?? 'Report not found')
-        }
-
-        setSignedUrl(fileJson.data.url)
-        setReportName(fileJson.data.name)
-        if (groupJson.data) setIsAdmin(groupJson.data.is_admin)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load report')
-      } finally {
-        setLoading(false)
+      if (!metaRes.ok) {
+        throw new Error(metaJson.error ?? 'Report not found')
       }
+
+      setReportName(metaJson.data.name)
+      if (groupJson.data) setIsAdmin(groupJson.data.is_admin)
+      setSignedUrl('ready') // just a truthy flag to show the iframe
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load report')
+    } finally {
+      setLoading(false)
     }
-    void load()
-  }, [params.id])
+  }
+  void load()
+}, [params.id])
 
   async function handleDelete() {
     if (!confirm(`Delete "${reportName}"? This cannot be undone.`)) return
@@ -139,7 +138,7 @@ export default function ReportViewerPage() {
 
         {signedUrl && !loading && !error && (
           <iframe
-            src={signedUrl}
+            src={`/api/reports/custom/${params.id}/file`}
             title={reportName || 'Custom Report'}
             className="w-full h-full border-0"
             sandbox="allow-scripts allow-same-origin"

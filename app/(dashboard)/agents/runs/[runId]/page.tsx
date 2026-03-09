@@ -134,11 +134,11 @@ export default function RunStreamPage() {
     }
   }, [textOutput, toolEvents])
 
-  const loadMetaAndStream = useCallback(async () => {
+const loadMetaAndStream = useCallback(async () => {
     // Load run metadata first
-    // Load via generic run lookup
+    const runRes = await fetch(`/api/agents/runs/${params.runId}/stream`).catch(() => null)
     if (!runRes) { setLoading(false); setErrorMsg('Failed to connect to stream'); return }
-
+    
     // Load run info separately
     const infoRes = await fetch(`/api/agents/runs/${params.runId}/info`).catch(() => null)
     if (infoRes?.ok) {

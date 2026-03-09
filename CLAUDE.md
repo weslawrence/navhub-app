@@ -735,7 +735,8 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 2e | ✅ Complete | Revenue Forecast Model — streams, 7-year projection, sliders, share link, auto-save |
 | Phase 2f | ✅ Complete | Group management (members/invites), Settings tabs, Custom Reports library + viewer |
 | Phase 3a | ✅ Complete | AI Agent Foundation — CRUD, credentials, streaming execution engine, run history |
-| Phase 3b | Planned | Agent scheduling, email inbound triggers, Slack slash commands |
+| Phase 3b | ✅ Complete | Settings overhaul (5-tab), Excel upload pipeline, FY-aware periods, Xero connection matching, CreateGroup modal |
+| Phase 3c | Planned | Agent scheduling, email inbound triggers, Slack slash commands |
 
 ---
 
@@ -810,6 +811,72 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 2. Set up Supabase Storage bucket `excel-uploads` with appropriate policies
 3. Add `NAVHUB_ENCRYPTION_KEY` and `ANTHROPIC_API_KEY` to Vercel environment variables
 4. Run migration `007_agents.sql` in Supabase dashboard
-5. Add `error.tsx` files for each route segment
-6. Add cashflow report page at `/reports/cashflow`
-7. Add chart visualisations to financial report pages (trend lines, bar charts)
+5. **Run migration `008_settings.sql`** in Supabase dashboard (Phase 3b — fy_end_month + excel_uploads fields)
+6. Add `error.tsx` files for each route segment
+7. Add cashflow report page at `/reports/cashflow`
+8. Add chart visualisations to financial report pages (trend lines, bar charts)
+
+---
+
+## Phase 3b — Settings Overhaul + Excel Upload Pipeline
+
+### Database (migration 008)
+- `user_settings.fy_end_month` — integer 1–12, default 6 (June); drives FY quarter/year calculations
+- `excel_uploads.report_type` — 'pl' | 'bs' | 'tb'
+- `excel_uploads.period_value` — YYYY-MM string
+- `excel_uploads.column_mapping` — JSONB, reserved for future custom column mapping
+- `excel_uploads.status` — 'processed' | 'error'
+- `excel_uploads.error_message` — error detail on failure
+
+### Settings Page (5-tab rebuild)
+`app/(dashboard)/settings/page.tsx` — replaced 3-tab layout with 5-tab layout:
+- **Display** (`components/settings/DisplayTab.tsx`) — Group name, palette (admin), number format, currency, FY end month; Save Preferences button styled with `--palette-primary`
+- **Companies** (`components/settings/CompaniesTab.tsx`) — company list with add/edit/view links; replaces `/companies` route
+- **Integrations** (`components/settings/IntegrationsTab.tsx`) — Xero connections with link/unlink dropdown, ConnectXero; replaces `/integrations` route
+- **Uploads** (`components/settings/UploadsTab.tsx`) — 5-step upload pipeline: entity → report type → period → download template → upload; previous uploads table
+- **Members** (`components/settings/MembersTab.tsx`) — invite form, member list with role selector + remove, pending invites + revoke; user email shown here
+
+### Route Changes
+- `/companies` → `redirect('/settings?tab=companies')` — sidebar no longer links to /companies separately
+- `/integrations` → `redirect('/settings?tab=integrations')` — sidebar no longer links to /integrations
+- Companies and Integrations removed from `BOTTOM_NAV` in AppShell (Settings tab handles both)
+
+### FY-Aware Period System
+- `lib/periods.ts` — FY-aware helpers: `getFYYear()`, `getFYQuarter()`, `getFYQuarterMonths()`, `getFYAllMonths()`, `getQTDMonthsFY()`, `getYTDMonthsFY()`, `buildPeriodOptions()`
+- `lib/hooks/useUserSettings.ts` — React hook that fetches `/api/settings`, returns `{ currency, numberFormat, fyEndMonth }`
+- `components/ui/PeriodSelector.tsx` — mode toggle (Month | Quarter | FY Year), dropdown of period options; accepts `fyEndMonth` prop
+
+### Excel Upload Pipeline
+- `GET /api/uploads/template?type=pl|bs|tb` — generates + downloads .xlsx template using xlsx package
+  - P&L template: pre-populated Category/Subcategory/Line Item/Amount with standard AU P&L sections
+  - Balance Sheet template: pre-populated with asset/liability/equity sections
+  - Trial Balance template: blank Account Code/Account Name/Debit/Credit
+- `POST /api/uploads/process` — multipart: file + entity_type + entity_id + report_type + period_value; parses xlsx, upserts to `financial_snapshots` in same JSONB format as Xero, records in `excel_uploads`
+- `GET /api/uploads` — list uploads for active group (with company/division join)
+- `DELETE /api/uploads/[uploadId]` — hard delete upload record
+
+### Xero Connection Matching (Fix 3)
+- `GET /api/xero/connections` — list all Xero connections for active group with company/division joins
+- `PATCH /api/xero/connections/[connectionId]` — link/unlink to entity (`{ entity_type, entity_id }`)
+- `DELETE /api/xero/connections/[connectionId]` — disconnect (hard delete)
+- IntegrationsTab shows "Linked to" dropdown per connection; updates on change
+
+### CreateGroupModal (Fix 4)
+- `components/groups/CreateGroupModal.tsx` — modal with group name input + palette selector + Create button
+- Added to AppShell user dropdown — visible only to `super_admin` users
+- On create: inserts group, redirects to `/dashboard` after success
+- Removed "Create Group" card from Settings page entirely
+
+### AppShell Changes
+- `isSuperAdmin` flag derived from active role
+- User dropdown: "Create Group" item (super_admin only) above Sign Out
+- `CreateGroupModal` rendered conditionally in AppShell
+- `BOTTOM_NAV` simplified to `[Agents, Settings]` — Companies & Integrations now accessible via Settings tabs
+- AvatarFallback text colour uses explicit `color: '#ffffff'` to avoid white-on-white in light mode
+
+### Text Contrast (Fix 5)
+- All tab components use `text-foreground` for body text on light backgrounds
+- `text-muted-foreground` for secondary/helper text
+- Palette/section heading use `text-foreground` not `text-white`
+- `select` elements use `text-foreground` + `bg-background` for light mode compatibility
+- AppShell sidebar uses `var(--palette-surface)` (always dark) so `text-white` remains correct there

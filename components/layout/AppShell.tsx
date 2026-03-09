@@ -6,9 +6,6 @@ import { usePathname } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import {
   LayoutDashboard,
-  Building2,
-  Plug,
-  Bot,
   Settings,
   Menu,
   X,
@@ -20,6 +17,8 @@ import {
   BarChart2,
   ChevronDown,
   TrendingUp,
+  Bot,
+  Plus,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -41,32 +40,30 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { getPalette } from '@/lib/themes'
 import type { Group, UserGroup } from '@/lib/types'
+import CreateGroupModal from '@/components/groups/CreateGroupModal'
 
 // ============================================================
-// Nav structure — flat links + one grouped section for Reports
+// Nav structure
 // ============================================================
 
 const REPORT_CHILDREN = [
-  { label: 'Profit & Loss',    href: '/reports/profit-loss' },
-  { label: 'Balance Sheet',    href: '/reports/balance-sheet' },
-  { label: 'Reports Library',  href: '/reports/custom' },
+  { label: 'Profit & Loss',   href: '/reports/profit-loss' },
+  { label: 'Balance Sheet',   href: '/reports/balance-sheet' },
+  { label: 'Reports Library', href: '/reports/custom' },
 ]
 
-// Forecasting sub-items — Stream Setup only visible to admins (filtered at render time)
 const FORECAST_CHILDREN_BASE = [
   { label: 'Revenue Model', href: '/forecasting/revenue', adminOnly: false },
   { label: 'Stream Setup',  href: '/forecasting/setup',   adminOnly: true  },
 ]
 
 const TOP_NAV = [
-  { label: 'Dashboard',    href: '/dashboard',    Icon: LayoutDashboard },
+  { label: 'Dashboard', href: '/dashboard', Icon: LayoutDashboard },
 ] as const
 
 const BOTTOM_NAV = [
-  { label: 'Companies',    href: '/companies',    Icon: Building2 },
-  { label: 'Integrations', href: '/integrations', Icon: Plug },
-  { label: 'Agents',       href: '/agents',       Icon: Bot },
-  { label: 'Settings',     href: '/settings',     Icon: Settings },
+  { label: 'Agents',   href: '/agents',   Icon: Bot      },
+  { label: 'Settings', href: '/settings', Icon: Settings  },
 ] as const
 
 // ============================================================
@@ -88,17 +85,17 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
 
-  const [collapsed,      setCollapsed]      = useState(false)
-  const [mobileOpen,     setMobileOpen]     = useState(false)
-  const [mounted,        setMounted]        = useState(false)
-  // Reports group defaults to open when on a /reports/* route
-  const [reportsOpen,    setReportsOpen]    = useState(() => pathname.startsWith('/reports'))
-  // Forecasting group defaults to open when on a /forecasting/* route
-  const [forecastOpen,   setForecastOpen]   = useState(() => pathname.startsWith('/forecasting'))
+  const [collapsed,     setCollapsed]     = useState(false)
+  const [mobileOpen,    setMobileOpen]    = useState(false)
+  const [mounted,       setMounted]       = useState(false)
+  const [reportsOpen,   setReportsOpen]   = useState(() => pathname.startsWith('/reports'))
+  const [forecastOpen,  setForecastOpen]  = useState(() => pathname.startsWith('/forecasting'))
+  const [showCreateGrp, setShowCreateGrp] = useState(false)
 
   // Derive admin status from active group membership
   const activeRole = groups.find(g => g.group_id === activeGroup.id)?.role
-  const isAdmin = activeRole === 'super_admin' || activeRole === 'group_admin'
+  const isAdmin    = activeRole === 'super_admin' || activeRole === 'group_admin'
+  const isSuperAdmin = activeRole === 'super_admin'
 
   // Apply full palette CSS vars on mount / group change
   useEffect(() => {
@@ -110,14 +107,12 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     document.documentElement.style.setProperty('--group-primary',     palette.primary)
   }, [activeGroup.palette_id])
 
-  // Load sidebar state from localStorage after mount
   useEffect(() => {
     setMounted(true)
     const saved = localStorage.getItem('navhub-sidebar')
     if (saved === 'collapsed') setCollapsed(true)
   }, [])
 
-  // Expand nav groups when navigating to their routes
   useEffect(() => {
     if (pathname.startsWith('/reports'))     setReportsOpen(true)
     if (pathname.startsWith('/forecasting')) setForecastOpen(true)
@@ -129,9 +124,9 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     localStorage.setItem('navhub-sidebar', next ? 'collapsed' : 'expanded')
   }
 
-  const userInitials     = user.email.slice(0, 2).toUpperCase()
-  const reportsActive    = pathname.startsWith('/reports')
-  const forecastActive   = pathname.startsWith('/forecasting')
+  const userInitials   = user.email.slice(0, 2).toUpperCase()
+  const reportsActive  = pathname.startsWith('/reports')
+  const forecastActive = pathname.startsWith('/forecasting')
 
   // ────────────────────────────────────────────────────────
   // Sidebar
@@ -173,16 +168,13 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
 
   function ReportsGroup({ mobile = false }: { mobile?: boolean }) {
     const expanded = !collapsed || mobile
-
     return (
       <div>
-        {/* Group header */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               onClick={() => {
                 if (collapsed && !mobile) {
-                  // Expand sidebar first, then open group
                   toggleSidebar()
                   setReportsOpen(true)
                 } else {
@@ -197,9 +189,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                 collapsed && !mobile ? 'justify-center px-2' : 'px-2'
               )}
               style={{
-                borderLeft: reportsActive
-                  ? '3px solid var(--palette-primary)'
-                  : '3px solid transparent',
+                borderLeft:  reportsActive ? '3px solid var(--palette-primary)' : '3px solid transparent',
                 paddingLeft: '5px',
               }}
             >
@@ -217,12 +207,9 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
               )}
             </button>
           </TooltipTrigger>
-          {collapsed && !mobile && (
-            <TooltipContent side="right">Reports</TooltipContent>
-          )}
+          {collapsed && !mobile && <TooltipContent side="right">Reports</TooltipContent>}
         </Tooltip>
 
-        {/* Sub-items */}
         {reportsOpen && expanded && (
           <div className="mt-0.5 ml-4 space-y-0.5">
             {REPORT_CHILDREN.map(child => {
@@ -234,9 +221,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                   onClick={() => setMobileOpen(false)}
                   className={cn(
                     'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
-                    active
-                      ? 'text-white bg-white/10'
-                      : 'text-white/50 hover:text-white hover:bg-white/10'
+                    active ? 'text-white bg-white/10' : 'text-white/50 hover:text-white hover:bg-white/10'
                   )}
                   style={
                     active
@@ -255,12 +240,10 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   }
 
   function ForecastGroup({ mobile = false }: { mobile?: boolean }) {
-    const expanded = !collapsed || mobile
+    const expanded       = !collapsed || mobile
     const forecastChildren = FORECAST_CHILDREN_BASE.filter(c => !c.adminOnly || isAdmin)
-
     return (
       <div>
-        {/* Group header */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -280,9 +263,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                 collapsed && !mobile ? 'justify-center px-2' : 'px-2'
               )}
               style={{
-                borderLeft: forecastActive
-                  ? '3px solid var(--palette-primary)'
-                  : '3px solid transparent',
+                borderLeft:  forecastActive ? '3px solid var(--palette-primary)' : '3px solid transparent',
                 paddingLeft: '5px',
               }}
             >
@@ -300,12 +281,9 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
               )}
             </button>
           </TooltipTrigger>
-          {collapsed && !mobile && (
-            <TooltipContent side="right">Forecasting</TooltipContent>
-          )}
+          {collapsed && !mobile && <TooltipContent side="right">Forecasting</TooltipContent>}
         </Tooltip>
 
-        {/* Sub-items */}
         {forecastOpen && expanded && (
           <div className="mt-0.5 ml-4 space-y-0.5">
             {forecastChildren.map(child => {
@@ -317,9 +295,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                   onClick={() => setMobileOpen(false)}
                   className={cn(
                     'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
-                    active
-                      ? 'text-white bg-white/10'
-                      : 'text-white/50 hover:text-white hover:bg-white/10'
+                    active ? 'text-white bg-white/10' : 'text-white/50 hover:text-white hover:bg-white/10'
                   )}
                   style={
                     active
@@ -353,24 +329,16 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
           style={{ backgroundColor: 'var(--palette-surface)' }}
         >
           <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
-            {/* Top nav items */}
             {TOP_NAV.map(item => (
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}
-
-            {/* Reports group */}
-            <ReportsGroup mobile={mobile} />
-
-            {/* Forecasting group */}
+            <ReportsGroup  mobile={mobile} />
             <ForecastGroup mobile={mobile} />
-
-            {/* Bottom nav items */}
             {BOTTOM_NAV.map(item => (
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}
           </nav>
 
-          {/* Collapse toggle — desktop only */}
           {!mobile && mounted && (
             <div className="border-t border-white/10 p-2">
               <button
@@ -399,7 +367,6 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
         className="fixed top-0 inset-x-0 z-40 h-14 bg-background/95 backdrop-blur flex items-center gap-3 px-4"
         style={{ borderBottom: '2px solid var(--palette-primary)' }}
       >
-        {/* Mobile sidebar toggle */}
         <button
           className="lg:hidden text-muted-foreground hover:text-foreground"
           onClick={() => setMobileOpen(o => !o)}
@@ -408,7 +375,6 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
           {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
 
-        {/* Desktop sidebar toggle */}
         <button
           className="hidden lg:block text-muted-foreground hover:text-foreground"
           onClick={toggleSidebar}
@@ -417,20 +383,17 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
           <Menu className="h-5 w-5" />
         </button>
 
-        {/* Wordmark */}
         <Link href="/dashboard" className="font-bold text-lg tracking-tight mr-2">
           Nav<span style={{ color: 'var(--palette-primary)' }}>Hub</span>
         </Link>
 
         <div className="flex-1" />
 
-        {/* Right side: GroupSwitcher + theme toggle + user menu */}
         <div className="flex items-center gap-2">
           {groups.length > 0 && (
             <GroupSwitcher groups={groups} activeGroup={activeGroup} />
           )}
 
-          {/* Theme toggle */}
           {mounted && (
             <button
               onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
@@ -446,8 +409,8 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
             <DropdownMenuTrigger className="focus:outline-none">
               <Avatar className="h-8 w-8 cursor-pointer">
                 <AvatarFallback
-                  className="text-xs text-white font-semibold"
-                  style={{ backgroundColor: 'var(--palette-primary)' }}
+                  className="text-xs font-semibold"
+                  style={{ backgroundColor: 'var(--palette-primary)', color: '#ffffff' }}
                 >
                   {userInitials}
                 </AvatarFallback>
@@ -458,6 +421,21 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
                 <p className="text-xs text-muted-foreground truncate">{user.email}</p>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
+
+              {/* Create Group — super_admin only */}
+              {isSuperAdmin && (
+                <>
+                  <DropdownMenuItem
+                    onSelect={() => setShowCreateGrp(true)}
+                    className="cursor-pointer text-foreground"
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Create Group
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
+
               <DropdownMenuItem
                 onSelect={async () => { await signOut() }}
                 className="text-destructive focus:text-destructive cursor-pointer"
@@ -470,12 +448,15 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
         </div>
       </header>
 
+      {/* Create Group Modal */}
+      {showCreateGrp && (
+        <CreateGroupModal onClose={() => setShowCreateGrp(false)} />
+      )}
+
       {/* ── Body ── */}
       <div className="flex flex-1 pt-14">
-        {/* Desktop sidebar */}
         <Sidebar />
 
-        {/* Mobile sidebar overlay */}
         {mobileOpen && (
           <>
             <div
@@ -486,7 +467,6 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
           </>
         )}
 
-        {/* Main content */}
         <main className="flex-1 overflow-auto p-6">
           {children}
         </main>

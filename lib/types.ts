@@ -5,7 +5,7 @@
 export type UserRole = 'super_admin' | 'group_admin' | 'company_viewer' | 'division_viewer'
 export type ReportType = 'profit_loss' | 'balance_sheet' | 'cashflow'
 export type DataSource = 'xero' | 'excel'
-export type UploadStatus = 'processing' | 'complete' | 'error'
+export type UploadStatus = 'processing' | 'complete' | 'error' | 'processed'
 export type SyncStatus = 'success' | 'error'
 export type EntityType = 'company' | 'division'
 
@@ -75,15 +75,19 @@ export interface FinancialSnapshot {
 }
 
 export interface ExcelUpload {
-  id: string
-  company_id: string | null
-  division_id: string | null
-  filename: string
-  storage_path: string
-  uploaded_by: string
-  uploaded_at: string
-  status: UploadStatus
-  error_message: string | null
+  id:             string
+  company_id:     string | null
+  division_id:    string | null
+  filename:       string
+  storage_path:   string
+  uploaded_by:    string
+  uploaded_at:    string
+  status:         UploadStatus
+  error_message:  string | null
+  // Phase 3b additions
+  report_type?:   'pl' | 'bs' | 'tb' | null
+  period_value?:  string | null
+  column_mapping?: Record<string, string> | null
 }
 
 export interface SyncLog {
@@ -128,6 +132,7 @@ export interface UserSettings {
   user_id:       string
   currency:      SupportedCurrency
   number_format: NumberFormat
+  fy_end_month:  number    // 1–12; 6 = June (AU standard), Phase 3b
   created_at:    string
   updated_at:    string
 }

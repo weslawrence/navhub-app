@@ -10,7 +10,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
 import { cn }     from '@/lib/utils'
-import type { Agent, AgentRun, RunStatus, ToolCallLog } from '@/lib/types'
+import type { Agent, AgentRun, RunStatus } from '@/lib/types'
 import type { RunEvent } from '@/lib/agent-runner'
 
 // ─── Status config ─────────────────────────────────────────────────────────
@@ -136,9 +136,7 @@ export default function RunStreamPage() {
 
   const loadMetaAndStream = useCallback(async () => {
     // Load run metadata first
-    const res = await fetch(`/api/agents/${params.runId}/runs`).catch(() => null)
     // Load via generic run lookup
-    const runRes = await fetch(`/api/agents/runs/${params.runId}/stream`).catch(() => null)
     if (!runRes) { setLoading(false); setErrorMsg('Failed to connect to stream'); return }
 
     // Load run info separately

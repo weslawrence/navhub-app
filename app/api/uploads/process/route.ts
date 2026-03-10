@@ -24,7 +24,7 @@ interface TemplateRow {
   Amount?:      unknown
 }
 
-function parsePLOrBS(rows: TemplateRow[], _reportType: ReportTypeKey): FinancialRow[] {
+function parsePLOrBS(rows: TemplateRow[]): FinancialRow[] {
   const financial: FinancialRow[] = []
   let currentSection: FinancialRow | null = null
 

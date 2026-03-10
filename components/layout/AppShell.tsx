@@ -19,6 +19,7 @@ import {
   TrendingUp,
   Bot,
   Plus,
+  Banknote,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -57,6 +58,10 @@ const FORECAST_CHILDREN_BASE = [
   { label: 'Stream Setup',  href: '/forecasting/setup',   adminOnly: true  },
 ]
 
+const CASHFLOW_CHILDREN = [
+  { label: 'Overview', href: '/cashflow' },
+]
+
 const TOP_NAV = [
   { label: 'Dashboard', href: '/dashboard', Icon: LayoutDashboard },
 ] as const
@@ -90,6 +95,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   const [mounted,       setMounted]       = useState(false)
   const [reportsOpen,   setReportsOpen]   = useState(() => pathname.startsWith('/reports'))
   const [forecastOpen,  setForecastOpen]  = useState(() => pathname.startsWith('/forecasting'))
+  const [cashflowOpen,  setCashflowOpen]  = useState(() => pathname.startsWith('/cashflow'))
   const [showCreateGrp, setShowCreateGrp] = useState(false)
 
   // Derive admin status from active group membership
@@ -116,6 +122,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   useEffect(() => {
     if (pathname.startsWith('/reports'))     setReportsOpen(true)
     if (pathname.startsWith('/forecasting')) setForecastOpen(true)
+    if (pathname.startsWith('/cashflow'))    setCashflowOpen(true)
   }, [pathname])
 
   function toggleSidebar() {
@@ -124,9 +131,10 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     localStorage.setItem('navhub-sidebar', next ? 'collapsed' : 'expanded')
   }
 
-  const userInitials   = user.email.slice(0, 2).toUpperCase()
-  const reportsActive  = pathname.startsWith('/reports')
-  const forecastActive = pathname.startsWith('/forecasting')
+  const userInitials    = user.email.slice(0, 2).toUpperCase()
+  const reportsActive   = pathname.startsWith('/reports')
+  const forecastActive  = pathname.startsWith('/forecasting')
+  const cashflowActive  = pathname.startsWith('/cashflow')
 
   // ────────────────────────────────────────────────────────
   // Sidebar
@@ -313,6 +321,79 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     )
   }
 
+  function CashflowGroup({ mobile = false }: { mobile?: boolean }) {
+    const expanded = !collapsed || mobile
+    return (
+      <div>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              onClick={() => {
+                if (collapsed && !mobile) {
+                  toggleSidebar()
+                  setCashflowOpen(true)
+                } else {
+                  setCashflowOpen(o => !o)
+                }
+              }}
+              className={cn(
+                'w-full flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                cashflowActive
+                  ? 'text-white'
+                  : 'text-white/60 hover:text-white hover:bg-white/10',
+                collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+              )}
+              style={{
+                borderLeft:  cashflowActive ? '3px solid var(--palette-primary)' : '3px solid transparent',
+                paddingLeft: '5px',
+              }}
+            >
+              <Banknote className="h-5 w-5 shrink-0" />
+              {expanded && (
+                <>
+                  <span className="flex-1 text-left">Cash Flow</span>
+                  <ChevronDown
+                    className={cn(
+                      'h-4 w-4 text-white/40 transition-transform duration-150',
+                      cashflowOpen && 'rotate-180'
+                    )}
+                  />
+                </>
+              )}
+            </button>
+          </TooltipTrigger>
+          {collapsed && !mobile && <TooltipContent side="right">Cash Flow</TooltipContent>}
+        </Tooltip>
+
+        {cashflowOpen && expanded && (
+          <div className="mt-0.5 ml-4 space-y-0.5">
+            {CASHFLOW_CHILDREN.map(child => {
+              const active = pathname === child.href || pathname.startsWith('/cashflow/')
+              return (
+                <Link
+                  key={child.href}
+                  href={child.href}
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-md px-2 py-1.5 text-xs font-medium transition-colors',
+                    active ? 'text-white bg-white/10' : 'text-white/50 hover:text-white hover:bg-white/10'
+                  )}
+                  style={
+                    active
+                      ? { borderLeft: '2px solid var(--palette-accent)' }
+                      : { borderLeft: '2px solid transparent' }
+                  }
+                >
+                  {child.label}
+                </Link>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   function Sidebar({ mobile = false }: { mobile?: boolean }) {
     return (
       <TooltipProvider delayDuration={0}>
@@ -332,8 +413,9 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
             {TOP_NAV.map(item => (
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}
-            <ReportsGroup  mobile={mobile} />
-            <ForecastGroup mobile={mobile} />
+            <ReportsGroup   mobile={mobile} />
+            <CashflowGroup  mobile={mobile} />
+            <ForecastGroup  mobile={mobile} />
             {BOTTOM_NAV.map(item => (
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}

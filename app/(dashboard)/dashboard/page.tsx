@@ -28,7 +28,7 @@ import {
   cn,
 } from '@/lib/utils'
 import type { DashboardSummary, NumberFormat } from '@/lib/types'
-import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import PeriodSelector from '@/components/ui/PeriodSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -223,7 +223,7 @@ export default function DashboardPage() {
         {/* Period selector + Refresh */}
         <div className="flex items-center gap-2">
           <PeriodSelector value={period} onChange={setPeriod} />
-          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={syncing}>
+          <Button variant="outline" size="sm" onClick={handleSyncAll} disabled={syncing}>
             <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>

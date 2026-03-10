@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
+  ChevronRight,
   RefreshCw,
   AlertTriangle,
   Scale,
@@ -13,7 +14,7 @@ import { cn }     from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { extractRows, getRowValue, sumGroupTotal, getPeriodLabel } from '@/lib/financial'
 import type { FinancialData, NumberFormat } from '@/lib/types'
-import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import PeriodSelector from '@/components/ui/PeriodSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

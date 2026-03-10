@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
+  ChevronRight,
   RefreshCw,
   AlertTriangle,
   TrendingUp,
@@ -13,7 +14,7 @@ import { cn }        from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { extractRows, getRowValue, sumGroupTotal, getPeriodLabel } from '@/lib/financial'
 import type { FinancialData, NumberFormat } from '@/lib/types'
-import { PeriodSelector } from '@/components/ui/PeriodSelector'
+import PeriodSelector from '@/components/ui/PeriodSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -160,10 +161,6 @@ export default function ProfitLossPage() {
           <div className="flex items-center gap-2 flex-wrap">
             {/* Period selector */}
             <PeriodSelector value={period} onChange={setPeriod} />
-              {periods.map(p => (
-                <option key={p} value={p}>{getPeriodLabel(p)}</option>
-              ))}
-            </select>
 
             {/* View mode toggle */}
             <div className="flex rounded-md border overflow-hidden">

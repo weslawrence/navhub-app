@@ -105,7 +105,7 @@ export function projectItem(item: CashflowItem, weeks: string[]): number[] {
         monthsToCheck.add(`${weekStart.getFullYear()}-${weekStart.getMonth()}`)
         monthsToCheck.add(`${weekEnd.getFullYear()}-${weekEnd.getMonth()}`)
 
-        for (const key of monthsToCheck) {
+        for (const key of Array.from(monthsToCheck)) {
           const [yearStr, monStr] = key.split('-')
           const year  = Number(yearStr)
           const month = Number(monStr)

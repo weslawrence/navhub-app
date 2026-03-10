@@ -48,9 +48,10 @@ import CreateGroupModal from '@/components/groups/CreateGroupModal'
 // ============================================================
 
 const REPORT_CHILDREN = [
-  { label: 'Profit & Loss',   href: '/reports/profit-loss' },
+  { label: 'Profit & Loss',   href: '/reports/profit-loss'  },
   { label: 'Balance Sheet',   href: '/reports/balance-sheet' },
-  { label: 'Reports Library', href: '/reports/custom' },
+  { label: 'Templates',       href: '/reports/templates'     },
+  { label: 'Reports Library', href: '/reports/custom'        },
 ]
 
 const FORECAST_CHILDREN_BASE = [

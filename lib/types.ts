@@ -378,6 +378,68 @@ export const MODEL_OPTIONS: Array<{
 ]
 
 // ============================================================
+// Report Template types  (Phase 5a)
+// ============================================================
+
+export type TemplateType = 'financial' | 'matrix' | 'narrative' | 'dashboard' | 'workflow'
+export type SlotType = 'text' | 'html' | 'number' | 'table' | 'list' | 'date' | 'color' | 'object'
+export type SlotDataSource = 'navhub_financial' | 'manual' | 'uploaded_file' | 'agent_provided'
+
+export interface SlotDefinition {
+  name:         string
+  label:        string
+  type:         SlotType
+  description:  string
+  required:     boolean
+  default?:     unknown
+  data_source:  SlotDataSource
+  navhub_query?: {
+    type:       string
+    period:     string
+    companies?: string[]
+  }
+}
+
+export interface DataSourceConfig {
+  type:        SlotDataSource
+  description: string
+}
+
+export interface ReportTemplate {
+  id:                 string
+  group_id:           string
+  name:               string
+  description:        string | null
+  template_type:      TemplateType
+  version:            number
+  design_tokens:      Record<string, string>
+  slots:              SlotDefinition[]
+  scaffold_html:      string | null
+  scaffold_css:       string | null
+  scaffold_js:        string | null
+  data_sources:       DataSourceConfig[]
+  agent_instructions: string | null
+  created_by:         string | null
+  agent_run_id:       string | null
+  is_active:          boolean
+  created_at:         string
+  updated_at:         string
+}
+
+export interface ReportTemplateVersion {
+  id:            string
+  template_id:   string
+  version:       number
+  design_tokens: Record<string, string> | null
+  slots:         SlotDefinition[] | null
+  scaffold_html: string | null
+  scaffold_css:  string | null
+  scaffold_js:   string | null
+  saved_by:      string | null
+  created_at:    string
+}
+
+// ============================================================
 // Cash Flow Forecast types  (Phase 4a)
 // ============================================================
 

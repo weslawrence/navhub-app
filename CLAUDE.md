@@ -90,6 +90,10 @@ app/
       custom/
         page.tsx            # Reports Library — tile grid + upload panel (admin) (Phase 2f)
         [id]/page.tsx       # Report viewer — full-height iframe + toolbar (Phase 2f)
+      templates/
+        page.tsx            # Template Library — card grid, type filter, Generate/View buttons (Phase 5a)
+        [id]/page.tsx       # Template Detail — 4 tabs: Overview, Slots, Design Tokens, Version History (Phase 5a)
+        [id]/generate/page.tsx # Generate Wizard — 3-step: Fill Slots → Preview → Save (Phase 5a)
     forecasting/
       page.tsx              # Redirect → /forecasting/revenue
       revenue/page.tsx      # Interactive 7-year revenue model (client, sliders + charts)
@@ -144,6 +148,14 @@ app/
       runs/[runId]/stream/route.ts # GET — SSE stream; executes or replays run (Phase 3a)
     excel/
       upload/route.ts       # POST — upload+parse Excel, upsert financial_snapshots
+    report-templates/
+      route.ts              # GET (list, no scaffold) | POST (create, admin) (Phase 5a)
+      [id]/route.ts         # GET (full) | PATCH (saves version, increments) | DELETE (soft) (Phase 5a)
+      [id]/render/route.ts  # POST { slot_data } → { html, missing_slots, valid } — preview, no save (Phase 5a)
+      [id]/generate/route.ts # POST { slot_data, report_name, notes } → renders + saves to custom_reports (Phase 5a)
+      [id]/versions/route.ts # GET — list version metadata (no scaffold content) (Phase 5a)
+      [id]/versions/[versionId]/route.ts # GET — full version including scaffold (Phase 5a)
+      seed/route.ts         # POST — seed Role & Task Matrix V5 template for active group (admin) (Phase 5a)
   layout.tsx                # Root HTML shell — ThemeProvider, metadata
   page.tsx                  # "/" → redirect to /dashboard
   globals.css               # Tailwind base + shadcn CSS vars + --group-primary
@@ -177,6 +189,8 @@ components/
     RunModal.tsx            # CLIENT: period/company selector + POST run → navigate to stream (Phase 3a)
   excel/
     ExcelUpload.tsx         # CLIENT: drag-and-drop uploader, Step 1/Step 2 progression
+  cashflow/
+    ItemModal.tsx           # CLIENT: create/edit cash flow item modal (Phase 4a)
 
 lib/
   supabase/
@@ -186,11 +200,13 @@ lib/
   xero.ts                   # Xero OAuth helpers + token management + data normalisation
   themes.ts                 # Palette definitions + getPalette() + buildPaletteCSS() (Phase 2c)
   financial.ts              # extractRows(), getRowValue(), sumGroupTotal(), getPeriodLabel() (Phase 2d)
-  types.ts                  # TypeScript types for all DB entities + financial data + agent types
+  types.ts                  # TypeScript types for all DB entities + financial data + agent types + template types
   utils.ts                  # cn(), formatCurrency(amount,format,currency), formatVariance(), period helpers, generateSlug()
   encryption.ts             # AES-256-GCM encrypt/decrypt — server only (Phase 3a)
   agent-tools.ts            # Tool implementations: read_financials, send_email etc (Phase 3a)
   agent-runner.ts           # Execution engine: streaming Claude/GPT-4o, tool loop, run persistence (Phase 3a)
+  cashflow.ts               # Projection engine: getWeekStart, get13Weeks, projectItem, buildForecastGrid (Phase 4a)
+  template-renderer.ts      # renderSlots, renderTokens, renderTemplate, validateSlots (Phase 5a)
 
 supabase/
   migrations/
@@ -201,6 +217,9 @@ supabase/
     005_forecast.sql        # forecast_streams + forecast_user_state tables + RLS (Phase 2e)
     006_group_management.sql # group_invites + custom_reports tables + RLS (Phase 2f)
     007_agents.sql          # agents + agent_credentials + agent_runs + agent_schedules (Phase 3a)
+    008_settings.sql        # user_settings.fy_end_month + excel_uploads table (Phase 3b)
+    009_cashflow.sql        # cashflow_settings/items/xero_items/forecasts/snapshots tables (Phase 4a)
+    010_report_templates.sql # report_templates + report_template_versions + ALTER custom_reports (Phase 5a)
 
 docs/
   AI_Agent_Module_Build_Spec.md  # Agent module spec (Claude API integration plan)
@@ -739,6 +758,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 3c | Planned | Agent scheduling, email inbound triggers, Slack slash commands |
 | Phase 4a | ✅ Complete | 13-Week Rolling Cash Flow Forecast (manual mode) — items, projection engine, grid UI, snapshots |
 | Phase 4b | Planned | Cash Flow — Xero AR/AP pull, group summary page |
+| Phase 5a | ✅ Complete | Report Template Infrastructure — templates DB, renderer, 7 API routes, 3 UI pages, seed (Matrix V5) |
 
 ---
 
@@ -815,9 +835,12 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 4. Run migration `007_agents.sql` in Supabase dashboard
 5. **Run migration `008_settings.sql`** in Supabase dashboard (Phase 3b — fy_end_month + excel_uploads fields)
 6. **Run migration `009_cashflow.sql`** in Supabase dashboard (Phase 4a — cashflow tables)
-7. Add `error.tsx` files for each route segment
-8. Add chart visualisations to financial report pages (trend lines, bar charts)
-9. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
+7. **Run migration `010_report_templates.sql`** in Supabase dashboard (Phase 5a — template tables)
+8. Seed Role & Task Matrix V5 template: POST `/api/report-templates/seed` (admin user, active group must be set)
+9. Add `error.tsx` files for each route segment
+10. Add chart visualisations to financial report pages (trend lines, bar charts)
+11. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
+12. Phase 5b: Template editor UI (scaffold_html/css/js editable in-app), agent-generated templates
 
 ---
 
@@ -994,3 +1017,134 @@ interface ForecastRow { item_id: string|null; label: string; amounts_cents: numb
 - `pending_review` flag on items: agent or admin sets this to true for items needing human review; shown as amber dot in grid rows
 - Snapshots are hard-deleted (not soft-deleted) — they are named versions, not primary data
 - Items are soft-deleted (`is_active = false`) — primary source of truth for the forecast
+
+---
+
+## Phase 5a — Report Template Infrastructure
+
+### Database (migration 010)
+- **`report_templates`** — per-group reusable templates: `template_type` (financial|matrix|narrative|dashboard|workflow), `version` counter (auto-incremented on PATCH), `design_tokens` JSONB, `slots` JSONB (array of `SlotDefinition`), `scaffold_html/css/js` text, `data_sources` JSONB, `agent_instructions`; soft-delete with `is_active`
+- **`report_template_versions`** — auto-saved prior versions on every PATCH; stores full template snapshot including all scaffold content + slots + tokens; `version` = the version number *before* the edit
+- **`custom_reports`** extended: `template_id uuid` (FK → report_templates, nullable), `slot_data jsonb` (values used when generating)
+- RLS: group members can SELECT; admins (super_admin/group_admin) can ALL
+
+### lib/template-renderer.ts
+```typescript
+export function renderSlots(scaffold: string, slotData: Record<string, unknown>): string
+  // Replaces {{slot_name}} placeholders (word-char regex) with values
+  // Objects/arrays are JSON.stringify'd before substitution
+
+export function renderTokens(css: string, tokens: Record<string, string>): string
+  // Replaces {{token-name}} placeholders (hyphen-aware regex /\{\{([\w-]+)\}\}/g) with token values
+  // Token names can contain hyphens (e.g. {{col-axis}})
+
+export function renderTemplate(template: ReportTemplate, slotData: Record<string, unknown>): string
+  // 1. renderTokens on scaffold_css to resolve design token variables
+  // 2. renderSlots on scaffold_html to insert slot values
+  // 3. Assembles self-contained <html> document with inline <style> and <script>
+
+export function validateSlots(slots: SlotDefinition[], slotData: Record<string, unknown>): SlotValidationResult
+  // Returns { valid: boolean, missing: string[] }
+  // Only checks 'manual' data_source slots — auto/agent slots are filled server-side
+```
+
+### Types added to lib/types.ts
+```typescript
+export type TemplateType = 'financial' | 'matrix' | 'narrative' | 'dashboard' | 'workflow'
+export type SlotType = 'text' | 'html' | 'number' | 'table' | 'list' | 'date' | 'color' | 'object'
+export type SlotDataSource = 'navhub_financial' | 'manual' | 'uploaded_file' | 'agent_provided'
+export interface SlotDefinition {
+  name: string; label: string; type: SlotType; description: string
+  required: boolean; default?: unknown; data_source: SlotDataSource
+  navhub_query?: { type: string; period: string; companies?: string[] }
+}
+export interface DataSourceConfig { type: SlotDataSource; config: Record<string, unknown> }
+export interface ReportTemplate {
+  id: string; group_id: string; name: string; description: string | null
+  template_type: TemplateType; version: number
+  design_tokens: Record<string, string>; slots: SlotDefinition[]
+  scaffold_html: string | null; scaffold_css: string | null; scaffold_js: string | null
+  data_sources: DataSourceConfig[]; agent_instructions: string | null
+  created_by: string | null; agent_run_id: string | null; is_active: boolean
+  created_at: string; updated_at: string
+}
+export interface ReportTemplateVersion {
+  id: string; template_id: string; version: number; name: string; description: string | null
+  template_type: TemplateType; design_tokens: Record<string, string>; slots: SlotDefinition[]
+  scaffold_html: string | null; scaffold_css: string | null; scaffold_js: string | null
+  created_at: string
+}
+```
+
+### API routes
+```
+GET  /api/report-templates                                → list active templates (no scaffold, for listing)
+POST /api/report-templates                                → create template (admin only)
+GET  /api/report-templates/[id]                           → full template record including scaffold
+PATCH  /api/report-templates/[id]                         → save current as version → increment version → update
+DELETE /api/report-templates/[id]                         → soft delete (is_active = false)
+POST /api/report-templates/[id]/render                    → preview: { slot_data } → { html, missing_slots, valid }
+POST /api/report-templates/[id]/generate                  → { slot_data, report_name, notes } → render + save to custom_reports
+GET  /api/report-templates/[id]/versions                  → list version metadata (no scaffold content)
+GET  /api/report-templates/[id]/versions/[versionId]      → full version record including scaffold
+POST /api/report-templates/seed                           → seed Role & Task Matrix V5 for active group (admin)
+```
+
+### Version history auto-save (PATCH pattern)
+```typescript
+// Before updating, save current state to report_template_versions
+void admin.from('report_template_versions').insert({ template_id: id, version: current.version, ...currentFields })
+// Then increment version and update main record
+await admin.from('report_templates').update({ version: current.version + 1, ...updates }).eq('id', id)
+```
+
+### Generate route — storage path
+Generated reports are saved to Storage bucket `report-files` using the same path pattern as custom report uploads:
+`{group_id}/reports/{timestamp}_{sanitisedReportName}.html`
+Then inserted into `custom_reports` with `template_id` and `slot_data` for traceability.
+
+### Template Library UI (`/reports/templates`)
+- Card grid; type filter bar (All | Financial | Matrix | Narrative | Dashboard | Workflow)
+- Each card: type badge (coloured), version badge, updated date, template name, description
+- Actions: Generate button → `/reports/templates/[id]/generate`, View button → `/reports/templates/[id]`
+- Admin: Create New Template button (top-right)
+- Empty state with admin create CTA
+
+### Template Detail UI (`/reports/templates/[id]`)
+- 4 tabs: **Overview** (name/description/meta), **Slots** (table: name, label, type badge, required, source, description), **Design Tokens** (grid: name, value, colour swatch for hex values), **Version History** (table: version, name, date; click to view full version)
+- Toolbar: Back · Edit · Generate (+ admin Delete button)
+
+### Generate Wizard UI (`/reports/templates/[id]/generate`)
+- 3 steps: **Fill Slots** (0) → **Preview** (1) → **Save** (2)
+- Step 0: One input per slot; `manual` slots render appropriate input (text/number/date/color/textarea); non-manual slots show informational note ("auto-filled from NavHub data")
+- Step 1: iframe with `srcDoc={previewHtml}` and `sandbox="allow-scripts allow-same-origin"`; Preview button POSTs to `/render`
+- Step 2: Report name + notes inputs; Save button POSTs to `/generate`; on success redirects to `/reports/custom`
+
+### AppShell Reports nav update
+`REPORT_CHILDREN` in AppShell extended with Templates entry:
+```typescript
+const REPORT_CHILDREN = [
+  { label: 'Profit & Loss',   href: '/reports/profit-loss'  },
+  { label: 'Balance Sheet',   href: '/reports/balance-sheet' },
+  { label: 'Templates',       href: '/reports/templates'     },  // ← added Phase 5a
+  { label: 'Reports Library', href: '/reports/custom'        },
+]
+```
+
+### Role & Task Matrix V5 — Seed Template
+The seed route (`POST /api/report-templates/seed`) inserts a complete working matrix template for the active group. Key properties:
+- **8 slots**: `matrix_title` (text, manual), `organisation_name` (text, manual), `version_label` (text, manual), `entity_definitions` (object, manual), `column_definitions` (object, manual), `section_definitions` (object, manual), `role_data` (object, manual), `headcount_summary` (object, manual)
+- **9 entity design tokens** (col-axis, col-corp, col-fin, col-hr, col-ops, col-legal, col-pm, col-mktg, col-it) plus base UI tokens (bg-primary, bg-secondary, text-primary, text-secondary, text-muted, border-color, row-alt, accent-positive, accent-neutral, accent-caution, accent-negative)
+- **JSON slot embedding pattern**: complex data slots use `<script type="application/json" id="slot-name">{{slot_name}}</script>` so scaffold JS can `JSON.parse(document.getElementById('slot-name').textContent)` at render time
+- **Interactive features in scaffold JS**: entity highlight on legend click, column highlight on header click, cell highlight on click, sticky header, headcount panel, dark/light theme toggle
+- **Dual theme**: CSS uses `[data-theme="dark"]` / `[data-theme="light"]` attribute toggling; JS sets initial theme from `prefers-color-scheme` media query
+
+### Token vs slot placeholder regex
+- **Slots** (in HTML): `/\{\{(\w+)\}\}/g` — matches `{{slot_name}}` (word chars only)
+- **Tokens** (in CSS): `/\{\{([\w-]+)\}\}/g` — matches `{{token-name}}` (word chars including hyphens)
+- The different regex patterns ensure design token references in CSS (which use hyphens) don't conflict with slot placeholders in HTML
+
+### Manual setup required
+1. Run migration `010_report_templates.sql` in Supabase dashboard
+2. Ensure `report-files` Storage bucket exists (used by generate route)
+3. Seed template: `POST /api/report-templates/seed` with admin session + active group cookie

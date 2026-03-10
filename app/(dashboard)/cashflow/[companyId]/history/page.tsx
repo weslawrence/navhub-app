@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { ChevronLeft, Trash2, Eye, Loader2, Clock } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
@@ -24,7 +24,6 @@ function formatDate(iso: string) {
 
 export default function CashflowHistoryPage() {
   const params    = useParams()
-  const router    = useRouter()
   const companyId = params?.companyId as string
 
   const [snapshots, setSnapshots] = useState<SnapshotMeta[]>([])
@@ -87,7 +86,7 @@ export default function CashflowHistoryPage() {
             <Clock className="h-8 w-8 text-muted-foreground mx-auto mb-3" />
             <p className="text-sm text-muted-foreground">No snapshots saved yet.</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Use the "Save snapshot" button on the forecast page to save a named version.
+              Use the &quot;Save snapshot&quot; button on the forecast page to save a named version.
             </p>
           </CardContent>
         </Card>

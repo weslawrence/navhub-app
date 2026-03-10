@@ -24,12 +24,6 @@ function formatCents(cents: number | null | undefined): string {
   return `${sign}$${(abs / 100).toLocaleString('en-AU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
 }
 
-const SECTION_LABELS: Record<CashflowSection, string> = {
-  inflow:          'INFLOWS',
-  regular_outflow: 'REGULAR OUTFLOWS',
-  payable:         'PAYABLES',
-}
-
 // ─── Component ────────────────────────────────────────────────────────────────
 
 type SaveStatus = 'idle' | 'saving' | 'saved'
@@ -41,7 +35,7 @@ export default function CashflowPage() {
 
   const [grid,     setGrid]     = useState<ForecastGrid | null>(null)
   const [items,    setItems]    = useState<CashflowItem[]>([])
-  const [settings, setSettings] = useState<CashflowSettings | null>(null)
+  const [_settings, setSettings] = useState<CashflowSettings | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')

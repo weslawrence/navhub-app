@@ -104,9 +104,7 @@ export default function DashboardPage() {
   const [syncing,   setSyncing]   = useState(false)
   const [syncMsg,   setSyncMsg]   = useState<string | null>(null)
 
-  const currentPeriod = getCurrentPeriod()
-  
-  // ── Fetch data ──────────────────────────────────────────────────────────────
+   // ── Fetch data ──────────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async (p: string) => {
     setLoading(true)

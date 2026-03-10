@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { buildPeriodOptions, type PeriodOption } from '@/lib/periods'
+import { buildPeriodOptions } from '@/lib/periods'
 
 type PeriodMode = 'month' | 'quarter' | 'fy_year'
 

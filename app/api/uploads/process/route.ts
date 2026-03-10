@@ -24,7 +24,7 @@ interface TemplateRow {
   Amount?:      unknown
 }
 
-function parsePLOrBS(rows: TemplateRow[], reportType: ReportTypeKey): FinancialRow[] {
+function parsePLOrBS(rows: TemplateRow[], _reportType: ReportTypeKey): FinancialRow[] {
   const financial: FinancialRow[] = []
   let currentSection: FinancialRow | null = null
 
@@ -179,7 +179,7 @@ export async function POST(request: Request) {
 
   // Parse Excel file
   let rows: FinancialRow[]
-  let filename = file.name
+  const filename = file.name
   let status: 'processed' | 'error' = 'processed'
   let errorMessage: string | null    = null
 

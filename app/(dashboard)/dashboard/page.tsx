@@ -220,14 +220,13 @@ export default function DashboardPage() {
             Financial overview · <span className="font-medium text-foreground">{formatPeriodLabel(period)}</span>
           </p>
         </div>
-          {/* Period selector + Refresh */}
-          <div className="flex items-center gap-2">
-            <PeriodSelector value={period} onChange={setPeriod} />
-            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={syncing}>
-              <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
-              Refresh
-            </Button>
-          </div>
+        {/* Period selector + Refresh */}
+        <div className="flex items-center gap-2">
+          <PeriodSelector value={period} onChange={setPeriod} />
+          <Button variant="outline" size="sm" onClick={handleRefresh} disabled={syncing}>
+            <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
         </div>
       </div>
 

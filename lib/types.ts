@@ -378,6 +378,95 @@ export const MODEL_OPTIONS: Array<{
 ]
 
 // ============================================================
+// Cash Flow Forecast types  (Phase 4a)
+// ============================================================
+
+export type CashflowSection = 'inflow' | 'regular_outflow' | 'payable'
+export type CashflowRecurrence = 'weekly' | 'fortnightly' | 'monthly' | 'one_off'
+
+export interface CashflowSettings {
+  company_id:            string
+  opening_balance_cents: number   // bigint cents
+  week_start_day:        number   // 0=Sun, 1=Mon … 6=Sat
+  ar_lag_days:           number
+  ap_lag_days:           number
+  currency:              string
+  updated_at:            string
+}
+
+export interface CashflowItem {
+  id:             string
+  company_id:     string
+  label:          string
+  section:        CashflowSection
+  amount_cents:   number
+  recurrence:     CashflowRecurrence
+  start_date:     string   // ISO date "YYYY-MM-DD"
+  end_date:       string | null
+  day_of_week:    number | null   // 0=Sun … 6=Sat; used by weekly/fortnightly
+  day_of_month:   number | null   // 1–31; used by monthly
+  pending_review: boolean
+  is_active:      boolean
+  created_at:     string
+  updated_at:     string
+}
+
+export interface CashflowXeroItem {
+  id:              string
+  company_id:      string
+  xero_invoice_id: string
+  contact_name:    string
+  amount_cents:    number
+  due_date:        string
+  section:         'inflow' | 'payable'
+  is_overridden:   boolean
+  created_at:      string
+}
+
+export interface CashflowForecast {
+  company_id: string
+  grid_data:  ForecastGrid
+  saved_at:   string
+}
+
+export interface CashflowSnapshot {
+  id:         string
+  company_id: string
+  name:       string
+  notes:      string | null
+  grid_data:  ForecastGrid
+  created_by: string
+  created_at: string
+}
+
+export interface ForecastRow {
+  item_id:       string | null
+  label:         string
+  amounts_cents: number[]   // one value per week (13 values)
+  is_editable:   boolean
+  pending_review: boolean
+}
+
+export interface ForecastSection {
+  rows:      ForecastRow[]
+  subtotals: number[]   // one value per week
+}
+
+export interface ForecastGrid {
+  weeks: string[]   // ISO date strings — week start dates (13 entries)
+  sections: {
+    inflows:        ForecastSection
+    regularOutflows: ForecastSection
+    payables:       ForecastSection
+  }
+  summary: {
+    netCashFlow:    number[]
+    openingBalance: number[]
+    closingBalance: number[]
+  }
+}
+
+// ============================================================
 // API response types
 // ============================================================
 

@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
 import { cn }     from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
-import { extractRows, getRowValue, sumGroupTotal, getPeriodLabel } from '@/lib/financial'
+import { extractRows, getRowValue, sumGroupTotal } from '@/lib/financial'
 import type { FinancialData, NumberFormat } from '@/lib/types'
 import PeriodSelector from '@/components/ui/PeriodSelector'
 

@@ -25,7 +25,6 @@ import {
   getCurrentQuarterMonths,
   getYTDMonths,
   formatPeriod,
-  cn,
 } from '@/lib/utils'
 import type { DashboardSummary, NumberFormat } from '@/lib/types'
 import PeriodSelector from '@/components/ui/PeriodSelector'
@@ -106,8 +105,7 @@ export default function DashboardPage() {
   const [syncMsg,   setSyncMsg]   = useState<string | null>(null)
 
   const currentPeriod = getCurrentPeriod()
-  const isCurrentMonth = period === currentPeriod
-
+  
   // ── Fetch data ──────────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async (p: string) => {

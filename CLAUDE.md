@@ -737,6 +737,8 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 3a | ✅ Complete | AI Agent Foundation — CRUD, credentials, streaming execution engine, run history |
 | Phase 3b | ✅ Complete | Settings overhaul (5-tab), Excel upload pipeline, FY-aware periods, Xero connection matching, CreateGroup modal |
 | Phase 3c | Planned | Agent scheduling, email inbound triggers, Slack slash commands |
+| Phase 4a | ✅ Complete | 13-Week Rolling Cash Flow Forecast (manual mode) — items, projection engine, grid UI, snapshots |
+| Phase 4b | Planned | Cash Flow — Xero AR/AP pull, group summary page |
 
 ---
 
@@ -812,9 +814,10 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 3. Add `NAVHUB_ENCRYPTION_KEY` and `ANTHROPIC_API_KEY` to Vercel environment variables
 4. Run migration `007_agents.sql` in Supabase dashboard
 5. **Run migration `008_settings.sql`** in Supabase dashboard (Phase 3b — fy_end_month + excel_uploads fields)
-6. Add `error.tsx` files for each route segment
-7. Add cashflow report page at `/reports/cashflow`
+6. **Run migration `009_cashflow.sql`** in Supabase dashboard (Phase 4a — cashflow tables)
+7. Add `error.tsx` files for each route segment
 8. Add chart visualisations to financial report pages (trend lines, bar charts)
+9. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
 
 ---
 
@@ -880,3 +883,114 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 - Palette/section heading use `text-foreground` not `text-white`
 - `select` elements use `text-foreground` + `bg-background` for light mode compatibility
 - AppShell sidebar uses `var(--palette-surface)` (always dark) so `text-white` remains correct there
+
+---
+
+## Phase 4a — 13-Week Rolling Cash Flow Forecast (Manual Mode)
+
+### Database (migration 009)
+- **`cashflow_settings`** — per-company config: `opening_balance_cents`, `week_start_day` (0=Sun…6=Sat), `ar_lag_days`, `ap_lag_days`, `currency`; PRIMARY KEY = `company_id`
+- **`cashflow_items`** — recurring/one-off line items: `section` (inflow|regular_outflow|payable), `recurrence` (weekly|fortnightly|monthly|one_off), `start_date`, `end_date`, `day_of_week`, `day_of_month`, `pending_review`, `is_active`; amounts as bigint cents
+- **`cashflow_xero_items`** — stub for Phase 4b (Xero AR/AP pull); columns: `xero_invoice_id`, `contact_name`, `due_date`, `section`, `is_overridden`
+- **`cashflow_forecasts`** — auto-saved current forecast grid (JSONB); PRIMARY KEY = `company_id`; upserted on change
+- **`cashflow_snapshots`** — named saved versions with `name`, `notes`, `grid_data` JSONB, `created_by`
+- All tables: RLS using `get_user_group_ids()` via `companies.group_id` join
+
+### lib/cashflow.ts (projection engine)
+```typescript
+export function getWeekStart(date: Date, weekStartDay: number): Date
+  // weekStartDay: 0=Sun … 6=Sat. Returns Monday (or chosen day) of the containing week.
+
+export function get13Weeks(weekStartDay: number): string[]
+  // Returns 13 ISO date strings (week start dates), starting from current week.
+
+export function formatWeekHeader(isoDate: string): string
+  // e.g. "07 Apr" — used for column headers
+
+export function projectItem(item: CashflowItem, weeks: string[]): number[]
+  // Returns amount_cents for each week (0 if item doesn't occur).
+  // weekly: occurs on day_of_week each week
+  // fortnightly: alternate weeks from start_date
+  // monthly: occurs on day_of_month (clamped to last day of month if needed)
+  // one_off: occurs on start_date
+  // IMPORTANT: Set<string> iteration avoided — uses [m1, m2] dedup array pattern (no downlevelIteration needed)
+
+export function buildForecastGrid(params: { items, settings, weeks }): ForecastGrid
+  // Builds sections (inflows, regularOutflows, payables), subtotals, and rolling balance summary.
+  // Net = inflows − outflows − payables (costs are subtracted)
+  // Opening/Closing balance rolls forward week-by-week from settings.opening_balance_cents
+```
+
+### API routes
+```
+GET  /api/cashflow/[companyId]/forecast          → compute full ForecastGrid + settings
+GET  /api/cashflow/[companyId]/items             → list active items
+POST /api/cashflow/[companyId]/items             → create item
+PATCH  /api/cashflow/[companyId]/items/[id]      → update item (incl. pending_review, is_active)
+DELETE /api/cashflow/[companyId]/items/[id]      → soft delete (is_active = false)
+GET  /api/cashflow/[companyId]/settings          → get settings (returns defaults if no row)
+PATCH  /api/cashflow/[companyId]/settings        → upsert settings
+POST /api/cashflow/[companyId]/save              → upsert computed grid to cashflow_forecasts
+POST /api/cashflow/[companyId]/snapshot          → create named snapshot (body: name, notes, grid_data)
+GET  /api/cashflow/[companyId]/snapshots         → list snapshots (no grid_data, for perf)
+GET  /api/cashflow/[companyId]/snapshots/[id]    → full snapshot including grid_data
+DELETE /api/cashflow/[companyId]/snapshots/[id]  → hard delete snapshot
+```
+
+### UI pages
+- `/cashflow` — company selector cards (company grid, active only)
+- `/cashflow/[companyId]` — main 13-week forecast grid (client component)
+  - Horizontally scrollable table; sticky left column (200px)
+  - Sections: INFLOWS → subtotal, REGULAR OUTFLOWS → subtotal, PAYABLES → subtotal
+  - Summary: NET CASH FLOW, OPENING BALANCE, CLOSING BALANCE
+  - Negative closing balance → red background cell; uses parenthesis notation e.g. `($1,200)`
+  - Edit icon (hover-visible per row) → opens `ItemModal`
+  - "+ Add inflow/outflow/payable" button per section
+  - Pending review banner (amber) when items have `pending_review = true`
+  - "Save snapshot" button (opens name modal) → POST snapshot → redirect to history
+  - Auto-save: after item add/edit/delete, grid is re-fetched and saved to cashflow_forecasts
+  - `Saving…` / `Saved ✓` indicator in top bar
+- `/cashflow/[companyId]/settings` — opening balance, week start day, AR/AP lag, currency
+- `/cashflow/[companyId]/history` — list of saved snapshots (no grid_data), delete button
+- `/cashflow/[companyId]/history/[snapshotId]` — read-only grid viewer for a snapshot
+- `/cashflow/group` — placeholder for Phase 4b group summary
+
+### components/cashflow/ItemModal.tsx
+- Modal form: label, section (dropdown), amount ($), recurrence (dropdown)
+- Conditionally shows: day_of_week (weekly/fortnightly), day_of_month (monthly)
+- start_date (required), end_date (optional)
+- Create: POST `/api/cashflow/[companyId]/items`; Edit: PATCH `.../items/[id]`
+- Calls `onSave(savedItem)` on success
+
+### AppShell changes (Cash Flow nav)
+- `CashflowGroup` component added (same pattern as `ReportsGroup` / `ForecastGroup`)
+- `Banknote` icon from lucide-react
+- `CASHFLOW_CHILDREN = [{ label: 'Overview', href: '/cashflow' }]`
+- Inserted between ReportsGroup and ForecastGroup in sidebar
+- State: `cashflowOpen`, `cashflowActive` = `pathname.startsWith('/cashflow')`
+
+### ForecastGrid type
+```typescript
+interface ForecastGrid {
+  weeks: string[]   // 13 ISO date strings
+  sections: {
+    inflows:        ForecastSection
+    regularOutflows: ForecastSection
+    payables:       ForecastSection
+  }
+  summary: {
+    netCashFlow:    number[]
+    openingBalance: number[]
+    closingBalance: number[]
+  }
+}
+interface ForecastSection { rows: ForecastRow[]; subtotals: number[] }
+interface ForecastRow { item_id: string|null; label: string; amounts_cents: number[]; is_editable: boolean; pending_review: boolean }
+```
+
+### Conventions
+- All amounts stored as bigint cents (same as rest of app)
+- `formatCents()` helper defined locally in cashflow pages (not in lib/utils — cashflow-specific)
+- `pending_review` flag on items: agent or admin sets this to true for items needing human review; shown as amber dot in grid rows
+- Snapshots are hard-deleted (not soft-deleted) — they are named versions, not primary data
+- Items are soft-deleted (`is_active = false`) — primary source of truth for the forecast

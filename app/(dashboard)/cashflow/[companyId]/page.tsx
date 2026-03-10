@@ -35,7 +35,7 @@ export default function CashflowPage() {
 
   const [grid,     setGrid]     = useState<ForecastGrid | null>(null)
   const [items,    setItems]    = useState<CashflowItem[]>([])
-  const [_settings, setSettings] = useState<CashflowSettings | null>(null)
+  const [, setSettings] = useState<CashflowSettings | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState<string | null>(null)
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle')
@@ -117,7 +117,7 @@ export default function CashflowPage() {
     if (grid) scheduleAutoSave(grid)
   }
 
-  async function handleItemSaved(savedItem: CashflowItem) {
+  async function handleItemSaved(_: CashflowItem) {
     setModalOpen(false)
     setEditingItem(null)
     await fetchForecast()

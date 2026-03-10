@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  ChevronRight,
   RefreshCw,
   AlertTriangle,
   Scale,
@@ -14,6 +13,7 @@ import { cn }     from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { extractRows, getRowValue, sumGroupTotal, getPeriodLabel } from '@/lib/financial'
 import type { FinancialData, NumberFormat } from '@/lib/types'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -165,15 +165,7 @@ export default function BalanceSheetPage() {
           </h1>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Period selector */}
-            <select
-              value={period}
-              onChange={e => setPeriod(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              {periods.map(p => (
-                <option key={p} value={p}>{getPeriodLabel(p)}</option>
-              ))}
-            </select>
+            <PeriodSelector value={period} onChange={setPeriod} />
 
             {/* View mode toggle */}
             <div className="flex rounded-md border overflow-hidden">

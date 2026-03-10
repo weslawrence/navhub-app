@@ -482,7 +482,7 @@ function SummaryRow({
 }
 
 function ClosingBalanceRow({
-  amounts, renderAmount,
+  amounts, 
 }: {
   amounts: number[]
   renderAmount: (c: number, i: number, isBalance?: boolean) => React.ReactNode

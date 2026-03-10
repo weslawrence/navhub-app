@@ -100,7 +100,7 @@ export default function CashflowSettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Forecast Settings</CardTitle>
-          <CardDescription>These settings apply to this company's cash flow forecast.</CardDescription>
+          <CardDescription>These settings apply to this company&apos;s cash flow forecast.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSave} className="space-y-4">

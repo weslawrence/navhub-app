@@ -48,7 +48,7 @@ export default function BalanceSheetPage() {
     ]).then(([periodsJson, prefsJson]) => {
       const availPeriods: string[] = periodsJson.data?.periods ?? []
       setPeriods(availPeriods)
-      if (availPeriods.length > 0) setPeriod(availPeriods[0])
+      if (availPeriods.length > 0) setPeriod('month:' + availPeriods[0])
       if (prefsJson.data) setPrefs(prefsJson.data)
     }).catch(() => {
       setError('Failed to load report data')
@@ -62,7 +62,7 @@ export default function BalanceSheetPage() {
     setLoadingData(true)
     setError(null)
     try {
-      const res  = await fetch(`/api/reports/data?type=balance_sheet&period=${p}`)
+      const res = await fetch(`/api/reports/data?type=balance_sheet&period=${encodeURIComponent(p)}`)
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to load data')
       setCompanies(json.data ?? [])

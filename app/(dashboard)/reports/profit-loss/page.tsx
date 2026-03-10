@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  ChevronRight,
   RefreshCw,
   AlertTriangle,
   TrendingUp,
@@ -14,6 +13,7 @@ import { cn }        from '@/lib/utils'
 import { formatCurrency } from '@/lib/utils'
 import { extractRows, getRowValue, sumGroupTotal, getPeriodLabel } from '@/lib/financial'
 import type { FinancialData, NumberFormat } from '@/lib/types'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,7 +48,7 @@ export default function ProfitLossPage() {
     ]).then(([periodsJson, prefsJson]) => {
       const availPeriods: string[] = periodsJson.data?.periods ?? []
       setPeriods(availPeriods)
-      if (availPeriods.length > 0) setPeriod(availPeriods[0])
+      if (availPeriods.length > 0) setPeriod('month:' + availPeriods[0])
       if (prefsJson.data) setPrefs(prefsJson.data)
     }).catch(() => {
       setError('Failed to load report data')
@@ -62,7 +62,7 @@ export default function ProfitLossPage() {
     setLoadingData(true)
     setError(null)
     try {
-      const res  = await fetch(`/api/reports/data?type=profit_loss&period=${p}`)
+      const res = await fetch(`/api/reports/data?type=profit_loss&period=${encodeURIComponent(p)}`)
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to load data')
       setCompanies(json.data ?? [])
@@ -159,11 +159,7 @@ export default function ProfitLossPage() {
           </h1>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Period selector */}
-            <select
-              value={period}
-              onChange={e => setPeriod(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-            >
+            <PeriodSelector value={period} onChange={setPeriod} />
               {periods.map(p => (
                 <option key={p} value={p}>{getPeriodLabel(p)}</option>
               ))}

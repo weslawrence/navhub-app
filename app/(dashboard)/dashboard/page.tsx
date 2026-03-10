@@ -7,8 +7,6 @@ import {
   Banknote,
   TrendingUp,
   RefreshCw,
-  ChevronLeft,
-  ChevronRight,
   Building2,
   Bot,
   AlertTriangle,
@@ -24,14 +22,13 @@ import {
   formatCurrency,
   formatPeriodLabel,
   getCurrentPeriod,
-  getPreviousPeriod,
-  getNextPeriod,
   getCurrentQuarterMonths,
   getYTDMonths,
   formatPeriod,
   cn,
 } from '@/lib/utils'
 import type { DashboardSummary, NumberFormat } from '@/lib/types'
+import { PeriodSelector } from '@/components/ui/PeriodSelector'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -98,7 +95,7 @@ function NoDataBanner({ message, linkLabel, href }: { message: string; linkLabel
 // ─── Dashboard Page ───────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [period,    setPeriod]    = useState(getCurrentPeriod())
+  const [period,    setPeriod]    = useState('month:' + getCurrentPeriod())
   const [summary,   setSummary]   = useState<DashboardSummary | null>(null)
   const [prefs,     setPrefs]     = useState<UserPrefs>({ currency: 'AUD', number_format: 'thousands' })
   const [companies, setCompanies] = useState<CompanyStatus[]>([])
@@ -118,7 +115,7 @@ export default function DashboardPage() {
     setError(null)
     try {
       const [summaryRes, prefsRes, companiesRes, groupRes] = await Promise.all([
-        fetch(`/api/dashboard/summary?period=${p}`),
+        fetch(`/api/dashboard/summary?period=${encodeURIComponent(p)}`),
         fetch('/api/settings'),
         fetch('/api/companies?include_inactive=false'),
         fetch('/api/groups/active'),
@@ -158,13 +155,6 @@ export default function DashboardPage() {
   }, [])
 
   useEffect(() => { fetchAll(period) }, [fetchAll, period])
-
-  // ── Period navigation ───────────────────────────────────────────────────────
-
-  function handlePrev() { setPeriod(p => getPreviousPeriod(p)) }
-  function handleNext() {
-    if (!isCurrentMonth) setPeriod(p => getNextPeriod(p))
-  }
 
   // ── Sync all ────────────────────────────────────────────────────────────────
 
@@ -230,38 +220,14 @@ export default function DashboardPage() {
             Financial overview · <span className="font-medium text-foreground">{formatPeriodLabel(period)}</span>
           </p>
         </div>
-        {/* Period selector + Refresh */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 border rounded-md px-2 py-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handlePrev}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-sm font-medium px-2 min-w-[120px] text-center">
-              {formatPeriod(period)}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7"
-              onClick={handleNext}
-              disabled={isCurrentMonth}
-            >
-              <ChevronRight className="h-4 w-4" />
+          {/* Period selector + Refresh */}
+          <div className="flex items-center gap-2">
+            <PeriodSelector value={period} onChange={setPeriod} />
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={syncing}>
+              <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
+              Refresh
             </Button>
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleSyncAll}
-            disabled={syncing || loading}
-            className="h-9"
-          >
-            <RefreshCw className={cn('mr-1.5 h-3.5 w-3.5', syncing && 'animate-spin')} />
-            {syncing ? 'Refreshing…' : 'Refresh'}
-          </Button>
-          {syncMsg && (
-            <span className="text-xs text-muted-foreground hidden sm:block">{syncMsg}</span>
-          )}
         </div>
       </div>
 

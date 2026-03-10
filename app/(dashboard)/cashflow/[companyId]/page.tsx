@@ -117,7 +117,7 @@ export default function CashflowPage() {
     if (grid) scheduleAutoSave(grid)
   }
 
-  async function handleItemSaved(_: CashflowItem) {
+  async function handleItemSaved() {
     setModalOpen(false)
     setEditingItem(null)
     await fetchForecast()

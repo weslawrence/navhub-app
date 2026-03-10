@@ -11,7 +11,7 @@ interface ItemModalProps {
   companyId:     string
   item?:         CashflowItem | null       // null/undefined = create mode
   defaultSection?: CashflowSection         // used when creating
-  onSave:        (item: CashflowItem) => void
+  onSave:        () => void
   onClose:       () => void
 }
 
@@ -91,7 +91,7 @@ export default function ItemModal({ companyId, item, defaultSection, onSave, onC
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to save')
-      onSave(json.data)
+      onSave()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {

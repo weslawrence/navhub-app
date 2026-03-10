@@ -193,7 +193,7 @@ export async function POST(request: Request) {
     if (reportType === 'tb') {
       rows = parseTB(jsonRows as TBRow[])
     } else {
-      rows = parsePLOrBS(jsonRows as TemplateRow[], reportType)
+      rows = parsePLOrBS(jsonRows as TemplateRow[])
     }
   } catch (err) {
     status       = 'error'

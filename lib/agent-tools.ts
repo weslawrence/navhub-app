@@ -805,7 +805,7 @@ export async function renderReport(
 
 export async function analyseDocument(
   params:  AnalyseDocumentParams,
-  context: ToolContext
+  _context: ToolContext
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return 'Error: ANTHROPIC_API_KEY environment variable not set.'

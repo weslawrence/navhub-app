@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { switchGroup } from '@/app/(auth)/actions'
+import { getPalette } from '@/lib/themes'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,8 +31,13 @@ export default function GroupSwitcher({ groups, activeGroup }: GroupSwitcherProp
     const result = await switchGroup(groupId)
 
     if ('primaryColor' in result) {
-      // Apply new group colour immediately
-      document.documentElement.style.setProperty('--group-primary', result.primaryColor)
+      // Apply full palette immediately so all CSS vars update before router refresh
+      const palette = getPalette(result.palette_id)
+      document.documentElement.style.setProperty('--palette-primary',   palette.primary)
+      document.documentElement.style.setProperty('--palette-secondary', palette.secondary)
+      document.documentElement.style.setProperty('--palette-accent',    palette.accent)
+      document.documentElement.style.setProperty('--palette-surface',   palette.surface)
+      document.documentElement.style.setProperty('--group-primary',     palette.primary)
     }
 
     router.push('/dashboard')

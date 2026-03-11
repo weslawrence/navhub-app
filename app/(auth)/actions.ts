@@ -69,7 +69,7 @@ export async function signOut() {
 // switchGroup — update active group cookie
 // ============================================================
 
-export async function switchGroup(groupId: string): Promise<{ primaryColor: string } | { error: string }> {
+export async function switchGroup(groupId: string): Promise<{ primaryColor: string; palette_id: string } | { error: string }> {
   const supabase = createClient()
 
   const { data: { session } } = await supabase.auth.getSession()
@@ -85,10 +85,10 @@ export async function switchGroup(groupId: string): Promise<{ primaryColor: stri
 
   if (!membership) return { error: 'Access denied to this group.' }
 
-  // Get group colour
+  // Get group colour + palette
   const { data: group } = await supabase
     .from('groups')
-    .select('primary_color')
+    .select('primary_color, palette_id')
     .eq('id', groupId)
     .single()
 
@@ -101,5 +101,8 @@ export async function switchGroup(groupId: string): Promise<{ primaryColor: stri
     maxAge:   60 * 60 * 24 * 30,
   })
 
-  return { primaryColor: group?.primary_color ?? '#0ea5e9' }
+  return {
+    primaryColor: group?.primary_color ?? '#0ea5e9',
+    palette_id:   group?.palette_id   ?? 'ocean',
+  }
 }

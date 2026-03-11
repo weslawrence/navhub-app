@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { unstable_noStore as noStore } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
 import AppShell from '@/components/layout/AppShell'
 import { getPalette, buildPaletteCSS } from '@/lib/themes'
@@ -10,6 +11,10 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
+  // Opt out of Next.js Data Cache so palette_id (and all group data) is always
+  // fetched fresh from the DB — prevents stale palette on hard refresh.
+  noStore()
+
   const supabase = createClient()
 
   // Auth check

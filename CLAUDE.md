@@ -446,9 +446,13 @@ Callback always selects `tenants[0]`. Repeat the connect flow per entity for mul
 ### 4. Sidebar collapse hydration
 AppShell reads `localStorage` for sidebar state. `mounted = false` → default (expanded) on first render.
 
-### 5. Palette flash prevention (updated Phase 2c)
+### 5. Palette flash prevention (updated Phase 2c + Palette Persistence Fix)
 `app/(dashboard)/layout.tsx` injects full palette CSS block server-side via `buildPaletteCSS(getPalette(activeGroup.palette_id))`.
 This sets `--palette-primary`, `--palette-secondary`, `--palette-accent`, `--palette-surface`, and `--group-primary` (alias) before any client JS runs.
+
+**Palette persistence fix**: `unstable_noStore()` (from `next/cache`) is called at the top of `DashboardLayout()` to opt out of Next.js's Data Cache. Without this, the Supabase `fetch` calls can be served stale (cached) values — meaning a palette change saved to the DB would not be reflected on hard refresh until the cache expired.
+
+**Group switch fix**: `switchGroup()` server action now returns `{ primaryColor, palette_id }`. `GroupSwitcher.tsx` uses `getPalette(result.palette_id)` to apply all 5 CSS vars immediately via `style.setProperty()` when switching groups (previously only `--group-primary` was updated, causing a brief flash on other palette-coloured elements).
 
 ### 6. xero-node used only for OAuth
 All Xero API calls use raw `fetch()`. `lib/xero.ts` implements OAuth without the xero-node XeroClient.

@@ -93,7 +93,7 @@ export default function ReportViewerPage() {
                 </a>
               </Button>
               <Button variant="outline" size="sm" asChild>
-                <a href={`/reports/custom/${params.id}`} target="_blank" rel="noreferrer">
+                <a href={`/view/report/${params.id}`} target="_blank" rel="noreferrer">
                   <ExternalLink className="h-4 w-4 mr-1.5" /> Open in tab
                 </a>
               </Button>
@@ -168,7 +168,7 @@ export default function ReportViewerPage() {
               {/* Right actions */}
               <div className="ml-auto flex items-center gap-3 flex-shrink-0">
                 <a
-                  href={`/reports/custom/${params.id}`}
+                  href={`/view/report/${params.id}`}
                   target="_blank"
                   rel="noreferrer"
                   className="text-white/40 hover:text-white/70 transition-colors"

@@ -222,8 +222,6 @@ export default function GenerateReportPage() {
     )
   }
 
-  const manualSlots = template?.slots.filter(s => s.data_source === 'manual') ?? []
-
   return (
     <div className="max-w-2xl space-y-6">
       {/* Header */}

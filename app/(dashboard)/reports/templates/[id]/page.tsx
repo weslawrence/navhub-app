@@ -4,14 +4,13 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  ChevronLeft, Pencil, FileText, Clock, Check, X,
+  ChevronLeft, FileText, Clock, Check, X,
   BarChart2, Grid2X2, FileEdit, LayoutDashboard, Workflow,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
-import type { ReportTemplate, ReportTemplateVersion, TemplateType, SlotType, SlotDataSource } from '@/lib/types'
+import type { ReportTemplate, ReportTemplateVersion, TemplateType, SlotDataSource } from '@/lib/types'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 

@@ -206,17 +206,20 @@ export interface GroupMember {
 }
 
 export interface CustomReport {
-  id:          string
-  group_id:    string
-  name:        string
-  description: string | null
-  file_path:   string
-  file_type:   string
-  uploaded_by: string
-  is_active:   boolean
-  sort_order:  number
-  created_at:  string
-  updated_at:  string
+  id:                     string
+  group_id:               string
+  name:                   string
+  description:            string | null
+  file_path:              string
+  file_type:              string
+  uploaded_by:            string
+  is_active:              boolean
+  sort_order:             number
+  is_shareable:           boolean
+  share_token:            string | null
+  share_token_created_at: string | null
+  created_at:             string
+  updated_at:             string
 }
 
 // ============================================================

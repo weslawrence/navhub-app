@@ -838,10 +838,11 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 7. **Run migration `010_report_templates.sql`** in Supabase dashboard (Phase 5a — template tables)
 8. Seed Role & Task Matrix V5 template: POST `/api/report-templates/seed` (admin user, active group must be set)
 9. **Run migration `011_group_slug.sql`** in Supabase dashboard (group slug column + unique index)
-10. Add `error.tsx` files for each route segment
-11. Add chart visualisations to financial report pages (trend lines, bar charts)
-12. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
-13. Phase 5b: Template editor UI (scaffold_html/css/js editable in-app), agent-generated templates
+10. **Run migration `012_report_sharing.sql`** in Supabase dashboard (is_shareable, share_token, share_token_created_at on custom_reports)
+11. Add `error.tsx` files for each route segment
+12. Add chart visualisations to financial report pages (trend lines, bar charts)
+13. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
+14. Phase 5b: Template editor UI (scaffold_html/css/js editable in-app), agent-generated templates
 
 ---
 
@@ -1187,3 +1188,93 @@ Note: `groups.slug` was already being set in the POST /api/groups route (from Ph
 - Save via `PATCH /api/groups/[id]` with `{ slug }`
 - Preview URL: `app.navhub.co/[slug]/dashboard`
 - Auto-converts input to lowercase on change
+
+---
+
+## Standalone Report Viewer
+
+### `app/view/report/[id]/page.tsx`
+- Server component outside the `(dashboard)` layout — no AppShell/sidebar
+- Uses admin client to fetch report name (`custom_reports`) and group name (`groups` join)
+- Accepts `searchParams: { token?: string }` for public token-based access
+- Access control (two paths):
+  - **Session user**: checks group membership via admin client → serves file from `/api/reports/custom/${id}/file`
+  - **Token user** (no session): validates token against DB (`is_shareable=true`, `share_token===token`) → serves from `/api/reports/public/${id}/file?token=${token}`
+  - **Denied**: renders `<NotAvailable />` component (no login prompt, no details)
+- Renders 44px branded header + full-viewport iframe (`height: 100vh`)
+- "Back to Library" link hidden for unauthenticated token users
+- Inline styles used (no Tailwind palette CSS vars since outside dashboard layout):
+  - Header bg: `var(--palette-surface, #1a1d27)`; border: `1px solid rgba(255,255,255,0.08)`
+  - Wordmark: `nav` in `var(--palette-primary, #0ea5e9)`, `hub` in `rgba(255,255,255,0.5)`
+
+### Middleware public paths
+`middleware.ts` (project root) includes `/view/report/` and `/api/reports/public/` in the `isPublic` list so unauthenticated requests pass through without being redirected to `/login`.
+
+---
+
+## Report External Sharing
+
+### Database (migration 012)
+```sql
+ALTER TABLE custom_reports
+  ADD COLUMN IF NOT EXISTS is_shareable          boolean     NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS share_token           text,
+  ADD COLUMN IF NOT EXISTS share_token_created_at timestamptz;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_custom_reports_share_token
+  ON custom_reports (share_token) WHERE share_token IS NOT NULL;
+```
+
+### Share management API (`app/api/reports/custom/[id]/share/route.ts`)
+Admin only (super_admin / group_admin). All three methods verify session + active group + admin role before acting.
+
+```
+GET  /api/reports/custom/[id]/share
+  → { is_shareable, share_url, created_at }
+  → share_url = null when not shared; constructed from NEXT_PUBLIC_APP_URL
+
+POST /api/reports/custom/[id]/share
+  → Generates randomBytes(32).toString('hex') token
+  → Sets is_shareable=true, share_token, share_token_created_at
+  → Returns { is_shareable: true, share_url, created_at }
+  → Idempotent — re-calling regenerates the token (old links stop working)
+
+DELETE /api/reports/custom/[id]/share
+  → Sets is_shareable=false, share_token=null, share_token_created_at=null
+  → Returns { is_shareable: false }
+  → Existing links stop working immediately
+```
+
+### Public file endpoint (`app/api/reports/public/[id]/file/route.ts`)
+- No session required — public endpoint
+- GET with `?token=` query param (returns 403 if missing)
+- Admin client queries `custom_reports` where `id`, `is_active=true`, `is_shareable=true`
+- Compares `share_token` — returns generic 403 for both wrong token and missing report (no information leakage)
+- Returns 1-hour signed Storage URL with `Cache-Control: private, no-store`
+
+### lib/types.ts — CustomReport additions
+```typescript
+is_shareable:           boolean
+share_token:            string | null
+share_token_created_at: string | null
+```
+
+### Dashboard Report Viewer — Share UI (`app/(dashboard)/reports/custom/[id]/page.tsx`)
+- Admin only: **Share** button added to toolbar between Download and Open in tab
+- Inline `SharePopover` component (backdrop + panel):
+  - Lazy fetches `GET /api/reports/custom/${id}/share` on mount
+  - **Not shared**: "This report is private" message + "Generate share link" button (POST)
+  - **Shared**: read-only URL input + Copy button (2s "Copied!" indicator via `navigator.clipboard.writeText()`) + created date + amber warning text + "Revoke link" button (DELETE with `confirm()`)
+  - Close button (X) in panel header
+
+### Reports Library — Shared badge (`app/(dashboard)/reports/custom/page.tsx`)
+- Cards where `report.is_shareable === true` show an emerald "Shared" badge:
+  - Style: `border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30`
+  - Icon: `<Share2 className="h-3 w-3" />`
+
+### Security notes
+- Token is 64-char hex (`randomBytes(32)`) — not guessable
+- Generic 403 on public endpoint prevents enumeration of report IDs
+- Token never included in error messages or logs
+- `Cache-Control: private, no-store` prevents CDN/proxy token exposure
+- Revoking immediately invalidates all existing links (token set to null)
+- Share URL format: `{NEXT_PUBLIC_APP_URL}/view/report/{id}?token={token}`

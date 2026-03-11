@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Link from 'next/link'
 import {
-  FileText, Upload, Plus, X, Check, Loader2, BookOpen,
+  FileText, Upload, Plus, X, Check, Loader2, BookOpen, Share2,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -304,14 +304,24 @@ export default function ReportsLibraryPage() {
               className="group relative hover:border-primary/50 transition-colors"
             >
               <CardContent className="p-5 space-y-3">
-                {/* Icon + badge */}
-                <div className="flex items-start justify-between">
-                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                {/* Icon + badges */}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                     <FileText className="h-5 w-5 text-primary" />
                   </div>
-                  <Badge variant="outline" className="text-xs uppercase tracking-wide">
-                    {report.file_type}
-                  </Badge>
+                  <div className="flex flex-wrap gap-1.5 justify-end">
+                    {report.is_shareable && (
+                      <Badge
+                        variant="outline"
+                        className="text-xs gap-1 border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30"
+                      >
+                        <Share2 className="h-3 w-3" /> Shared
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="text-xs uppercase tracking-wide">
+                      {report.file_type}
+                    </Badge>
+                  </div>
                 </div>
 
                 {/* Name + description */}

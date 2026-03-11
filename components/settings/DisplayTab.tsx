@@ -70,6 +70,12 @@ export default function DisplayTab({
   const [groupNameSaving, setGroupNameSaving] = useState(false)
   const [groupNameToast,  setGroupNameToast]  = useState<string | null>(null)
 
+  // ── Slug state ────────────────────────────────────────────────────────────
+  const [editSlug,      setEditSlug]      = useState(groupSlug)
+  const [slugSaving,    setSlugSaving]    = useState(false)
+  const [slugToast,     setSlugToast]     = useState<string | null>(null)
+  const [slugError,     setSlugError]     = useState('')
+
   // ── Palette state ────────────────────────────────────────────────────────
   const [paletteSaving,     setPaletteSaving]     = useState(false)
   const [paletteToast,      setPaletteToast]      = useState<string | null>(null)
@@ -77,6 +83,7 @@ export default function DisplayTab({
 
   // Keep edit group name in sync with parent
   useEffect(() => { setEditGroupName(groupName) }, [groupName])
+  useEffect(() => { setEditSlug(groupSlug) }, [groupSlug])
   useEffect(() => { setLocalPaletteId(selectedPaletteId) }, [selectedPaletteId])
 
   // Load user prefs
@@ -96,6 +103,12 @@ export default function DisplayTab({
     const t = setTimeout(() => setGroupNameToast(null), 3000)
     return () => clearTimeout(t)
   }, [groupNameToast])
+
+  useEffect(() => {
+    if (!slugToast) return
+    const t = setTimeout(() => setSlugToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [slugToast])
 
   useEffect(() => {
     if (!paletteToast) return
@@ -150,6 +163,32 @@ export default function DisplayTab({
       setGroupNameToast(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setGroupNameSaving(false)
+    }
+  }
+
+  async function handleSaveSlug() {
+    if (!groupId) return
+    const slug = editSlug.trim().toLowerCase()
+    setSlugError('')
+    if (slug.length < 2) { setSlugError('Slug must be at least 2 characters'); return }
+    if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/.test(slug)) {
+      setSlugError('Only lowercase letters, numbers, and hyphens. No leading/trailing hyphens.')
+      return
+    }
+    setSlugSaving(true)
+    try {
+      const res  = await fetch(`/api/groups/${groupId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ slug }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to save')
+      setSlugToast('Slug updated')
+    } catch (err) {
+      setSlugError(err instanceof Error ? err.message : 'Failed to update')
+    } finally {
+      setSlugSaving(false)
     }
   }
 
@@ -221,13 +260,52 @@ export default function DisplayTab({
                   {groupNameToast}
                 </p>
               )}
-              <p className="text-xs text-muted-foreground">Slug: <code className="font-mono">{groupSlug}</code></p>
             </>
           ) : (
             <p className="text-sm font-medium text-foreground">{groupName}</p>
           )}
         </CardContent>
       </Card>
+
+      {/* ── Group URL Slug ──────────────────────────────────────────────────── */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Group URL Slug</CardTitle>
+            <CardDescription>Used in your NavHub URLs. Auto-generated from your group name.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                value={editSlug}
+                onChange={e => { setEditSlug(e.target.value.toLowerCase()); setSlugError('') }}
+                placeholder="my-group"
+                className="flex-1 font-mono text-sm"
+              />
+              <Button
+                size="sm"
+                onClick={handleSaveSlug}
+                disabled={slugSaving || editSlug.trim() === groupSlug}
+              >
+                {slugSaving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+            {slugError && (
+              <p className="text-xs text-destructive">{slugError}</p>
+            )}
+            {slugToast && (
+              <p className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
+                <Check className="h-3.5 w-3.5" /> {slugToast}
+              </p>
+            )}
+            {editSlug && !slugError && (
+              <p className="text-xs text-muted-foreground font-mono">
+                Preview: <span className="text-foreground">app.navhub.co/<span className="text-primary">{editSlug || groupSlug}</span>/dashboard</span>
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Colour palette (admin only) ─────────────────────────────────────── */}
       {isAdmin && (

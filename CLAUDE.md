@@ -837,10 +837,11 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 6. **Run migration `009_cashflow.sql`** in Supabase dashboard (Phase 4a — cashflow tables)
 7. **Run migration `010_report_templates.sql`** in Supabase dashboard (Phase 5a — template tables)
 8. Seed Role & Task Matrix V5 template: POST `/api/report-templates/seed` (admin user, active group must be set)
-9. Add `error.tsx` files for each route segment
-10. Add chart visualisations to financial report pages (trend lines, bar charts)
-11. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
-12. Phase 5b: Template editor UI (scaffold_html/css/js editable in-app), agent-generated templates
+9. **Run migration `011_group_slug.sql`** in Supabase dashboard (group slug column + unique index)
+10. Add `error.tsx` files for each route segment
+11. Add chart visualisations to financial report pages (trend lines, bar charts)
+12. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
+13. Phase 5b: Template editor UI (scaffold_html/css/js editable in-app), agent-generated templates
 
 ---
 
@@ -1148,3 +1149,41 @@ The seed route (`POST /api/report-templates/seed`) inserts a complete working ma
 1. Run migration `010_report_templates.sql` in Supabase dashboard
 2. Ensure `report-files` Storage bucket exists (used by generate route)
 3. Seed template: `POST /api/report-templates/seed` with admin session + active group cookie
+
+---
+
+## Report Viewer Header + Group Slug
+
+### Report Viewer Branded Header
+`app/(dashboard)/reports/custom/[id]/page.tsx` — thin 44px branded header injected between toolbar and iframe:
+- Background: `var(--palette-surface, #1a1d27)` (always dark; matches sidebar)
+- Border-bottom: `1px solid rgba(255,255,255,0.08)`
+- Left: NavHub wordmark (nav = `var(--palette-primary)`, hub = white/50) · divider · group name · divider · report name
+- Right: Open in new tab icon + Back to Library text link
+- `groupName` fetched alongside metadata from `/api/groups/active` (`json.data.group.name`)
+- iframe height fills remaining flex-1 space; container uses `flex flex-col`
+
+Same header applied to `app/(dashboard)/cashflow/[companyId]/history/[snapshotId]/page.tsx`:
+- Shows: NavHub wordmark · group name · "Cash Flow Snapshot" · snapshot name · Back to History
+- Added `/api/groups/active` fetch alongside existing snapshot fetch in parallel
+
+### Group Slug
+
+**Database (migration 011)**
+```sql
+ALTER TABLE groups ADD COLUMN IF NOT EXISTS slug text;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_groups_slug ON groups (slug) WHERE slug IS NOT NULL;
+```
+Note: `groups.slug` was already being set in the POST /api/groups route (from Phase 3b); migration 011 adds the column and unique index idempotently.
+
+**PATCH /api/groups/[id]** now accepts `{ slug }`:
+- Validates: 2+ chars, `/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/` (no leading/trailing hyphens)
+- Checks uniqueness against other groups (admin client, `.neq('id', params.id)`)
+- Returns 409 if slug taken
+
+**DisplayTab.tsx — URL Slug card** (admin only, between Group Name and Colour Palette):
+- Editable text input with monospace font
+- Client-side validation: `/^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/`
+- Save via `PATCH /api/groups/[id]` with `{ slug }`
+- Preview URL: `app.navhub.co/[slug]/dashboard`
+- Auto-converts input to lowercase on change

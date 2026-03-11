@@ -30,16 +30,22 @@ export default function SnapshotViewerPage() {
   const companyId  = params?.companyId  as string
   const snapshotId = params?.snapshotId as string
 
-  const [snapshot, setSnapshot] = useState<CashflowSnapshot | null>(null)
-  const [loading,  setLoading]  = useState(true)
-  const [error,    setError]    = useState<string | null>(null)
+  const [snapshot,  setSnapshot]  = useState<CashflowSnapshot | null>(null)
+  const [groupName, setGroupName] = useState<string>('')
+  const [loading,   setLoading]   = useState(true)
+  const [error,     setError]     = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
-      const res  = await fetch(`/api/cashflow/${companyId}/snapshots/${snapshotId}`)
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error ?? 'Not found')
-      setSnapshot(json.data)
+      const [snapRes, groupRes] = await Promise.all([
+        fetch(`/api/cashflow/${companyId}/snapshots/${snapshotId}`),
+        fetch('/api/groups/active'),
+      ])
+      const snapJson  = await snapRes.json()
+      const groupJson = await groupRes.json()
+      if (!snapRes.ok) throw new Error(snapJson.error ?? 'Not found')
+      setSnapshot(snapJson.data)
+      if (groupJson.data?.group?.name) setGroupName(groupJson.data.group.name)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -91,6 +97,35 @@ export default function SnapshotViewerPage() {
 
   return (
     <div className="space-y-4">
+      {/* Branded header */}
+      <div
+        className="flex items-center gap-3 px-4 -mx-4 -mt-4 mb-0 flex-shrink-0"
+        style={{
+          height:       '44px',
+          background:   'var(--palette-surface, #1a1d27)',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+        }}
+      >
+        <span className="text-sm font-semibold tracking-tight leading-none select-none">
+          <span style={{ color: 'var(--palette-primary, #0ea5e9)' }}>nav</span>
+          <span className="text-white/50">hub</span>
+        </span>
+        <div className="h-4 w-px bg-white/15" />
+        {groupName && (
+          <span className="text-xs text-white/60 truncate max-w-[140px]">{groupName}</span>
+        )}
+        <div className="h-4 w-px bg-white/15" />
+        <span className="text-xs text-white/50">Cash Flow Snapshot</span>
+        <div className="h-4 w-px bg-white/15" />
+        <span className="text-xs text-white/40 truncate flex-1">{snapshot.name}</span>
+        <Link
+          href={`/cashflow/${companyId}/history`}
+          className="ml-auto text-xs text-white/40 hover:text-white/70 transition-colors flex-shrink-0"
+        >
+          Back to History
+        </Link>
+      </div>
+
       {/* Header */}
       <div className="flex items-center gap-3">
         <Link href={`/cashflow/${companyId}/history`} className="text-muted-foreground hover:text-foreground">

@@ -14,6 +14,7 @@ export default function ReportViewerPage() {
   const router = useRouter()
 
   const [reportName, setReportName] = useState<string>('')
+  const [groupName,  setGroupName]  = useState<string>('')
   const [isAdmin,    setIsAdmin]    = useState(false)
   const [loading,    setLoading]    = useState(true)
   const [error,      setError]      = useState<string | null>(null)
@@ -39,7 +40,10 @@ export default function ReportViewerPage() {
         }
 
         setReportName(metaJson.data.name)
-        if (groupJson.data) setIsAdmin(groupJson.data.is_admin)
+        if (groupJson.data) {
+          setIsAdmin(groupJson.data.is_admin)
+          setGroupName(groupJson.data.group?.name ?? '')
+        }
         setReady(true)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load report')
@@ -114,8 +118,8 @@ export default function ReportViewerPage() {
 
       {/* Content area */}
       <div className={cn(
-        'flex-1 rounded-lg border bg-white dark:bg-gray-950 overflow-hidden',
-        (loading || error) && 'flex items-center justify-center'
+        'flex-1 rounded-lg border overflow-hidden flex flex-col',
+        (loading || error) && 'bg-white dark:bg-gray-950 items-center justify-center'
       )}>
         {loading && (
           <div className="text-center space-y-3">
@@ -135,12 +139,60 @@ export default function ReportViewerPage() {
         )}
 
         {ready && !loading && !error && (
-          <iframe
-            src={fileUrl}
-            title={reportName || 'Custom Report'}
-            className="w-full h-full border-0"
-            sandbox="allow-scripts allow-same-origin"
-          />
+          <>
+            {/* Branded header */}
+            <div
+              className="flex items-center gap-3 px-4 flex-shrink-0"
+              style={{
+                height:            '44px',
+                background:        'var(--palette-surface, #1a1d27)',
+                borderBottom:      '1px solid rgba(255,255,255,0.08)',
+              }}
+            >
+              {/* Wordmark */}
+              <span className="text-sm font-semibold tracking-tight leading-none select-none">
+                <span style={{ color: 'var(--palette-primary, #0ea5e9)' }}>nav</span>
+                <span className="text-white/50">hub</span>
+              </span>
+
+              <div className="h-4 w-px bg-white/15" />
+
+              {groupName && (
+                <span className="text-xs text-white/60 truncate max-w-[140px]">{groupName}</span>
+              )}
+
+              <div className="h-4 w-px bg-white/15" />
+
+              <span className="text-xs text-white/40 truncate flex-1">{reportName}</span>
+
+              {/* Right actions */}
+              <div className="ml-auto flex items-center gap-3 flex-shrink-0">
+                <a
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-white/40 hover:text-white/70 transition-colors"
+                  title="Open in new tab"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+                <Link
+                  href="/reports/custom"
+                  className="text-xs text-white/40 hover:text-white/70 transition-colors"
+                >
+                  Back to Library
+                </Link>
+              </div>
+            </div>
+
+            {/* iframe fills remaining height */}
+            <iframe
+              src={fileUrl}
+              title={reportName || 'Custom Report'}
+              className="w-full flex-1 border-0 bg-white"
+              sandbox="allow-scripts allow-same-origin"
+            />
+          </>
         )}
       </div>
     </div>

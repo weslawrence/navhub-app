@@ -4,6 +4,8 @@ import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { PALETTES, getPalette } from '@/lib/themes'
 
+const SLUG_RE = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/
+
 type Params = { params: { id: string } }
 
 // ─── PATCH /api/groups/[id] ──────────────────────────────────────────────────
@@ -53,6 +55,31 @@ export async function PATCH(request: Request, { params }: Params) {
       return NextResponse.json({ error: 'Group name must be at least 2 characters' }, { status: 422 })
     }
     updates.name = name
+  }
+
+  if (typeof body.slug === 'string') {
+    const slug = body.slug.trim().toLowerCase()
+    if (slug.length < 2) {
+      return NextResponse.json({ error: 'Slug must be at least 2 characters' }, { status: 422 })
+    }
+    if (!SLUG_RE.test(slug)) {
+      return NextResponse.json(
+        { error: 'Slug may only contain lowercase letters, numbers, and hyphens (no leading/trailing hyphens)' },
+        { status: 422 }
+      )
+    }
+    // Check uniqueness (exclude current group)
+    const admin = createAdminClient()
+    const { data: slugConflict } = await admin
+      .from('groups')
+      .select('id')
+      .eq('slug', slug)
+      .neq('id', params.id)
+      .single()
+    if (slugConflict) {
+      return NextResponse.json({ error: 'This slug is already taken. Choose a different one.' }, { status: 409 })
+    }
+    updates.slug = slug
   }
 
   if (typeof body.palette_id === 'string') {

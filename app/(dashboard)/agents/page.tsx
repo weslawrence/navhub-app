@@ -15,11 +15,17 @@ import type { Agent, AgentTool } from '@/lib/types'
 // ─── Tool display config ──────────────────────────────────────────────────────
 
 const TOOL_LABELS: Record<AgentTool, string> = {
-  read_financials:  'Financials',
-  read_companies:   'Companies',
-  generate_report:  'Reports',
-  send_slack:       'Slack',
-  send_email:       'Email',
+  read_financials:         'Financials',
+  read_companies:          'Companies',
+  generate_report:         'Reports',
+  send_slack:              'Slack',
+  send_email:              'Email',
+  list_report_templates:   'List Templates',
+  read_report_template:    'Read Template',
+  create_report_template:  'Create Template',
+  update_report_template:  'Update Template',
+  render_report:           'Render Report',
+  analyse_document:        'Analyse Doc',
 }
 
 // ─── Agent avatar ─────────────────────────────────────────────────────────────

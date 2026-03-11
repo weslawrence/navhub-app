@@ -13,6 +13,12 @@ import {
   generateReport,
   sendSlack,
   sendEmail,
+  listReportTemplates,
+  readReportTemplate,
+  createReportTemplate,
+  updateReportTemplate,
+  renderReport,
+  analyseDocument,
 } from '@/lib/agent-tools'
 import type {
   Agent,
@@ -104,6 +110,92 @@ const ALL_TOOL_DEFS: Record<string, object> = {
         attach_report_id: { type: 'string', description: 'Optional custom_report ID to include as a signed URL link in the email.' },
       },
       required: ['to', 'subject', 'body'],
+    },
+  },
+  list_report_templates: {
+    name:        'list_report_templates',
+    description: 'List all report templates available to the current group.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        template_type: {
+          type: 'string',
+          enum: ['financial', 'matrix', 'narrative', 'dashboard', 'workflow'],
+          description: 'Optional filter by type.',
+        },
+      },
+    },
+  },
+  read_report_template: {
+    name:        'read_report_template',
+    description: 'Fetch the full definition of a report template including slots, design tokens, and optionally scaffold.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        template_id:       { type: 'string', description: 'UUID of the template.' },
+        include_scaffold:  { type: 'boolean', description: 'If true, also return scaffold_html, scaffold_css, scaffold_js.' },
+      },
+      required: ['template_id'],
+    },
+  },
+  create_report_template: {
+    name:        'create_report_template',
+    description: 'Create a new report template. Use after analysing a document or following user instructions.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        name:               { type: 'string' },
+        template_type:      { type: 'string', enum: ['financial', 'matrix', 'narrative', 'dashboard', 'workflow'] },
+        description:        { type: 'string' },
+        design_tokens:      { type: 'object', description: 'CSS variable names mapped to values.' },
+        slots:              { type: 'array',  description: 'Array of slot definitions.' },
+        scaffold_html:      { type: 'string', description: 'HTML scaffold with {{slot_name}} placeholders.' },
+        scaffold_css:       { type: 'string', description: 'CSS with {{token_name}} placeholders.' },
+        scaffold_js:        { type: 'string', description: 'Optional JavaScript.' },
+        agent_instructions: { type: 'string', description: 'Instructions for future agents using this template.' },
+      },
+      required: ['name', 'template_type', 'slots'],
+    },
+  },
+  update_report_template: {
+    name:        'update_report_template',
+    description: 'Update an existing template. Automatically saves the current version before updating.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        template_id: { type: 'string' },
+        changes: {
+          type: 'object',
+          description: 'Fields to update: name, description, design_tokens, slots, scaffold_html, scaffold_css, scaffold_js, agent_instructions.',
+        },
+      },
+      required: ['template_id', 'changes'],
+    },
+  },
+  render_report: {
+    name:        'render_report',
+    description: 'Render a template with slot data and save to the Custom Reports Library.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        template_id: { type: 'string' },
+        slot_data:   { type: 'object', description: 'Map of slot names to values.' },
+        report_name: { type: 'string', description: 'Name for the saved report.' },
+        notes:       { type: 'string', description: 'Optional notes.' },
+      },
+      required: ['template_id', 'slot_data', 'report_name'],
+    },
+  },
+  analyse_document: {
+    name:        'analyse_document',
+    description: 'Analyse an uploaded document and propose a report template definition. Returns a proposal — does NOT save automatically.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        file_url:     { type: 'string', description: 'URL of uploaded file in Supabase Storage or a signed URL.' },
+        file_content: { type: 'string', description: 'Text content of the document if already extracted.' },
+        instructions: { type: 'string', description: 'User instructions about what to extract.' },
+      },
     },
   },
 }
@@ -495,6 +587,18 @@ async function executeTool(
       return sendSlack(input as unknown as Parameters<typeof sendSlack>[0], context)
     case 'send_email':
       return sendEmail(input as unknown as Parameters<typeof sendEmail>[0], context)
+    case 'list_report_templates':
+      return listReportTemplates(input as unknown as Parameters<typeof listReportTemplates>[0], context)
+    case 'read_report_template':
+      return readReportTemplate(input as unknown as Parameters<typeof readReportTemplate>[0], context)
+    case 'create_report_template':
+      return createReportTemplate(input as unknown as Parameters<typeof createReportTemplate>[0], context)
+    case 'update_report_template':
+      return updateReportTemplate(input as unknown as Parameters<typeof updateReportTemplate>[0], context)
+    case 'render_report':
+      return renderReport(input as unknown as Parameters<typeof renderReport>[0], context)
+    case 'analyse_document':
+      return analyseDocument(input as unknown as Parameters<typeof analyseDocument>[0], context)
     default:
       return `Unknown tool: ${toolName}`
   }

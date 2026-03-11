@@ -262,6 +262,12 @@ export type AgentTool =
   | 'generate_report'
   | 'send_slack'
   | 'send_email'
+  | 'list_report_templates'
+  | 'read_report_template'
+  | 'create_report_template'
+  | 'update_report_template'
+  | 'render_report'
+  | 'analyse_document'
 
 export type PersonaPreset =
   | 'executive_analyst'

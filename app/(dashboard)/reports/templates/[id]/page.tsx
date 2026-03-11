@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
-  ChevronLeft, FileText, Clock, Check, X,
+  ChevronLeft, FileText, Clock, Check, X, Pencil, RotateCcw, Loader2,
   BarChart2, Grid2X2, FileEdit, LayoutDashboard, Workflow,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -52,6 +52,7 @@ export default function TemplateDetailPage() {
   const [isAdmin,   setIsAdmin]   = useState(false)
   const [tab,       setTab]       = useState<TabKey>('overview')
   const [deleting,  setDeleting]  = useState(false)
+  const [restoring, setRestoring] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -96,6 +97,38 @@ export default function TemplateDetailPage() {
       router.push('/reports/templates')
     } catch {
       setDeleting(false)
+    }
+  }
+
+  async function handleRestore(versionId: string) {
+    if (!confirm('Restore this version? The current template will be saved as a version first.')) return
+    setRestoring(versionId)
+    try {
+      // Fetch the full version
+      const res  = await fetch(`/api/report-templates/${templateId}/versions/${versionId}`)
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to fetch version')
+      const v = json.data
+
+      // PATCH the template with version content
+      const patchRes = await fetch(`/api/report-templates/${templateId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          design_tokens: v.design_tokens,
+          slots:         v.slots,
+          scaffold_html: v.scaffold_html,
+          scaffold_css:  v.scaffold_css,
+          scaffold_js:   v.scaffold_js,
+        }),
+      })
+      if (!patchRes.ok) throw new Error('Restore failed')
+      await load()
+      setTab('overview')
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Restore failed')
+    } finally {
+      setRestoring(null)
     }
   }
 
@@ -161,14 +194,23 @@ export default function TemplateDetailPage() {
             Generate Report
           </Link>
           {isAdmin && (
-            <button
-              onClick={handleDelete}
-              disabled={deleting}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
-            >
-              <X className="h-4 w-4" />
-              Delete
-            </button>
+            <>
+              <Link
+                href={`/reports/templates/${templateId}/edit`}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm text-foreground hover:bg-muted transition-colors"
+              >
+                <Pencil className="h-4 w-4" />
+                Edit
+              </Link>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
+              >
+                <X className="h-4 w-4" />
+                Delete
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -351,6 +393,18 @@ export default function TemplateDetailPage() {
                         {formatDate(v.created_at)}
                       </span>
                     </div>
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleRestore(v.id)}
+                        disabled={restoring === v.id}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
+                      >
+                        {restoring === v.id
+                          ? <Loader2 className="h-3 w-3 animate-spin" />
+                          : <RotateCcw className="h-3 w-3" />}
+                        Restore
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>

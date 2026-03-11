@@ -27,11 +27,17 @@ const TOOL_OPTIONS: {
   emoji: string
   description: string
 }[] = [
-  { value: 'read_financials', label: 'Read Financials', emoji: '📊', description: 'Access P&L and balance sheet data' },
-  { value: 'read_companies',  label: 'Read Companies',  emoji: '🏢', description: 'Access company and division info' },
-  { value: 'generate_report', label: 'Generate Report', emoji: '📄', description: 'Create draft reports in the library' },
-  { value: 'send_slack',      label: 'Send to Slack',   emoji: '💬', description: 'Post output to a Slack channel' },
-  { value: 'send_email',      label: 'Send Email',       emoji: '📧', description: 'Send output via email (Resend)' },
+  { value: 'read_financials',        label: 'Read Financials',       emoji: '📊', description: 'Access P&L and balance sheet data' },
+  { value: 'read_companies',         label: 'Read Companies',        emoji: '🏢', description: 'Access company and division info' },
+  { value: 'generate_report',        label: 'Generate Report',       emoji: '📄', description: 'Create draft reports in the library' },
+  { value: 'send_slack',             label: 'Send to Slack',         emoji: '💬', description: 'Post output to a Slack channel' },
+  { value: 'send_email',             label: 'Send Email',            emoji: '📧', description: 'Send output via email (Resend)' },
+  { value: 'list_report_templates',  label: 'List Templates',        emoji: '📋', description: 'List available report templates' },
+  { value: 'read_report_template',   label: 'Read Template',         emoji: '🔍', description: 'Fetch template definition and slots' },
+  { value: 'create_report_template', label: 'Create Template',       emoji: '✨', description: 'Create a new report template' },
+  { value: 'update_report_template', label: 'Update Template',       emoji: '✏️', description: 'Edit an existing template (auto-versions)' },
+  { value: 'render_report',          label: 'Render Report',         emoji: '🖨️', description: 'Fill a template and save to Reports Library' },
+  { value: 'analyse_document',       label: 'Analyse Document',      emoji: '🔎', description: 'Extract a template proposal from a document' },
 ]
 
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [

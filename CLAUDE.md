@@ -92,7 +92,11 @@ app/
         [id]/page.tsx       # Report viewer — full-height iframe + toolbar (Phase 2f)
       templates/
         page.tsx            # Template Library — card grid, type filter, Generate/View buttons (Phase 5a)
-        [id]/page.tsx       # Template Detail — 4 tabs: Overview, Slots, Design Tokens, Version History (Phase 5a)
+        new/page.tsx        # 3-path creation: Upload Document | Describe to Agent | Build Manually (Phase 5c)
+        new/review/page.tsx # Side-by-side diff review of agent proposal (Phase 5c)
+        new/manual/page.tsx # Full manual editor — Details/Slots/Tokens/Scaffold tabs (Phase 5c)
+        [id]/page.tsx       # Template Detail — 4 tabs: Overview, Slots, Design Tokens, Version History + Restore (Phase 5a/5c)
+        [id]/edit/page.tsx  # Edit template — same 4-tab layout, PATCH on save (Phase 5c)
         [id]/generate/page.tsx # Generate Wizard — 3-step: Fill Slots → Preview → Save (Phase 5a)
     forecasting/
       page.tsx              # Redirect → /forecasting/revenue
@@ -156,6 +160,7 @@ app/
       [id]/versions/route.ts # GET — list version metadata (no scaffold content) (Phase 5a)
       [id]/versions/[versionId]/route.ts # GET — full version including scaffold (Phase 5a)
       seed/route.ts         # POST — seed Role & Task Matrix V5 template for active group (admin) (Phase 5a)
+      analyse/route.ts      # POST multipart (file + instructions) → proposed template JSON, no save (Phase 5c)
   layout.tsx                # Root HTML shell — ThemeProvider, metadata
   page.tsx                  # "/" → redirect to /dashboard
   globals.css               # Tailwind base + shadcn CSS vars + --group-primary
@@ -759,6 +764,8 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 4a | ✅ Complete | 13-Week Rolling Cash Flow Forecast (manual mode) — items, projection engine, grid UI, snapshots |
 | Phase 4b | Planned | Cash Flow — Xero AR/AP pull, group summary page |
 | Phase 5a | ✅ Complete | Report Template Infrastructure — templates DB, renderer, 7 API routes, 3 UI pages, seed (Matrix V5) |
+| Phase 5b | ✅ Complete | Agent Template Tools — 6 new tools: list/read/create/update template, render_report, analyse_document |
+| Phase 5c | ✅ Complete | Template Editor UI — 3-path creation wizard, review diff page, manual editor, edit page, Restore button |
 
 ---
 
@@ -842,7 +849,7 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 11. Add `error.tsx` files for each route segment
 12. Add chart visualisations to financial report pages (trend lines, bar charts)
 13. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
-14. Phase 5b: Template editor UI (scaffold_html/css/js editable in-app), agent-generated templates
+14. Phase 5d: Agent-scheduled template generation (cron triggers), template sharing/export
 
 ---
 
@@ -1278,3 +1285,98 @@ share_token_created_at: string | null
 - `Cache-Control: private, no-store` prevents CDN/proxy token exposure
 - Revoking immediately invalidates all existing links (token set to null)
 - Share URL format: `{NEXT_PUBLIC_APP_URL}/view/report/{id}?token={token}`
+
+---
+
+## Phase 5b — Agent Template Tools
+
+### New tools in lib/agent-tools.ts
+Six new tools added to the agent system. All use the admin Supabase client and return `JSON.stringify({ success, data })` on success or an error string on failure.
+
+| Tool | Description |
+|------|-------------|
+| `list_report_templates` | Lists active templates for the group; optional `template_type` filter; returns `id, name, template_type, description, version, updated_at` |
+| `read_report_template` | Fetches full template definition; `include_scaffold: true` adds `scaffold_html/css/js` fields |
+| `create_report_template` | Inserts new template with `agent_run_id` set to current run; returns `id, name, template_type, version` |
+| `update_report_template` | Auto-saves current state to `report_template_versions` then increments version and applies changes |
+| `render_report` | Validates slots, renders via `renderTemplate()`, uploads to Storage, inserts `custom_reports` record; returns `report_id, report_name, view_url` |
+| `analyse_document` | Fetches file (from URL or `file_content`), calls Anthropic claude-haiku with extraction prompt, returns proposed template JSON — does NOT save |
+
+### generate_report extended
+`generate_report` now accepts optional `template_id` + `slot_data`. When both are provided, renders via `renderTemplate()` instead of free-form markdown HTML. Also writes `template_id` and `slot_data` to the `custom_reports` record for traceability.
+
+### lib/agent-runner.ts changes
+- Import 6 new tool functions
+- 6 new entries in `ALL_TOOL_DEFS` (Claude API tool definition format)
+- 6 new `case` branches in `executeTool()` dispatcher
+
+### lib/types.ts — AgentTool additions
+```typescript
+| 'list_report_templates'
+| 'read_report_template'
+| 'create_report_template'
+| 'update_report_template'
+| 'render_report'
+| 'analyse_document'
+```
+
+### app/(dashboard)/agents/page.tsx + _form.tsx
+- `TOOL_LABELS` record extended with labels for all 6 new tools
+- `TOOL_OPTIONS` array in `_form.tsx` extended with descriptions and emoji for agent tool selector
+
+---
+
+## Phase 5c — Template Editor UI
+
+### app/(dashboard)/reports/templates/new/page.tsx
+Three-path creation flow — path selector shows 3 cards:
+- **Upload Document** — file input (`.html`, `.docx`, `.txt`, `.pdf`, max 5 MB) + optional instructions textarea → POST `/api/report-templates/analyse` → stores proposal in `sessionStorage` → navigate to `/new/review`
+- **Describe to Agent** — textarea + template type selector → POST analyse with description as file content + instructions → navigate to `/new/review`
+- **Build Manually** — navigates directly to `/new/manual`
+
+### app/(dashboard)/reports/templates/new/review/page.tsx
+Side-by-side diff review of agent proposal read from `sessionStorage.template_proposal`:
+- Left column: "Source Document" — detected metadata (filename, inferred type, slot count, token count)
+- Right column: "Agent Proposal" — name, description, type badge; slot tags (green `{{name}}` chips); design token swatches
+- Confidence badge (high/medium/low) in header; agent notes shown as amber warning
+- Action bar: slot/token count summary · "Edit in Full Editor" (writes proposal to `sessionStorage.template_prefill`, navigates to `/new/manual`) · "Accept & Save Template →" (POST `/api/report-templates`, navigate to detail page)
+
+### app/(dashboard)/reports/templates/new/manual/page.tsx
+Full 4-tab manual template editor (creates new template):
+- **Details**: Name *, type selector, description, agent_instructions
+- **Slots**: table with Edit/Delete per row; "Add Slot" opens modal (name, label, type, data_source, description, required checkbox)
+- **Design Tokens**: key/value table with inline value editing, colour swatches for hex values; "Add Token" row
+- **Scaffold**: three `<textarea>` editors (HTML | CSS | JS); "Inject slot names" inserts `{{slot}}` comments; "Refresh preview" renders a live preview iframe with slot names shown as `[Label]` placeholders
+- Loads prefill from `sessionStorage.template_prefill` on mount (set by review page)
+- Save → POST `/api/report-templates`, navigate to template detail
+
+### app/(dashboard)/reports/templates/[id]/edit/page.tsx
+Identical 4-tab layout to the manual editor, but:
+- Loads existing template via `GET /api/report-templates/[id]` on mount
+- Save → PATCH `/api/report-templates/[id]` (auto-versions current state before saving)
+- Back button → `/reports/templates/[id]`
+
+### app/(dashboard)/reports/templates/[id]/page.tsx updates
+- Added **Edit** button (admin only) to toolbar → `/reports/templates/[id]/edit`
+- Added **Restore** button per version in Version History tab (admin only)
+  - Fetches full version from `GET /api/report-templates/[id]/versions/[versionId]`
+  - PATCHes the template with version's `design_tokens`, `slots`, `scaffold_*` fields
+  - Reloads template after successful restore
+
+### app/api/report-templates/analyse/route.ts (NEW)
+```
+POST /api/report-templates/analyse
+  → multipart: file (max 5 MB) + instructions (optional)
+  → extracts text content from file (utf-8 for html/txt/docx; sanitised for pdf)
+  → calls claude-haiku-4-20250514 with extraction system prompt
+  → returns { data: { proposal: TemplateProposalJSON, filename: string } }
+  → does NOT save anything — proposal only
+  → admin access required
+```
+
+### Slot modal (shared pattern in both manual + edit pages)
+- Opens as a fixed overlay
+- `name` field auto-lowercases and replaces spaces with underscores
+- `type` select: text | html | number | table | list | date | color | object
+- `data_source` select: manual | navhub_financial | agent_provided | uploaded_file
+- `required` checkbox

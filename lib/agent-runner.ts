@@ -598,7 +598,7 @@ async function executeTool(
     case 'render_report':
       return renderReport(input as unknown as Parameters<typeof renderReport>[0], context)
     case 'analyse_document':
-      return analyseDocument(input as unknown as Parameters<typeof analyseDocument>[0], context)
+      return analyseDocument(input as unknown as Parameters<typeof analyseDocument>[0])
     default:
       return `Unknown tool: ${toolName}`
   }

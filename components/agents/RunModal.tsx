@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter }  from 'next/navigation'
-import { Play, X, Loader2 } from 'lucide-react'
+import { Play, X, Loader2, FileText } from 'lucide-react'
 import { Button }    from '@/components/ui/button'
 import { Label }     from '@/components/ui/label'
 import type { Agent, Company } from '@/lib/types'
@@ -153,6 +153,17 @@ export default function RunModal({ agent, onClose }: RunModalProps) {
             className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
           />
         </div>
+
+        {/* render_report note */}
+        {agent.tools?.includes('render_report') && (
+          <div className="flex items-start gap-2 rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 px-3 py-2.5">
+            <FileText className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-blue-700 dark:text-blue-300">
+              This agent can generate reports. Any report created during the run will be saved automatically to your{' '}
+              <strong>Reports Library</strong>.
+            </p>
+          </div>
+        )}
 
         {error && (
           <p className="text-sm text-destructive">{error}</p>

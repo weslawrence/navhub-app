@@ -5,12 +5,13 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ChevronLeft, FileText, Clock, Check, X, Pencil, RotateCcw, Loader2,
-  BarChart2, Grid2X2, FileEdit, LayoutDashboard, Workflow,
+  BarChart2, Grid2X2, FileEdit, LayoutDashboard, Workflow, FlaskConical,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
-import type { ReportTemplate, ReportTemplateVersion, TemplateType, SlotDataSource } from '@/lib/types'
+import type { ReportTemplate, ReportTemplateVersion, TemplateType, SlotDataSource, Agent } from '@/lib/types'
+import { V5_TEST_PROMPT } from '@/lib/agent-prompts/v5-test-run'
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +39,136 @@ function formatDate(iso: string) {
 
 type TabKey = 'overview' | 'slots' | 'tokens' | 'versions'
 
+// ─── V5 Test Modal ────────────────────────────────────────────────────────────
+
+function V5TestModal({ onClose }: { onClose: () => void }) {
+  const router = useRouter()
+  const [agents,    setAgents]    = useState<Agent[]>([])
+  const [agentId,   setAgentId]   = useState('')
+  const [period,    setPeriod]    = useState(() => {
+    const now = new Date()
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [launching, setLaunching] = useState(false)
+  const [error,     setError]     = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/agents')
+      .then(r => r.json())
+      .then(json => {
+        const list = (json.data ?? []) as Agent[]
+        const active = list.filter(a => a.is_active)
+        setAgents(active)
+        if (active.length > 0) setAgentId(active[0].id)
+      })
+      .catch(() => {})
+  }, [])
+
+  async function handleLaunch() {
+    if (!agentId) { setError('Select an agent to run with'); return }
+    setLaunching(true)
+    setError(null)
+    try {
+      const res  = await fetch(`/api/agents/${agentId}/run`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ period, extra_instructions: V5_TEST_PROMPT }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to start run')
+      onClose()
+      router.push(`/agents/runs/${json.data.run_id as string}`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to start run')
+      setLaunching(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="relative bg-background border rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col max-h-[90vh]">
+        <div className="p-6 space-y-4 flex flex-col flex-1 min-h-0">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3 shrink-0">
+            <div>
+              <h2 className="text-lg font-semibold flex items-center gap-2">
+                <FlaskConical className="h-5 w-5 text-primary" />
+                Run V5 Test
+              </h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Launch an end-to-end agent test using AxisTech Group data.
+              </p>
+            </div>
+            <button onClick={onClose} className="text-muted-foreground hover:text-foreground shrink-0 mt-0.5">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          {/* Prompt preview */}
+          <div className="flex-1 min-h-0 space-y-1.5 overflow-hidden flex flex-col">
+            <label className="text-sm font-medium text-foreground shrink-0">Agent Prompt (read-only)</label>
+            <textarea
+              readOnly
+              value={V5_TEST_PROMPT}
+              className="flex-1 min-h-0 rounded-md border bg-muted/40 px-3 py-2 text-xs font-mono text-muted-foreground resize-none focus:outline-none overflow-y-auto"
+            />
+          </div>
+
+          {/* Config row */}
+          <div className="grid grid-cols-2 gap-4 shrink-0">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Agent</label>
+              <select
+                value={agentId}
+                onChange={e => setAgentId(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {agents.length === 0 && <option value="">No active agents found</option>}
+                {agents.map(a => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-foreground">Period</label>
+              <input
+                type="month"
+                value={period}
+                onChange={e => setPeriod(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+            </div>
+          </div>
+
+          {error && <p className="text-sm text-destructive shrink-0">{error}</p>}
+
+          {/* Actions */}
+          <div className="flex gap-2 justify-end shrink-0">
+            <button
+              onClick={onClose}
+              disabled={launching}
+              className="px-4 py-2 rounded-md border text-sm font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void handleLaunch()}
+              disabled={launching || !agentId}
+              className="flex items-center gap-2 px-5 py-2 rounded-md text-sm font-medium text-white disabled:opacity-50"
+              style={{ backgroundColor: 'var(--palette-primary)' }}
+            >
+              {launching
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Launching…</>
+                : <><FlaskConical className="h-4 w-4" /> Launch Agent Run</>}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function TemplateDetailPage() {
@@ -45,14 +176,16 @@ export default function TemplateDetailPage() {
   const router     = useRouter()
   const templateId = params?.id as string
 
-  const [template,  setTemplate]  = useState<ReportTemplate | null>(null)
-  const [versions,  setVersions]  = useState<ReportTemplateVersion[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState<string | null>(null)
-  const [isAdmin,   setIsAdmin]   = useState(false)
-  const [tab,       setTab]       = useState<TabKey>('overview')
-  const [deleting,  setDeleting]  = useState(false)
-  const [restoring, setRestoring] = useState<string | null>(null)
+  const [template,     setTemplate]     = useState<ReportTemplate | null>(null)
+  const [versions,     setVersions]     = useState<ReportTemplateVersion[]>([])
+  const [loading,      setLoading]      = useState(true)
+  const [error,        setError]        = useState<string | null>(null)
+  const [isAdmin,      setIsAdmin]      = useState(false)
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  const [tab,          setTab]          = useState<TabKey>('overview')
+  const [deleting,     setDeleting]     = useState(false)
+  const [restoring,    setRestoring]    = useState<string | null>(null)
+  const [showV5Modal,  setShowV5Modal]  = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -65,6 +198,7 @@ export default function TemplateDetailPage() {
       setTemplate(tmplJson.data)
       const role = groupJson.data?.role
       setIsAdmin(role === 'super_admin' || role === 'group_admin')
+      setIsSuperAdmin(role === 'super_admin')
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -104,13 +238,11 @@ export default function TemplateDetailPage() {
     if (!confirm('Restore this version? The current template will be saved as a version first.')) return
     setRestoring(versionId)
     try {
-      // Fetch the full version
       const res  = await fetch(`/api/report-templates/${templateId}/versions/${versionId}`)
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to fetch version')
       const v = json.data
 
-      // PATCH the template with version content
       const patchRes = await fetch(`/api/report-templates/${templateId}`, {
         method:  'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -152,7 +284,8 @@ export default function TemplateDetailPage() {
     )
   }
 
-  const Icon = TYPE_ICONS[template.template_type]
+  const Icon        = TYPE_ICONS[template.template_type]
+  const isV5Matrix  = template.name === 'Role & Task Matrix'
 
   const TABS: Array<{ key: TabKey; label: string }> = [
     { key: 'overview', label: 'Overview'       },
@@ -163,6 +296,9 @@ export default function TemplateDetailPage() {
 
   return (
     <div className="space-y-6 max-w-4xl">
+      {/* V5 Test Modal */}
+      {showV5Modal && <V5TestModal onClose={() => setShowV5Modal(false)} />}
+
       {/* Header */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-3">
@@ -184,7 +320,18 @@ export default function TemplateDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Run V5 Test — super_admin only, V5 Matrix template only */}
+          {isSuperAdmin && isV5Matrix && (
+            <button
+              onClick={() => setShowV5Modal(true)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-md border border-dashed text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            >
+              <FlaskConical className="h-4 w-4" />
+              Run V5 Test
+            </button>
+          )}
+
           <Link
             href={`/reports/templates/${templateId}/generate`}
             className="flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium text-white"
@@ -203,7 +350,7 @@ export default function TemplateDetailPage() {
                 Edit
               </Link>
               <button
-                onClick={handleDelete}
+                onClick={() => void handleDelete()}
                 disabled={deleting}
                 className="flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-50"
               >
@@ -395,7 +542,7 @@ export default function TemplateDetailPage() {
                     </div>
                     {isAdmin && (
                       <button
-                        onClick={() => handleRestore(v.id)}
+                        onClick={() => void handleRestore(v.id)}
                         disabled={restoring === v.id}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-xs text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-50 transition-colors"
                       >

@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, CheckCircle2, XCircle, Loader2, Clock, Copy, Check,
-  Play, ChevronDown, ChevronRight, FileText, AlertCircle,
+  Play, ChevronDown, ChevronRight, FileText, AlertCircle, ExternalLink, Library,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
@@ -55,11 +55,17 @@ function ToolBlock({
   const [expanded, setExpanded] = useState(false)
 
   const toolEmoji: Record<string, string> = {
-    read_financials: '📊',
-    read_companies:  '🏢',
-    generate_report: '📄',
-    send_slack:      '💬',
-    send_email:      '📧',
+    read_financials:       '📊',
+    read_companies:        '🏢',
+    generate_report:       '📄',
+    send_slack:            '💬',
+    send_email:            '📧',
+    list_report_templates: '📋',
+    read_report_template:  '🔍',
+    create_report_template:'✨',
+    update_report_template:'✏️',
+    render_report:         '🖨️',
+    analyse_document:      '🔬',
   }
 
   return (
@@ -302,6 +308,46 @@ const loadMetaAndStream = useCallback(async () => {
           ))}
         </div>
       )}
+
+      {/* Report Generated cards — extracted from render_report tool results */}
+      {toolEvents
+        .filter(te => te.tool === 'render_report' && !te.inProgress && !!te.output)
+        .flatMap((te, i) => {
+          try {
+            const parsed = JSON.parse(te.output!) as {
+              success?: boolean
+              data?: { report_id?: string; report_name?: string; view_url?: string }
+            }
+            if (parsed.success && parsed.data?.report_id) {
+              const d = parsed.data as { report_id: string; report_name: string; view_url?: string }
+              return [(
+                <div
+                  key={`report-card-${i}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-green-300 dark:border-green-700 bg-green-50 dark:bg-green-950 px-4 py-3"
+                >
+                  <span className="text-sm font-medium text-green-800 dark:text-green-300 flex items-center gap-2">
+                    <FileText className="h-4 w-4 shrink-0" />
+                    {d.report_name || 'Report generated'}
+                  </span>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                      <Link href={`/view/report/${d.report_id}`} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-3 w-3 mr-1" /> View Report
+                      </Link>
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                      <Link href="/reports/custom">
+                        <Library className="h-3 w-3 mr-1" /> Library
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              )]
+            }
+          } catch { /* non-JSON output — ignore */ }
+          return []
+        })
+      }
 
       {/* Output area */}
       <div

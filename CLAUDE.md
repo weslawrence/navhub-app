@@ -770,6 +770,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 5a | ✅ Complete | Report Template Infrastructure — templates DB, renderer, 7 API routes, 3 UI pages, seed (Matrix V5) |
 | Phase 5b | ✅ Complete | Agent Template Tools — 6 new tools: list/read/create/update template, render_report, analyse_document |
 | Phase 5c | ✅ Complete | Template Editor UI — 3-path creation wizard, review diff page, manual editor, edit page, Restore button |
+| Phase 5d | ✅ Complete | V5 Matrix E2E Test — seed script, V5 agent prompt, Run V5 Test modal, Report Generated card, template health page |
 
 ---
 
@@ -838,6 +839,33 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 
 ---
 
+## Phase 5d — V5 Matrix End-to-End Test Case
+
+### Files added
+- **`scripts/seed-v5-template.ts`** — `checkAndPatchV5Template(admin, groupId, ...)` checks the V5 template exists, verifies required slots/tokens, and optionally patches missing scaffold. Exports `REQUIRED_SLOT_NAMES`, `REQUIRED_TOKEN_KEYS`, `V5SeedResult`.
+- **`app/api/dev/seed-v5-template/route.ts`** — dev-only POST route (returns 404 in production). Auth + admin check, then calls `checkAndPatchV5Template` (check-only, no scaffold patch from this route). Returns JSON health report + instructions.
+- **`lib/agent-prompts/v5-test-run.ts`** — exports `V5_TEST_PROMPT`: complete 5-step prompt for generating an AxisTech Group V5 matrix. Includes fully-inline slot data: 8 entities, 4 column groups, 4 sections with rows, ~25 role entries, headcount summary.
+- **`app/(dashboard)/reports/templates/health/page.tsx`** — admin-only health dashboard. Shows all active templates with: type badge, version, slot count, token count, HTML/CSS/JS scaffold presence (✓/✗), reports generated count, last updated date, health score (OK / No slots / Missing scaffold).
+
+### Files modified
+- **`app/(dashboard)/reports/templates/[id]/page.tsx`** — adds "Run V5 Test" button (super_admin only, visible when template name === "Role & Task Matrix"). Opens `V5TestModal`: read-only prompt textarea, agent selector, period picker, "Launch Agent Run" → navigates to run stream page.
+- **`app/(dashboard)/agents/runs/[runId]/page.tsx`** — after tool call log, renders green "Report Generated" card(s) for any completed `render_report` tool event where output parses to `{ success: true, data: { report_id, report_name } }`. Shows "View Report" (→ `/view/report/[id]`) and "Library" buttons.
+- **`components/agents/RunModal.tsx`** — adds blue informational note when `agent.tools.includes('render_report')`: "This agent can generate reports. Any report created will be saved to your Reports Library."
+
+### Run V5 Test flow
+1. Navigate to `/reports/templates/[id]` for "Role & Task Matrix" template
+2. Click "Run V5 Test" (super_admin only — dashed border button)
+3. Select an agent with `render_report` tool + choose period
+4. "Launch Agent Run" → creates run via `POST /api/agents/[id]/run` with `extra_instructions: V5_TEST_PROMPT`
+5. Redirects to run stream page; after `render_report` completes, a green card appears with direct report link
+
+### Template health page
+Navigate to `/reports/templates/health` (admin only — access check on load).
+Fetches template list + full detail (for scaffold presence) + custom reports (for count per template).
+Health scores: **OK** = scaffold HTML+CSS present + slots > 0; **No slots** = missing slots; **Missing scaffold** = no HTML or CSS.
+
+---
+
 ## Next Steps
 
 1. Set up Supabase Storage bucket `report-files` with RLS policies (manual — see Phase 2f section)
@@ -853,7 +881,7 @@ Agents nav item already existed as Bot icon → `/agents`. No change needed to s
 11. Add `error.tsx` files for each route segment
 12. Add chart visualisations to financial report pages (trend lines, bar charts)
 13. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
-14. Phase 5d: Agent-scheduled template generation (cron triggers), template sharing/export
+14. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
 
 ---
 

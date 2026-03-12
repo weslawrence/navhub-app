@@ -77,7 +77,7 @@ function HealthBadge({ score }: { score: 'good' | 'warn' | 'bad' }) {
 }
 
 // ─── Page ───────────────────────────────────────────────────────────────────────
-
+ 
 export default function TemplateHealthPage() {
   const [templates, setTemplates] = useState<TemplateHealth[]>([])
   const [loading, setLoading] = useState(true)

@@ -38,6 +38,10 @@ const TOOL_OPTIONS: {
   { value: 'update_report_template', label: 'Update Template',       emoji: '✏️', description: 'Edit an existing template (auto-versions)' },
   { value: 'render_report',          label: 'Render Report',         emoji: '🖨️', description: 'Fill a template and save to Reports Library' },
   { value: 'analyse_document',       label: 'Analyse Document',      emoji: '🔎', description: 'Extract a template proposal from a document' },
+  { value: 'list_documents',         label: 'List Documents',        emoji: '📂', description: 'List documents in the Documents section' },
+  { value: 'read_document',          label: 'Read Document',         emoji: '📖', description: 'Read the full content of a document' },
+  { value: 'create_document',        label: 'Create Document',       emoji: '📝', description: 'Create and save a new document' },
+  { value: 'update_document',        label: 'Update Document',       emoji: '✍️', description: 'Update an existing document (auto-versions)' },
 ]
 
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [

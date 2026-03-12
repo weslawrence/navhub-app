@@ -771,6 +771,8 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 5b | ✅ Complete | Agent Template Tools — 6 new tools: list/read/create/update template, render_report, analyse_document |
 | Phase 5c | ✅ Complete | Template Editor UI — 3-path creation wizard, review diff page, manual editor, edit page, Restore button |
 | Phase 5d | ✅ Complete | V5 Matrix E2E Test — seed script, V5 agent prompt, Run V5 Test modal, Report Generated card, template health page |
+| Phase 7a | ✅ Complete | Document Intelligence UI — Documents section, folders, editor/viewer with locking, share tokens, standalone viewer |
+| Phase 7b | ✅ Complete | Agent Document Tools — 4 new tools (list/read/create/update_document), Document Created card in run stream |
 
 ---
 
@@ -866,6 +868,158 @@ Health scores: **OK** = scaffold HTML+CSS present + slots > 0; **No slots** = mi
 
 ---
 
+## Phase 7a — Document Intelligence UI
+
+### Database (migration 014)
+- **`document_folders`** — per-group folders: `name`, `description`, `sort_order`, `is_active`; soft-delete
+- **`documents`** — per-group documents: `folder_id` (nullable FK), `company_id` (nullable FK), `document_type`, `audience`, `status` ('draft'|'published'|'archived'), `content_markdown`, `word_count`, `locked_by` (uuid FK → auth.users), `locked_at` (timestamptz), `share_token` (text), `is_shareable` (boolean), `agent_run_id` (uuid FK); soft-delete with `is_active`
+- **`document_versions`** — auto-saved on content edit: `document_id`, `version` (int), `content_markdown`, `word_count`, `saved_by`
+- **`document_sync_connections`** — stub for Phase 7c (Xero/external sync)
+- **`document_sync_log`** — stub for Phase 7c
+- RLS on all tables using `get_user_group_ids()` via group_id; admins (super_admin/group_admin) have full access; members can SELECT active records
+
+### lib/types.ts additions
+```typescript
+export type DocumentType = 'employment_contract' | 'service_agreement' | 'nda' | 'board_resolution' |
+  'board_minutes' | 'policy' | 'procedure' | 'report' | 'memo' | 'letter' | 'other'
+export type DocumentAudience = 'internal' | 'board' | 'executive' | 'staff' | 'external' | 'confidential'
+export interface DocumentFolder { id, group_id, name, description, sort_order, is_active, created_at }
+export interface Document {
+  id, group_id, folder_id, company_id, title, document_type: DocumentType, audience: DocumentAudience,
+  status, content_markdown, word_count, locked_by, locked_at, is_shareable, share_token,
+  share_token_created_at, agent_run_id, is_active, created_by, created_at, updated_at
+}
+export interface DocumentVersion { id, document_id, version, content_markdown, word_count, saved_by, created_at }
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string>
+export const DOCUMENT_AUDIENCE_LABELS: Record<DocumentAudience, string>
+```
+Also extended `AgentTool` union: `'list_documents' | 'read_document' | 'create_document' | 'update_document'`
+
+### API routes
+```
+GET  /api/documents                    → list docs (optional: folder_id, company_id, document_type, status); enriches locked_by_email
+POST /api/documents                    → create document → 201
+
+GET  /api/documents/[id]              → fetch single (group ownership via RLS)
+PATCH  /api/documents/[id]            → update fields; auto-versions if content_markdown changes
+DELETE /api/documents/[id]            → admin only → soft delete (is_active = false)
+
+POST /api/documents/[id]/lock         → acquire lock; 409 if locked by another user within 30 min
+DELETE /api/documents/[id]/lock       → release lock (only lock holder)
+
+GET  /api/documents/[id]/share        → { is_shareable, share_url, created_at }
+POST /api/documents/[id]/share        → generate randomBytes(32) token; idempotent (regenerates)
+DELETE /api/documents/[id]/share      → revoke (is_shareable=false, share_token=null)
+
+GET  /api/documents/folders           → list folders for active group
+POST /api/documents/folders           → create folder (admin only)
+DELETE /api/documents/folders         → delete folder (admin; 409 if has documents)
+
+GET  /api/documents/[id]/versions     → list versions (ordered by version desc)
+```
+
+### UI pages
+
+#### `app/(dashboard)/documents/page.tsx` — Documents Library
+- Left sidebar: folder navigation with doc counts, "All Documents" + "Unfiled" entries, named folders, "New Folder" inline form (admin only)
+- Document grid: `DocumentCard` component per doc — type badge, audience badge, company name, date, Sparkles icon for agent-created, Lock icon if locked, "Shared" emerald badge if `is_shareable`
+- Three-dot menu per card: Open, Move to Folder (dropdown), Share, Delete (admin)
+- Toolbar: search input, type dropdown filter, company dropdown filter, "New Document" button
+- Loads in parallel: documents + folders + companies + role check
+
+#### `components/documents/NewDocumentModal.tsx`
+- Three steps: `'pick'`, `'manual'`, `'agent'`
+- **Write Manually**: title, type, audience, company (required for financial types), folder → POST `/api/documents` → navigates to `/documents/[id]?edit=1`
+- **Create with Agent**: same fields + agent selector + data context checkboxes (P&L, Balance Sheet, Cash Flow, Company info) + additional instructions → assembles `audienceGuidance` string + structured prompt with `create_document` tool instruction → POST `/api/documents` (status='draft') → POST `/api/agents/[agentId]/run` with `extra_instructions` → navigates to run stream page
+- `isFinancialType()` helper: financial document types require a company to be selected
+
+#### `app/(dashboard)/documents/[id]/page.tsx` — Document Viewer/Editor
+- **View mode**: renders `content_markdown` with `ReactMarkdown` + `remarkGfm`; toolbar: Edit, History, Share buttons
+- **Edit mode**: acquires lock via `POST /api/documents/${docId}/lock`; split pane (textarea left, live preview right using `ReactMarkdown`); word count display; Save (PATCH + lock release) and Discard (lock release only) buttons
+- Lock keepalive: `setInterval` POST every 10 minutes while editing
+- `beforeunload` → `navigator.sendBeacon('/api/documents/${id}/lock', ...)` for lock release on tab close/navigate
+- Lock banner: amber warning when document locked by another user (shows "locked by {email}")
+- Version history panel: collapsible right side panel; lists all versions; "Restore" button per version (PATCHes content, dismisses panel)
+- `SharePopover` inline component: same pattern as reports — lazy fetch GET on open, generate/copy/revoke actions
+- Auto-enters edit mode when `searchParams.get('edit') === '1'`
+
+#### `app/view/document/[id]/page.tsx` — Standalone Share Viewer
+- Server component outside `(dashboard)` layout — no AppShell/sidebar
+- 44px branded header: NavHub wordmark · group name · document title · "Back to Documents" (authenticated only)
+- **Path 1 — Session user**: verifies group membership via `supabase` (RLS) → fetches document
+- **Path 2 — Token user**: admin client query with `is_shareable=true`; compares `share_token` — if mismatch, renders `<NotAvailable />`
+- Renders markdown as styled HTML with inline `<style>` tag (prose classes for typography)
+- "Back to Documents" link shown only when `isAuthenticated`
+
+### Middleware update
+Added `pathname.startsWith('/view/document/')` to `isPublic` conditions so share links bypass session check.
+
+### AppShell update
+- `FileText` icon from lucide-react
+- `documentsActive = pathname.startsWith('/documents')` state
+- Documents flat nav item (not a group — single route) inserted between ReportsGroup and CashflowGroup
+
+### Dependencies added
+- `react-markdown` — markdown-to-JSX rendering in editor preview and document viewer
+- `remark-gfm` — GFM extensions (tables, strikethrough, task lists) for ReactMarkdown
+
+### Document locking pattern
+- Lock acquired via `POST /lock` — stores `locked_by` (user_id) + `locked_at` (timestamp)
+- Lock conflict: if another user has `locked_at` within 30 minutes, returns 409 with `{ locked_by, locked_at }`
+- Lock release: `DELETE /lock` — only lock holder can release (otherwise 403)
+- Keepalive: editor calls POST every 10 min to refresh `locked_at`; locks expire after 30 min of inactivity
+- `navigator.sendBeacon` used for tab close (avoids blocking navigation)
+
+### Document versioning pattern
+On every PATCH to `content_markdown`:
+1. Count existing versions → new version number = count + 1
+2. Insert current content into `document_versions` before applying update
+3. Apply update to `documents` (updated_at auto-refreshed by Supabase)
+
+### Share token pattern
+- `randomBytes(32).toString('hex')` — 64-char hex, not guessable
+- Generic 403 on public endpoint (no enumeration of doc IDs)
+- `Cache-Control: private, no-store` on signed URLs
+- Share URL: `{NEXT_PUBLIC_APP_URL}/view/document/{id}?token={token}`
+- Revoking sets `is_shareable=false` + `share_token=null` immediately
+
+---
+
+## Phase 7b — Agent Document Tools
+
+### New tools in lib/agent-tools.ts
+Four new tools. All use admin Supabase client after group/ownership verification. Return `JSON.stringify({ success, data })` or error string.
+
+| Tool | Description |
+|------|-------------|
+| `list_documents` | Lists active docs for group; optional `document_type`/`folder_id`/`company_id` filters; returns id, title, document_type, audience, status, word_count, updated_at |
+| `read_document` | Fetches full document including `content_markdown`; verifies group_id ownership |
+| `create_document` | Inserts new document with `agent_run_id: context.runId`, `status: 'published'`; returns `{ document_id, title, document_type, audience, view_url }` |
+| `update_document` | Auto-versions current content (count → insert version), then applies updates to document |
+
+### lib/agent-runner.ts changes
+- Import 4 new tool functions
+- 4 new entries in `ALL_TOOL_DEFS` with full JSON schema (input_schema with properties/required)
+- 4 new `case` branches in `executeTool()` dispatcher
+
+### lib/types.ts — AgentTool additions
+```typescript
+| 'list_documents' | 'read_document' | 'create_document' | 'update_document'
+```
+
+### Run stream page — Document Created card
+`app/(dashboard)/agents/runs/[runId]/page.tsx`:
+- Extended `toolEmoji`: `list_documents: '📂'`, `read_document: '📖'`, `create_document: '📝'`, `update_document: '✍️'`
+- Blue "Document Created" card rendered from `create_document` tool output (`tool_end` event, `success: true`)
+- Card shows: title (truncated), document_type + audience text, "Open" (→ `/documents/[id]`), "Documents" (→ `/documents`) buttons
+- Positioned before "Report Generated" cards
+
+### Agent pages
+- `app/(dashboard)/agents/page.tsx`: `TOOL_LABELS` extended with 4 entries
+- `app/(dashboard)/agents/_form.tsx`: `TOOL_OPTIONS` extended with labels, emoji, and descriptions for all 4 tools
+
+---
+
 ## Next Steps
 
 1. Set up Supabase Storage bucket `report-files` with RLS policies (manual — see Phase 2f section)
@@ -878,10 +1032,12 @@ Health scores: **OK** = scaffold HTML+CSS present + slots > 0; **No slots** = mi
 8. Seed Role & Task Matrix V5 template: POST `/api/report-templates/seed` (admin user, active group must be set)
 9. **Run migration `011_group_slug.sql`** in Supabase dashboard (group slug column + unique index)
 10. **Run migration `012_report_sharing.sql`** in Supabase dashboard (is_shareable, share_token, share_token_created_at on custom_reports)
-11. Add `error.tsx` files for each route segment
-12. Add chart visualisations to financial report pages (trend lines, bar charts)
-13. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
-14. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
+11. **Run migration `014_documents.sql`** in Supabase dashboard (Phase 7a — document_folders, documents, document_versions, document_sync tables)
+12. Add `error.tsx` files for each route segment
+13. Add chart visualisations to financial report pages (trend lines, bar charts)
+14. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
+15. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
+16. Phase 7c: Document sync connections (Xero AR/AP pull into documents, external sync)
 
 ---
 

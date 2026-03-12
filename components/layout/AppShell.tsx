@@ -20,6 +20,7 @@ import {
   Bot,
   Plus,
   Banknote,
+  FileText,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -98,6 +99,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
   const [forecastOpen,  setForecastOpen]  = useState(() => pathname.startsWith('/forecasting'))
   const [cashflowOpen,  setCashflowOpen]  = useState(() => pathname.startsWith('/cashflow'))
   const [showCreateGrp, setShowCreateGrp] = useState(false)
+  const documentsActive = pathname.startsWith('/documents')
 
   // Derive admin status from active group membership
   const activeRole = groups.find(g => g.group_id === activeGroup.id)?.role
@@ -415,6 +417,31 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}
             <ReportsGroup   mobile={mobile} />
+            {/* Documents — flat nav item */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/documents"
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                    documentsActive
+                      ? 'bg-white/10 text-white'
+                      : 'text-white/60 hover:text-white hover:bg-white/10',
+                    collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+                  )}
+                  style={
+                    documentsActive
+                      ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
+                      : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
+                  }
+                >
+                  <FileText className="h-5 w-5 shrink-0" />
+                  {(!collapsed || mobile) && <span>Documents</span>}
+                </Link>
+              </TooltipTrigger>
+              {collapsed && !mobile && <TooltipContent side="right">Documents</TooltipContent>}
+            </Tooltip>
             <CashflowGroup  mobile={mobile} />
             <ForecastGroup  mobile={mobile} />
             {BOTTOM_NAV.map(item => (

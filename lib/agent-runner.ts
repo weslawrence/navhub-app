@@ -19,6 +19,10 @@ import {
   updateReportTemplate,
   renderReport,
   analyseDocument,
+  listDocuments,
+  readDocument,
+  createDocument,
+  updateDocument,
 } from '@/lib/agent-tools'
 import type {
   Agent,
@@ -196,6 +200,75 @@ const ALL_TOOL_DEFS: Record<string, object> = {
         file_content: { type: 'string', description: 'Text content of the document if already extracted.' },
         instructions: { type: 'string', description: 'User instructions about what to extract.' },
       },
+    },
+  },
+  list_documents: {
+    name:        'list_documents',
+    description: 'List documents in the NavHub Documents section for the current group.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        document_type: { type: 'string', description: 'Optional filter by document type.' },
+        company_id:    { type: 'string', description: 'Optional filter by company UUID.' },
+        folder_id:     { type: 'string', description: 'Optional filter by folder UUID.' },
+      },
+    },
+  },
+  read_document: {
+    name:        'read_document',
+    description: 'Read the full content of a document by ID.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        document_id: { type: 'string', description: 'UUID of the document.' },
+      },
+      required: ['document_id'],
+    },
+  },
+  create_document: {
+    name:        'create_document',
+    description: 'Create a new document in the NavHub Documents section. Use this to save agent-generated analysis, reports, or other content as a formal document.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string' },
+        document_type: {
+          type: 'string',
+          enum: [
+            'financial_analysis','cash_flow_review','board_report',
+            'budget_vs_actual','job_description','org_structure',
+            'entity_relationship','business_health','tax_position',
+            'due_diligence','investor_briefing',
+          ],
+        },
+        audience: {
+          type: 'string',
+          enum: ['board','management','investor','internal','hr','external'],
+          description: 'Intended audience — shapes tone and depth.',
+        },
+        content_markdown: {
+          type: 'string',
+          description: 'Full document content in markdown. Use headings (##), tables, bullet lists as appropriate.',
+        },
+        company_id: { type: 'string', description: 'Optional — associate with a specific company UUID.' },
+        folder_id:  { type: 'string', description: 'Optional — save to a specific folder UUID.' },
+        notes:      { type: 'string', description: 'Optional notes about this document.' },
+      },
+      required: ['title', 'document_type', 'audience', 'content_markdown'],
+    },
+  },
+  update_document: {
+    name:        'update_document',
+    description: 'Update the content of an existing document. Automatically saves the previous version before updating.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        document_id:      { type: 'string' },
+        content_markdown: { type: 'string', description: 'New full document content in markdown.' },
+        title:            { type: 'string', description: 'Optional new title.' },
+        reason:           { type: 'string', description: 'Why this document is being updated.' },
+      },
+      required: ['document_id', 'content_markdown'],
     },
   },
 }
@@ -599,6 +672,14 @@ async function executeTool(
       return renderReport(input as unknown as Parameters<typeof renderReport>[0], context)
     case 'analyse_document':
       return analyseDocument(input as unknown as Parameters<typeof analyseDocument>[0])
+    case 'list_documents':
+      return listDocuments(input as unknown as Parameters<typeof listDocuments>[0], context)
+    case 'read_document':
+      return readDocument(input as unknown as Parameters<typeof readDocument>[0], context)
+    case 'create_document':
+      return createDocument(input as unknown as Parameters<typeof createDocument>[0], context)
+    case 'update_document':
+      return updateDocument(input as unknown as Parameters<typeof updateDocument>[0], context)
     default:
       return `Unknown tool: ${toolName}`
   }

@@ -9,7 +9,7 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSummaryValue } from '@/lib/financial'
 import { renderTemplate, validateSlots } from '@/lib/template-renderer'
-import type { FinancialData, Agent, ReportTemplate, SlotDefinition } from '@/lib/types'
+import type { FinancialData, Agent, ReportTemplate, SlotDefinition, DocumentType, DocumentAudience } from '@/lib/types'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -902,4 +902,194 @@ Do NOT save to database. Return the parsed JSON proposal only.`
   } catch {
     return `Error: Invalid JSON in model response: ${text.slice(0, 500)}`
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Document tool parameter types  (Phase 7b)
+// ────────────────────────────────────────────────────────────────────────────
+
+export interface ListDocumentsParams {
+  document_type?: string
+  company_id?:    string
+  folder_id?:     string
+}
+
+export interface ReadDocumentParams {
+  document_id: string
+}
+
+export interface CreateDocumentParams {
+  title:            string
+  document_type:    DocumentType
+  audience:         DocumentAudience
+  content_markdown: string
+  company_id?:      string
+  folder_id?:       string
+  notes?:           string
+}
+
+export interface UpdateDocumentParams {
+  document_id:       string
+  content_markdown:  string
+  title?:            string
+  reason?:           string
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// list_documents
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function listDocuments(
+  params:  ListDocumentsParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  let query = admin
+    .from('documents')
+    .select('id, title, document_type, audience, status, company_id, created_at, updated_at')
+    .eq('group_id', context.groupId)
+    .order('updated_at', { ascending: false })
+
+  if (params.document_type) query = query.eq('document_type', params.document_type)
+  if (params.company_id)    query = query.eq('company_id', params.company_id)
+  if (params.folder_id)     query = query.eq('folder_id', params.folder_id)
+
+  const { data, error } = await query
+  if (error) return `Error listing documents: ${error.message}`
+  if (!data || data.length === 0) return 'No documents found matching the criteria.'
+
+  return JSON.stringify({
+    success: true,
+    data:    data.map((d: Record<string, unknown>) => ({
+      id:            d.id,
+      title:         d.title,
+      document_type: d.document_type,
+      audience:      d.audience,
+      status:        d.status,
+      company_id:    d.company_id,
+      created_at:    d.created_at,
+      updated_at:    d.updated_at,
+    })),
+    count: data.length,
+  })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// read_document
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function readDocument(
+  params:  ReadDocumentParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  const { data, error } = await admin
+    .from('documents')
+    .select('id, title, document_type, audience, content_markdown, status, company_id, updated_at')
+    .eq('id', params.document_id)
+    .eq('group_id', context.groupId)
+    .single()
+
+  if (error || !data) return `Error: Document ${params.document_id} not found or not accessible.`
+
+  return JSON.stringify({ success: true, data })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// create_document
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function createDocument(
+  params:  CreateDocumentParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  const { data, error } = await admin.from('documents').insert({
+    group_id:         context.groupId,
+    title:            params.title,
+    document_type:    params.document_type,
+    audience:         params.audience,
+    content_markdown: params.content_markdown,
+    company_id:       params.company_id ?? null,
+    folder_id:        params.folder_id  ?? null,
+    status:           'published',
+    agent_run_id:     context.runId,
+    created_by:       null,
+  }).select('id, title, document_type, audience').single()
+
+  if (error) return `Error creating document: ${error.message}`
+
+  const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  const viewUrl = `${appUrl}/documents/${(data as { id: string }).id}`
+
+  return JSON.stringify({
+    success:     true,
+    data: {
+      document_id:   (data as { id: string }).id,
+      title:         params.title,
+      document_type: params.document_type,
+      audience:      params.audience,
+      view_url:      viewUrl,
+    },
+  })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// update_document
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function updateDocument(
+  params:  UpdateDocumentParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Verify ownership
+  const { data: existing } = await admin
+    .from('documents')
+    .select('id, title, content_markdown')
+    .eq('id', params.document_id)
+    .eq('group_id', context.groupId)
+    .single()
+
+  if (!existing) return `Error: Document ${params.document_id} not found or not accessible.`
+
+  // Auto-version current content
+  const { count } = await admin
+    .from('document_versions')
+    .select('id', { count: 'exact', head: true })
+    .eq('document_id', params.document_id)
+
+  void admin.from('document_versions').insert({
+    document_id:      params.document_id,
+    content_markdown: (existing as { content_markdown: string }).content_markdown,
+    version:          (count ?? 0) + 1,
+    created_by:       null,
+  })
+
+  // Apply update
+  const updates: Record<string, unknown> = {
+    content_markdown: params.content_markdown,
+    updated_at:       new Date().toISOString(),
+  }
+  if (params.title) updates.title = params.title
+
+  const { error } = await admin
+    .from('documents')
+    .update(updates)
+    .eq('id', params.document_id)
+
+  if (error) return `Error updating document: ${error.message}`
+
+  return JSON.stringify({
+    success: true,
+    data: {
+      document_id: params.document_id,
+      title:       params.title ?? (existing as { title: string }).title,
+      reason:      params.reason ?? 'Updated by agent',
+    },
+  })
 }

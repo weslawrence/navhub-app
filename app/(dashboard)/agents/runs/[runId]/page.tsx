@@ -66,6 +66,10 @@ function ToolBlock({
     update_report_template:'✏️',
     render_report:         '🖨️',
     analyse_document:      '🔬',
+    list_documents:        '📂',
+    read_document:         '📖',
+    create_document:       '📝',
+    update_document:       '✍️',
   }
 
   return (
@@ -308,6 +312,54 @@ const loadMetaAndStream = useCallback(async () => {
           ))}
         </div>
       )}
+
+      {/* Report Generated cards — extracted from render_report tool results */}
+      {/* Document Created cards — extracted from create_document tool results */}
+      {toolEvents
+        .filter(te => te.tool === 'create_document' && !te.inProgress && !!te.output)
+        .flatMap((te, i) => {
+          try {
+            const parsed = JSON.parse(te.output!) as {
+              success?: boolean
+              data?: { document_id?: string; title?: string; view_url?: string; document_type?: string; audience?: string }
+            }
+            if (parsed.success && parsed.data?.document_id) {
+              const d = parsed.data as { document_id: string; title: string; view_url?: string; document_type?: string; audience?: string }
+              return [(
+                <div
+                  key={`doc-card-${i}`}
+                  className="flex items-center justify-between gap-3 rounded-lg border border-blue-300 dark:border-blue-700 bg-blue-50 dark:bg-blue-950 px-4 py-3"
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-blue-800 dark:text-blue-300 truncate">{d.title || 'Document created'}</p>
+                      {(d.document_type || d.audience) && (
+                        <p className="text-xs text-blue-600 dark:text-blue-400">
+                          {[d.document_type?.replace(/_/g, ' '), d.audience].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                      <Link href={`/documents/${d.document_id}`}>
+                        <ExternalLink className="h-3 w-3 mr-1" /> Open
+                      </Link>
+                    </Button>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" asChild>
+                      <Link href="/documents">
+                        <Library className="h-3 w-3 mr-1" /> Documents
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              )]
+            }
+          } catch { /* non-JSON output — ignore */ }
+          return []
+        })
+      }
 
       {/* Report Generated cards — extracted from render_report tool results */}
       {toolEvents

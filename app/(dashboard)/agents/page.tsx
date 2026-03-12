@@ -26,6 +26,10 @@ const TOOL_LABELS: Record<AgentTool, string> = {
   update_report_template:  'Update Template',
   render_report:           'Render Report',
   analyse_document:        'Analyse Doc',
+  list_documents:          'List Docs',
+  read_document:           'Read Doc',
+  create_document:         'Create Doc',
+  update_document:         'Update Doc',
 }
 
 // ─── Agent avatar ─────────────────────────────────────────────────────────────

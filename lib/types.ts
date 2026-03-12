@@ -268,6 +268,10 @@ export type AgentTool =
   | 'update_report_template'
   | 'render_report'
   | 'analyse_document'
+  | 'list_documents'
+  | 'read_document'
+  | 'create_document'
+  | 'update_document'
 
 export type PersonaPreset =
   | 'executive_analyst'
@@ -535,6 +539,92 @@ export interface ForecastGrid {
     openingBalance: number[]
     closingBalance: number[]
   }
+}
+
+// ============================================================
+// Document Intelligence types  (Phase 7a)
+// ============================================================
+
+export type DocumentType =
+  | 'financial_analysis'
+  | 'cash_flow_review'
+  | 'board_report'
+  | 'budget_vs_actual'
+  | 'job_description'
+  | 'org_structure'
+  | 'entity_relationship'
+  | 'business_health'
+  | 'tax_position'
+  | 'due_diligence'
+  | 'investor_briefing'
+
+export type DocumentAudience =
+  | 'board'
+  | 'management'
+  | 'investor'
+  | 'internal'
+  | 'hr'
+  | 'external'
+
+export interface DocumentFolder {
+  id:         string
+  group_id:   string
+  name:       string
+  created_by: string | null
+  created_at: string
+}
+
+export interface Document {
+  id:                     string
+  group_id:               string
+  company_id:             string | null
+  folder_id:              string | null
+  title:                  string
+  document_type:          DocumentType
+  audience:               DocumentAudience
+  content_markdown:       string
+  status:                 'draft' | 'published'
+  share_token:            string | null
+  is_shareable:           boolean
+  share_token_created_at: string | null
+  locked_by:              string | null
+  locked_at:              string | null
+  agent_run_id:           string | null
+  created_by:             string | null
+  created_at:             string
+  updated_at:             string
+}
+
+export interface DocumentVersion {
+  id:               string
+  document_id:      string
+  content_markdown: string
+  version:          number
+  created_by:       string | null
+  created_at:       string
+}
+
+export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  financial_analysis: 'Financial Analysis',
+  cash_flow_review:   'Cash Flow Review',
+  board_report:       'Board Report',
+  budget_vs_actual:   'Budget vs Actual',
+  job_description:    'Job Description',
+  org_structure:      'Org Structure',
+  entity_relationship:'Entity Relationship',
+  business_health:    'Business Health Summary',
+  tax_position:       'Tax Position Summary',
+  due_diligence:      'Due Diligence Pack',
+  investor_briefing:  'Investor Briefing',
+}
+
+export const DOCUMENT_AUDIENCE_LABELS: Record<DocumentAudience, string> = {
+  board:      'Board',
+  management: 'Management',
+  investor:   'Investor',
+  internal:   'Internal',
+  hr:         'HR',
+  external:   'External / Client',
 }
 
 // ============================================================

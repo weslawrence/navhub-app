@@ -40,6 +40,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/_next')              ||
     // Standalone report viewer — allows token-based unauthenticated access
     pathname.startsWith('/view/report/')        ||
+    // Standalone document viewer — allows token-based unauthenticated access
+    pathname.startsWith('/view/document/')      ||
     // Public file endpoint — serves shared reports via token
     pathname.startsWith('/api/reports/public/')
 

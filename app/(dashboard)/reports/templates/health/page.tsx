@@ -82,7 +82,6 @@ export default function TemplateHealthPage() {
   const [templates, setTemplates] = useState<TemplateHealth[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
     async function load() {
@@ -97,7 +96,6 @@ export default function TemplateHealthPage() {
             setLoading(false)
             return
           }
-          setIsAdmin(true)
         }
 
         // Fetch templates (list — no scaffold content)

@@ -337,6 +337,11 @@ async function buildSystemPrompt(
     '\nAvailable data:',
     `* Financial periods available: ${periodList}`,
     context.extra_instructions ? `\nAdditional instructions: ${context.extra_instructions}` : '',
+    '\nTool sequencing rules:',
+    '* NEVER call read_report_template without first calling list_report_templates to get the template_id',
+    '* NEVER assume or guess a template_id — always look it up first via list_report_templates',
+    '* NEVER call render_report without first calling read_report_template to verify the slots',
+    '* list_report_templates returns a template_id field — use that exact value in subsequent calls',
   ].filter(Boolean).join('\n')
 }
 

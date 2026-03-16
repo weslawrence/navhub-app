@@ -753,17 +753,17 @@ export async function updateReportTemplate(
 // render_report
 // ────────────────────────────────────────────────────────────────────────────
 
-console.log('renderReport debug:', { 
-    template_id: params.template_id, 
-    groupId: context.groupId 
-  })
-
 export async function renderReport(
   params:  RenderReportParams,
   context: ToolContext
 ): Promise<string> {
   const admin = createAdminClient()
 
+  console.log('renderReport debug:', { 
+    template_id: params.template_id, 
+    groupId: context.groupId 
+  })
+  
   // Fetch template
   const { data: tmpl } = await admin
     .from('report_templates')

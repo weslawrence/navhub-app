@@ -591,17 +591,11 @@ export async function listReportTemplates(
   if (error) return `Error fetching templates: ${error.message}`
   if (!data || data.length === 0) return 'No report templates found for this group.'
 
-  // Use template_id (not id) so the agent can pass it directly to read_report_template
-  const templates = (data as { id: string; name: string; template_type: string }[]).map(t => ({
-    template_id:   t.id,
-    name:          t.name,
-    template_type: t.template_type,
-  }))
+  const templateLines = (data as { id: string; name: string; template_type: string }[])
+    .map((t, i) => `${i + 1}. template_id="${t.id}" name="${t.name}" type="${t.template_type}"`)
+    .join('\n')
 
-  return JSON.stringify({
-    success:   true,
-    templates, // flat array under "templates" key — each has template_id, name, template_type
-  })
+  return `Found ${data.length} template(s):\n${templateLines}\n\nTo read a template, call read_report_template with the template_id value shown above (the UUID in quotes).`
 }
 
 // ────────────────────────────────────────────────────────────────────────────

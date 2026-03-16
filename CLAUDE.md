@@ -775,6 +775,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 7b | ✅ Complete | Agent Document Tools — 4 new tools (list/read/create/update_document), Document Created card in run stream |
 | Agent UX Fixes | ✅ Complete | Period toggle (per-agent localStorage), streaming timeline with one-line summaries, completion summary card |
 | Agent Rate Limit Optimisation | ✅ Complete | readReportTemplate scaffold_size, system prompt token reduction, token estimate in RunModal |
+| SuperAdmin Section | ✅ Complete | /admin area with platform dashboard, groups, users, agent runs, system; group impersonation |
 
 ---
 
@@ -1731,3 +1732,86 @@ POST /api/report-templates/analyse
 - `type` select: text | html | number | table | list | date | color | object
 - `data_source` select: manual | navhub_financial | agent_provided | uploaded_file
 - `required` checkbox
+
+---
+
+## SuperAdmin Section
+
+### Overview
+A dedicated `/admin` area accessible only to users with `super_admin` role. Separate from the regular dashboard — no AppShell. Provides cross-tenant visibility and group impersonation.
+
+### Route group
+`app/(admin)/` — a Next.js route group outside `(dashboard)`, with its own layout that has no AppShell sidebar.
+
+### Access control (2-layer)
+1. **Middleware** (`middleware.ts`): checks `user_groups.role = 'super_admin'` for all `/admin/**` and `/api/admin/**` routes → redirects to `/dashboard` if not super_admin.
+2. **Layout/route defence**: `app/(admin)/layout.tsx` and all admin API routes perform an independent super_admin check (defence-in-depth).
+
+### Impersonation write-block (middleware)
+When `navhub_impersonate_group` cookie is present, middleware blocks all `POST/PATCH/PUT/DELETE` requests to `/api/**` routes — except `DELETE /api/admin/impersonate` (exit impersonation). Returns `403` with clear error message.
+
+### Admin layout (`app/(admin)/layout.tsx`)
+- Fixed top nav (h-11) with 2px amber border at very top
+- NavHub wordmark + amber "ADMIN" badge
+- Nav links: Dashboard · Groups · Users · Agent Runs · System
+- "Exit Admin" button → `/dashboard`
+- No AppShell, no sidebar
+
+### Pages
+
+| Page | Path | Type | Description |
+|------|------|------|-------------|
+| Platform Dashboard | `/admin` | Server | 4 stat cards (groups/cos/users/runs), recent agent runs, groups at a glance |
+| Groups | `/admin/groups` | Client | Table with search; all groups, co/user counts, impersonate button |
+| Group Detail | `/admin/groups/[id]` | Client | 3 tabs: Overview (meta + companies + storage), Users (members with roles), Activity (runs/reports/docs/snapshots) |
+| Users | `/admin/users` | Client | All users from auth; email, groups+roles (linked chips), created, last sign in |
+| Agent Runs | `/admin/agent-runs` | Client | Paginated runs across all groups; status filter; view button |
+| Run Detail | `/admin/agent-runs/[runId]` | Server | Metadata cards, tool calls accordion, agent output |
+| System | `/admin/system` | Server | Env var status, storage bucket check, DB row counts, recent error runs |
+
+### API routes
+
+```
+GET  /api/admin/groups                    → all groups with company_count, user_count, last_run_at
+GET  /api/admin/groups/[id]               → group detail + companies + storage file counts
+GET  /api/admin/groups/[id]/members       → group members enriched with auth emails
+GET  /api/admin/groups/[id]/activity      → recent runs, reports, docs, cashflow snapshots
+GET  /api/admin/users                     → all auth users + group memberships (auth.admin.listUsers)
+GET  /api/admin/agent-runs                → paginated runs across all groups (?page=&status=)
+POST /api/admin/impersonate               → set navhub_impersonate_group cookie + active_group_id
+DELETE /api/admin/impersonate             → clear impersonation cookie, restore default group
+```
+
+All admin API routes require super_admin verification (admin client check on `user_groups`).
+
+### Group Impersonation
+
+**Flow:**
+1. Super_admin clicks "Impersonate" on a group in `/admin/groups`
+2. `POST /api/admin/impersonate { group_id }` → encrypts group_id → sets:
+   - `navhub_impersonate_group` cookie (httpOnly, AES-256-GCM encrypted, 2h TTL)
+   - `active_group_id` cookie (plaintext, 2h TTL) — used by existing API routes
+3. Redirects to `/dashboard`
+4. Dashboard layout detects `navhub_impersonate_group` cookie → decrypts → fetches group from admin client → shows `ImpersonationBanner` (fixed amber banner at top)
+5. AppShell top bar and sidebar are offset by `topOffset=36` to appear below the banner
+6. To exit: click "Exit" in banner → `DELETE /api/admin/impersonate` → restores default group → redirects to `/admin/groups`
+
+**Components:**
+- `components/admin/ImpersonateButton.tsx` — client component, amber styled, calls POST impersonate
+- `components/admin/ImpersonationBanner.tsx` — fixed amber bar at top (z-50), shows group name, Exit button
+
+**Security notes:**
+- Writes blocked at middleware level (403) during impersonation
+- `navhub_impersonate_group` cookie is httpOnly (JS cannot read it)
+- Cookie value is AES-256-GCM encrypted using `NAVHUB_ENCRYPTION_KEY`
+- Dashboard layout decrypts and validates the cookie — invalid/expired cookies are silently ignored
+- Exit impersonation (`DELETE /api/admin/impersonate`) is the only write allowed during impersonation
+
+**Limitation:** API routes that check user membership via RLS (server client) may not return data for the impersonated group, since the super_admin doesn't have a `user_groups` row for that group. Impersonation currently shows the group name/palette but real data reads may be limited.
+
+### AppShell `topOffset` prop
+`components/layout/AppShell.tsx` accepts an optional `topOffset?: number` (default `0`). When set:
+- Header `top` is offset by `topOffset` px
+- Sidebar `top` is `56 + topOffset` px (56 = h-14)
+- Body `paddingTop` is `56 + topOffset` px
+Used by dashboard layout to push AppShell down when impersonation banner is active (36px = h-9).

@@ -82,13 +82,15 @@ interface AppShellProps {
   user:        { id: string; email: string }
   groups:      UserGroup[]
   activeGroup: Group
+  /** Extra top offset in px (used when an overlay banner is present, e.g. impersonation) */
+  topOffset?:  number
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export default function AppShell({ children, user, groups, activeGroup }: AppShellProps) {
+export default function AppShell({ children, user, groups, activeGroup, topOffset = 0 }: AppShellProps) {
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
 
@@ -406,11 +408,14 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
             mobile
               ? 'fixed inset-y-0 left-0 z-50 w-64 shadow-xl'
               : cn(
-                  'hidden lg:flex sticky top-14 h-[calc(100vh-3.5rem)]',
+                  'hidden lg:flex sticky h-[calc(100vh-3.5rem)]',
                   collapsed ? 'w-16' : 'w-56'
                 )
           )}
-          style={{ backgroundColor: 'var(--palette-surface)' }}
+          style={{
+            backgroundColor: 'var(--palette-surface)',
+            ...(!mobile ? { top: 56 + topOffset } : {}),
+          }}
         >
           <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
             {TOP_NAV.map(item => (
@@ -474,8 +479,8 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
     <div className="flex flex-col min-h-screen">
       {/* ── Top bar ── */}
       <header
-        className="fixed top-0 inset-x-0 z-40 h-14 bg-background/95 backdrop-blur flex items-center gap-3 px-4"
-        style={{ borderBottom: '2px solid var(--palette-primary)' }}
+        className="fixed inset-x-0 z-40 h-14 bg-background/95 backdrop-blur flex items-center gap-3 px-4"
+        style={{ top: topOffset, borderBottom: '2px solid var(--palette-primary)' }}
       >
         <button
           className="lg:hidden text-muted-foreground hover:text-foreground"
@@ -564,7 +569,7 @@ export default function AppShell({ children, user, groups, activeGroup }: AppShe
       )}
 
       {/* ── Body ── */}
-      <div className="flex flex-1 pt-14">
+      <div className="flex flex-1" style={{ paddingTop: 56 + topOffset }}>
         <Sidebar />
 
         {mobileOpen && (

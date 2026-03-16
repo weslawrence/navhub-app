@@ -59,6 +59,47 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
+  // ── Admin route protection ────────────────────────────────────────────────────
+  // /admin/** pages and /api/admin/** routes require super_admin role.
+  const isAdminRoute =
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/api/admin/')
+
+  if (isAdminRoute) {
+    const { data: adminCheck } = await supabase
+      .from('user_groups')
+      .select('role')
+      .eq('user_id', session.user.id)
+      .eq('role', 'super_admin')
+      .limit(1)
+
+    if (!adminCheck || adminCheck.length === 0) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+  }
+
+  // ── Impersonation write-block ─────────────────────────────────────────────────
+  // During impersonation, block all mutating API calls except:
+  //   DELETE /api/admin/impersonate  (exit impersonation)
+  const impersonateCookie = request.cookies.get('navhub_impersonate_group')?.value
+  const method = request.method.toUpperCase()
+
+  if (
+    impersonateCookie &&
+    ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) &&
+    pathname.startsWith('/api/')
+  ) {
+    // Always allow exiting impersonation
+    if (pathname === '/api/admin/impersonate' && method === 'DELETE') {
+      return response
+    }
+
+    return NextResponse.json(
+      { error: 'Writes are disabled while impersonating a group. Exit impersonation first.' },
+      { status: 403 }
+    )
+  }
+
   return response
 }
 

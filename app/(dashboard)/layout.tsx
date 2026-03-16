@@ -1,10 +1,13 @@
-import { cookies } from 'next/headers'
-import { redirect } from 'next/navigation'
+import { cookies }                from 'next/headers'
+import { redirect }               from 'next/navigation'
 import { unstable_noStore as noStore } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
-import AppShell from '@/components/layout/AppShell'
+import { createClient }           from '@/lib/supabase/server'
+import { createAdminClient }      from '@/lib/supabase/admin'
+import AppShell                   from '@/components/layout/AppShell'
+import ImpersonationBanner        from '@/components/admin/ImpersonationBanner'
 import { getPalette, buildPaletteCSS } from '@/lib/themes'
-import type { Group, UserGroup } from '@/lib/types'
+import { decrypt }                from '@/lib/encryption'
+import type { Group, UserGroup }  from '@/lib/types'
 
 export default async function DashboardLayout({
   children,
@@ -45,10 +48,36 @@ export default async function DashboardLayout({
     userGroups.find((ug) => ug.is_default) ??
     userGroups[0]
 
-  const activeGroup = activeUserGroup.group as Group
+  let activeGroup = activeUserGroup.group as Group
 
   // Cast userGroups to typed array (group is always present due to join)
   const typedGroups = userGroups as (UserGroup & { group: Group })[]
+
+  // ── Impersonation check ────────────────────────────────────────────────────
+  // If the navhub_impersonate_group cookie is set, we're in impersonation mode.
+  // Override activeGroup with the impersonated group's metadata.
+  let impersonatedGroupName: string | null = null
+
+  const impersonateCookieValue = cookieStore.get('navhub_impersonate_group')?.value
+  if (impersonateCookieValue) {
+    try {
+      const groupId = decrypt(impersonateCookieValue)
+      const admin = createAdminClient()
+      const { data: impGroup } = await admin
+        .from('groups')
+        .select('id, name, palette_id, slug')
+        .eq('id', groupId)
+        .single()
+
+      if (impGroup) {
+        impersonatedGroupName = impGroup.name
+        // Override the displayed active group so palette + name render correctly
+        activeGroup = impGroup as unknown as Group
+      }
+    } catch {
+      // Cookie invalid or expired — ignore and continue with normal session
+    }
+  }
 
   return (
     <>
@@ -61,10 +90,18 @@ export default async function DashboardLayout({
           __html: buildPaletteCSS(getPalette(activeGroup.palette_id)),
         }}
       />
+
+      {/* Impersonation banner — fixed at top, amber, above AppShell */}
+      {impersonatedGroupName && (
+        <ImpersonationBanner groupName={impersonatedGroupName} />
+      )}
+
       <AppShell
         user={{ id: session.user.id, email: session.user.email! }}
         groups={typedGroups}
         activeGroup={activeGroup}
+        // Push content down when impersonation banner is visible
+        topOffset={impersonatedGroupName ? 36 : 0}
       >
         {children}
       </AppShell>

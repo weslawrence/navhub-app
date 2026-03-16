@@ -753,6 +753,11 @@ export async function updateReportTemplate(
 // render_report
 // ────────────────────────────────────────────────────────────────────────────
 
+console.log('renderReport debug:', { 
+    template_id: params.template_id, 
+    groupId: context.groupId 
+  })
+
 export async function renderReport(
   params:  RenderReportParams,
   context: ToolContext

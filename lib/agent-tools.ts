@@ -199,45 +199,33 @@ export async function readCompanies(
 ): Promise<string> {
   const admin = createAdminClient()
 
+  // Return id + name only for token efficiency; agent can call read_financials for detailed data
   const { data: companies } = await admin
     .from('companies')
-    .select('id, name, description, industry, is_active')
+    .select('id, name')
     .eq('group_id', context.groupId)
+    .eq('is_active', true)
     .order('name')
 
   if (!companies || companies.length === 0) {
     return 'No companies found for this group.'
   }
 
-  // Check Xero connections
-  const companyIds = companies.map((c: { id: string }) => c.id)
-  const { data: xeroConns } = await admin
-    .from('xero_connections')
-    .select('company_id, division_id')
-    .in('company_id', companyIds)
-
-  const xeroCompanyIds = new Set(
-    (xeroConns ?? [])
-      .filter((x: { company_id: string | null }) => x.company_id)
-      .map((x: { company_id: string }) => x.company_id)
-  )
-
   const lines: string[] = [`Companies in ${context.groupName}:\n`]
 
-  for (const company of companies as Array<{ id: string; name: string; description: string | null; industry: string | null; is_active: boolean }>) {
-    const status  = company.is_active ? 'Active' : 'Inactive'
-    const hasXero = xeroCompanyIds.has(company.id) ? 'Xero connected' : 'No Xero'
-    lines.push(`• ${company.name} (${status} | ${hasXero})${company.industry ? ` — ${company.industry}` : ''}`)
+  for (const company of companies as Array<{ id: string; name: string }>) {
+    lines.push(`• ${company.name} (id: ${company.id})`)
 
     if (params.include_divisions) {
       const { data: divs } = await admin
         .from('divisions')
-        .select('name, is_active')
+        .select('id, name')
         .eq('company_id', company.id)
+        .eq('is_active', true)
         .order('name')
 
-      for (const div of (divs ?? []) as Array<{ name: string; is_active: boolean }>) {
-        lines.push(`  └ ${div.name} (${div.is_active ? 'Active' : 'Inactive'})`)
+      for (const div of (divs ?? []) as Array<{ id: string; name: string }>) {
+        lines.push(`  └ ${div.name} (id: ${div.id})`)
       }
     }
   }
@@ -586,12 +574,13 @@ export async function listReportTemplates(
 ): Promise<string> {
   const admin = createAdminClient()
 
+  // Return id + name + type only; agent calls read_report_template for full detail
   let query = admin
     .from('report_templates')
-    .select('id, name, template_type, description, version, updated_at')
+    .select('id, name, template_type')
     .eq('group_id', context.groupId)
     .eq('is_active', true)
-    .order('updated_at', { ascending: false })
+    .order('name')
 
   if (params.template_type) {
     query = query.eq('template_type', params.template_type)
@@ -615,19 +604,40 @@ export async function readReportTemplate(
 ): Promise<string> {
   const admin = createAdminClient()
 
-  const selectFields = params.include_scaffold
-    ? '*'
-    : 'id, name, template_type, description, version, design_tokens, slots, data_sources, agent_instructions, created_at, updated_at'
-
+  // Always fetch scaffold fields so we can compute scaffold_size,
+  // but omit the actual scaffold content unless explicitly requested.
   const { data, error } = await admin
     .from('report_templates')
-    .select(selectFields)
+    .select('id, name, template_type, description, version, design_tokens, slots, data_sources, agent_instructions, scaffold_html, scaffold_css, scaffold_js, created_at, updated_at')
     .eq('id', params.template_id)
     .eq('group_id', context.groupId)
     .eq('is_active', true)
     .single()
 
   if (error || !data) return `Error: Template ${params.template_id} not found`
+
+  const d = data as {
+    scaffold_html: string | null
+    scaffold_css:  string | null
+    scaffold_js:   string | null
+    [key: string]: unknown
+  }
+
+  if (!params.include_scaffold) {
+    // Compute approximate scaffold size and strip scaffold content from response
+    const scaffoldSize =
+      (d.scaffold_html?.length ?? 0) +
+      (d.scaffold_css?.length  ?? 0) +
+      (d.scaffold_js?.length   ?? 0)
+
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { scaffold_html, scaffold_css, scaffold_js, ...rest } = d
+
+    return JSON.stringify({
+      success: true,
+      data: { ...rest, scaffold_size: scaffoldSize },
+    })
+  }
 
   return JSON.stringify({ success: true, data })
 }

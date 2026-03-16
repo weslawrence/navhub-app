@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useRouter }  from 'next/navigation'
 import { Play, X, Loader2, FileText } from 'lucide-react'
 import { Button }    from '@/components/ui/button'
@@ -76,6 +76,16 @@ export default function RunModal({ agent, onClose }: RunModalProps) {
       prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
     )
   }
+
+  // Rough token estimate for system prompt context
+  const estimatedTokens = useMemo(() => {
+    let tokens = 2000 // base: persona + instructions + group context
+    if (includePeriod) tokens += 800 // period context + available periods list
+    tokens += 1500 // available financial data context (periods, metadata)
+    const companyCount = selectedCompanyIds.length > 0 ? selectedCompanyIds.length : companies.length
+    tokens += companyCount * 300 // per-company info in scope
+    return tokens
+  }, [includePeriod, selectedCompanyIds, companies.length])
 
   async function handleRun() {
     setSubmitting(true)
@@ -193,6 +203,20 @@ export default function RunModal({ agent, onClose }: RunModalProps) {
             </div>
           </div>
         )}
+
+        {/* Token estimate */}
+        <div className={cn(
+          'flex items-center justify-between rounded-md px-3 py-2 text-xs',
+          estimatedTokens > 20000
+            ? 'bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300'
+            : 'bg-muted/50 text-muted-foreground'
+        )}>
+          <span>Estimated context size</span>
+          <span className="font-medium tabular-nums">
+            ~{estimatedTokens.toLocaleString()} tokens
+            {estimatedTokens > 20000 && ' — large context, consider fewer companies'}
+          </span>
+        </div>
 
         {/* Extra instructions */}
         <div className="space-y-1.5">

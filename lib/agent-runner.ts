@@ -132,12 +132,12 @@ const ALL_TOOL_DEFS: Record<string, object> = {
   },
   read_report_template: {
     name:        'read_report_template',
-    description: 'Fetch the full definition of a report template including slots, design tokens, and optionally scaffold.',
+    description: 'Fetch a report template\'s definition (slots, design tokens, metadata). Scaffold HTML/CSS/JS is NOT returned by default to save tokens — the response includes scaffold_size (total chars) so you can judge whether loading it is needed. Pass include_scaffold:true only when you need to read or modify the actual scaffold code.',
     input_schema: {
       type: 'object',
       properties: {
         template_id:       { type: 'string', description: 'UUID of the template.' },
-        include_scaffold:  { type: 'boolean', description: 'If true, also return scaffold_html, scaffold_css, scaffold_js.' },
+        include_scaffold:  { type: 'boolean', description: 'Set to true to include scaffold_html, scaffold_css, scaffold_js in the response. Defaults to false.' },
       },
       required: ['template_id'],
     },
@@ -307,13 +307,13 @@ async function buildSystemPrompt(
     companyNames = (companies ?? []).map((c: { name: string }) => c.name).join(', ') || 'none configured'
   }
 
-  // Available periods
+  // Available periods — limit to 6 most recent to reduce system prompt size
   const { data: periods } = await admin
     .from('financial_snapshots')
     .select('period')
     .eq('report_type', 'profit_loss')
     .order('period', { ascending: false })
-    .limit(12)
+    .limit(6)
   const periodList = (periods ?? [])
     .map((p: { period: string }) => p.period)
     .filter((p: string, i: number, a: string[]) => a.indexOf(p) === i)

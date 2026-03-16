@@ -774,6 +774,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 7a | ✅ Complete | Document Intelligence UI — Documents section, folders, editor/viewer with locking, share tokens, standalone viewer |
 | Phase 7b | ✅ Complete | Agent Document Tools — 4 new tools (list/read/create/update_document), Document Created card in run stream |
 | Agent UX Fixes | ✅ Complete | Period toggle (per-agent localStorage), streaming timeline with one-line summaries, completion summary card |
+| Agent Rate Limit Optimisation | ✅ Complete | readReportTemplate scaffold_size, system prompt token reduction, token estimate in RunModal |
 
 ---
 
@@ -1119,6 +1120,66 @@ For failed runs: `XCircle` icon + red error detail block inside the summary card
 **Files modified**
 - `components/agents/RunModal.tsx` — period toggle
 - `app/(dashboard)/agents/runs/[runId]/page.tsx` — streaming timeline + summary card
+
+---
+
+## Agent Rate Limit Optimisation
+
+Four targeted changes to reduce token usage in agent runs.
+
+### Fix 1 — `read_report_template` scaffold exclusion (`lib/agent-tools.ts`)
+
+`readReportTemplate` now always fetches scaffold fields from DB to compute a `scaffold_size` byte count, but strips `scaffold_html`, `scaffold_css`, `scaffold_js` from the response unless `include_scaffold: true` is explicitly passed.
+
+**Response when `include_scaffold` is false (default):**
+```json
+{ "success": true, "data": { "id": "...", "name": "...", "slots": [...], "scaffold_size": 42800, ... } }
+```
+- `scaffold_size` = total character count of all scaffold fields combined
+- Agent can decide whether loading scaffold is worth the token cost before calling again with `include_scaffold: true`
+
+**Tool description updated** in `lib/agent-runner.ts`:
+```
+Scaffold HTML/CSS/JS is NOT returned by default to save tokens — the response includes
+scaffold_size (total chars) so you can judge whether loading it is needed. Pass
+include_scaffold:true only when you need to read or modify the actual scaffold code.
+```
+
+### Fix 2 — `render_report` scaffold source (confirmed ✓)
+
+`renderReport` already fetches the full template (including scaffold) server-side from Supabase with `select('*')`. No change needed — the agent never needs to pass scaffold content to this tool.
+
+### Fix 3 — System prompt token reduction (`lib/agent-runner.ts` + `lib/agent-tools.ts`)
+
+**Period list** — `buildSystemPrompt()` now limits available periods to 6 (down from 12):
+```typescript
+.limit(6)  // was .limit(12)
+```
+
+**`read_companies` tool** — now returns `id + name` only (stripped: `description`, `industry`, `is_active`, Xero connection status). Output format changed from verbose text to minimal list:
+```
+• Acme Corp (id: abc-123)
+  └ Sydney Office (id: def-456)
+```
+
+**`list_report_templates` tool** — now returns `id + name + template_type` only (stripped: `description`, `version`, `updated_at`). Agent calls `read_report_template` for full detail.
+
+### Fix 4 — Token estimate indicator (`components/agents/RunModal.tsx`)
+
+A row showing the estimated system context size is displayed above the Extra instructions field. Computed with `useMemo`:
+
+```typescript
+const estimatedTokens = useMemo(() => {
+  let tokens = 2000 // base: persona + instructions + group context
+  if (includePeriod) tokens += 800  // period context + periods list
+  tokens += 1500                    // available financial data context
+  const companyCount = selectedCompanyIds.length > 0 ? selectedCompanyIds.length : companies.length
+  tokens += companyCount * 300      // per-company scope info
+  return tokens
+}, [includePeriod, selectedCompanyIds, companies.length])
+```
+
+Display: muted row showing `"~4,100 tokens"`. Turns **amber** with a warning message when `estimatedTokens > 20,000`.
 
 ---
 

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSearchParams }  from 'next/navigation'
 import Link from 'next/link'
 import {
   Bot, Plus, Play, Pencil, Clock, Zap, PowerOff,
@@ -57,6 +58,9 @@ function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' 
 // ─── Agents list page ─────────────────────────────────────────────────────────
 
 export default function AgentsPage() {
+  const searchParams = useSearchParams()
+  const briefParam   = searchParams.get('brief') ?? ''
+
   const [agents,    setAgents]    = useState<Agent[]>([])
   const [loading,   setLoading]   = useState(true)
   const [isAdmin,   setIsAdmin]   = useState(false)
@@ -164,7 +168,11 @@ export default function AgentsPage() {
 
       {/* Run Modal */}
       {runTarget && (
-        <RunModal agent={runTarget} onClose={() => setRunTarget(null)} />
+        <RunModal
+          agent={runTarget}
+          initialInstructions={briefParam}
+          onClose={() => setRunTarget(null)}
+        />
       )}
     </div>
   )

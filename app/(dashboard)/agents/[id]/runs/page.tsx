@@ -148,6 +148,13 @@ export default function AgentRunsPage() {
                     <tr key={run.id} className="hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-3">
                         <RunStatusBadge status={run.status} />
+                        {run.input_context?.extra_instructions && (
+                          <p className="text-[11px] text-muted-foreground mt-0.5 max-w-[160px] truncate">
+                            {run.input_context.extra_instructions.length > 60
+                              ? run.input_context.extra_instructions.slice(0, 57) + '…'
+                              : run.input_context.extra_instructions}
+                          </p>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
                         {run.started_at ? relativeTime(run.started_at) : relativeTime(run.created_at)}

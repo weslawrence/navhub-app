@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
 import { cn }     from '@/lib/utils'
+import CollapsibleSection from '@/components/ui/CollapsibleSection'
 import type { Agent, AgentRun, RunStatus } from '@/lib/types'
 import type { RunEvent } from '@/lib/agent-runner'
 
@@ -127,7 +128,6 @@ function summariseTool(tool: string, output: string): string {
         return 'Done'
     }
   } catch {
-    // Non-JSON output — return truncated raw string
     return output.length > 60 ? output.slice(0, 57) + '…' : output
   }
 }
@@ -135,10 +135,10 @@ function summariseTool(tool: string, output: string): string {
 // ─── Tool event type ───────────────────────────────────────────────────────────
 
 interface ToolEventEntry {
-  tool:          string
-  input?:        Record<string, unknown>
-  output?:       string
-  inProgress:    boolean
+  tool:           string
+  input?:         Record<string, unknown>
+  output?:        string
+  inProgress:     boolean
   resultSummary?: string
 }
 
@@ -169,16 +169,12 @@ function TimelineEntry({ entry }: { entry: ToolEventEntry }) {
 
   return (
     <div className="flex items-start gap-2.5">
-      {/* Status indicator */}
       <div className="shrink-0 w-4 mt-[3px]">
         {entry.inProgress
           ? <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-500 animate-pulse" />
           : <CheckCircle2 className="h-4 w-4 text-green-500" />}
       </div>
-
-      {/* Content */}
       <div className="flex-1 min-w-0">
-        {/* Tool name row */}
         <div className="flex items-center gap-1.5 text-sm">
           <span>{emoji}</span>
           <span className={cn('font-medium', entry.inProgress && 'text-blue-600 dark:text-blue-400')}>
@@ -188,44 +184,31 @@ function TimelineEntry({ entry }: { entry: ToolEventEntry }) {
             <span className="text-xs text-muted-foreground animate-pulse">running…</span>
           )}
         </div>
-
-        {/* One-line result summary */}
         {!entry.inProgress && entry.resultSummary && (
-          <p className="text-xs text-muted-foreground mt-0.5 ml-0.5">
-            → {entry.resultSummary}
-          </p>
+          <p className="text-xs text-muted-foreground mt-0.5 ml-0.5">→ {entry.resultSummary}</p>
         )}
-
-        {/* Details disclosure — hidden by default */}
         {!entry.inProgress && (entry.input !== undefined || entry.output !== undefined) && (
           <button
             onClick={() => setDetailsOpen(d => !d)}
             className="flex items-center gap-0.5 text-xs text-muted-foreground/60 hover:text-muted-foreground mt-1 transition-colors"
           >
             {detailsOpen
-              ? <ChevronDown className="h-3 w-3" />
+              ? <ChevronDown  className="h-3 w-3" />
               : <ChevronRight className="h-3 w-3" />}
             Details
           </button>
         )}
-
         {detailsOpen && (
           <div className="mt-2 space-y-2 text-[11px] font-mono">
             {entry.input && Object.keys(entry.input).length > 0 && (
               <div>
-                <p className="text-muted-foreground font-sans font-medium text-[10px] mb-1 uppercase tracking-wide">
-                  Input
-                </p>
-                <pre className="bg-muted/40 p-2 rounded overflow-x-auto">
-                  {JSON.stringify(entry.input, null, 2)}
-                </pre>
+                <p className="text-muted-foreground font-sans font-medium text-[10px] mb-1 uppercase tracking-wide">Input</p>
+                <pre className="bg-muted/40 p-2 rounded overflow-x-auto">{JSON.stringify(entry.input, null, 2)}</pre>
               </div>
             )}
             {entry.output && (
               <div>
-                <p className="text-muted-foreground font-sans font-medium text-[10px] mb-1 uppercase tracking-wide">
-                  Output
-                </p>
+                <p className="text-muted-foreground font-sans font-medium text-[10px] mb-1 uppercase tracking-wide">Output</p>
                 <pre className="bg-muted/40 p-2 rounded overflow-x-auto whitespace-pre-wrap">
                   {entry.output.slice(0, 1200)}{entry.output.length > 1200 ? '\n… (truncated)' : ''}
                 </pre>
@@ -238,28 +221,10 @@ function TimelineEntry({ entry }: { entry: ToolEventEntry }) {
   )
 }
 
-// ─── Summary card ──────────────────────────────────────────────────────────────
+// ─── Card renderers ────────────────────────────────────────────────────────────
 
-function SummaryCard({
-  status, toolCount, durationSecs, textOutput, toolEvents, errorMsg, run, tokens,
-}: {
-  status:       RunStatus
-  toolCount:    number
-  durationSecs: number
-  textOutput:   string
-  toolEvents:   ToolEventEntry[]
-  errorMsg:     string | null
-  run:          AgentRun | null
-  tokens:       number
-}) {
-  const [outputOpen, setOutputOpen] = useState(false)
-  const [copied,     setCopied]     = useState(false)
-
-  const isSuccess   = status === 'success'
-  const isCancelled = status === 'cancelled'
-
-  // ── Document Created cards ──
-  const docCards = toolEvents
+function renderDocCards(toolEvents: ToolEventEntry[]) {
+  return toolEvents
     .filter(te => te.tool === 'create_document' && !te.inProgress && !!te.output)
     .flatMap((te, i) => {
       try {
@@ -302,12 +267,13 @@ function SummaryCard({
             </div>
           )]
         }
-      } catch { /* non-JSON output */ }
+      } catch { /* non-JSON */ }
       return []
     })
+}
 
-  // ── Report Generated cards ──
-  const reportCards = toolEvents
+function renderReportCards(toolEvents: ToolEventEntry[]) {
+  return toolEvents
     .filter(te => te.tool === 'render_report' && !te.inProgress && !!te.output)
     .flatMap((te, i) => {
       try {
@@ -341,97 +307,9 @@ function SummaryCard({
             </div>
           )]
         }
-      } catch { /* non-JSON output */ }
+      } catch { /* non-JSON */ }
       return []
     })
-
-  async function handleCopy() {
-    await navigator.clipboard.writeText(textOutput)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
-  }
-
-  const modelLabel = run?.model_used
-    ? run.model_used.includes('opus') ? 'Claude Opus 4'
-      : run.model_used === 'gpt-4o'   ? 'GPT-4o'
-      : 'Claude Sonnet 4'
-    : null
-
-  return (
-    <div className="rounded-lg border bg-card p-4 space-y-4">
-      {/* ── Status line ── */}
-      <div className="flex items-center gap-1.5 flex-wrap text-sm">
-        {isSuccess
-          ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-          : isCancelled
-            ? <Ban        className="h-4 w-4 text-amber-500 shrink-0" />
-            : <XCircle    className="h-4 w-4 text-red-500   shrink-0" />}
-        <span className="font-medium">
-          {isSuccess ? 'Run complete' : isCancelled ? 'Run cancelled' : 'Run failed'}
-        </span>
-        {toolCount > 0 && (
-          <span className="text-muted-foreground">
-            · {toolCount} tool call{toolCount !== 1 ? 's' : ''}
-          </span>
-        )}
-        {durationSecs > 0 && (
-          <span className="text-muted-foreground">· {durationSecs}s</span>
-        )}
-        {modelLabel && (
-          <span className="text-muted-foreground">· {modelLabel}</span>
-        )}
-        {tokens > 0 && (
-          <span className="text-muted-foreground">· {tokens.toLocaleString()} tokens</span>
-        )}
-      </div>
-
-      {/* ── Error detail ── */}
-      {errorMsg && (
-        <div className="flex items-start gap-2 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 px-3 py-2.5">
-          <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-red-800 dark:text-red-300">Error</p>
-            <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 break-words">{errorMsg}</p>
-          </div>
-        </div>
-      )}
-
-      {/* ── Document Created + Report Generated cards ── */}
-      {(docCards.length > 0 || reportCards.length > 0) && (
-        <div className="space-y-2">
-          {docCards}
-          {reportCards}
-        </div>
-      )}
-
-      {/* ── Full output collapsible ── */}
-      {textOutput && (
-        <div className="border-t pt-3">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => setOutputOpen(o => !o)}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-            >
-              {outputOpen
-                ? <ChevronDown  className="h-4 w-4" />
-                : <ChevronRight className="h-4 w-4" />}
-              Full output
-            </button>
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => void handleCopy()}>
-              {copied
-                ? <><Check className="h-3 w-3 mr-1" /> Copied</>
-                : <><Copy  className="h-3 w-3 mr-1" /> Copy</>}
-            </Button>
-          </div>
-          {outputOpen && (
-            <div className="mt-3">
-              <MarkdownText content={textOutput} />
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
 }
 
 // ─── Run stream page ───────────────────────────────────────────────────────────
@@ -451,8 +329,8 @@ export default function RunStreamPage() {
   const [durationSecs,  setDurationSecs]  = useState(0)
   const [cancelConfirm, setCancelConfirm] = useState(false)
   const [cancelling,    setCancelling]    = useState(false)
+  const [copied,        setCopied]        = useState(false)
 
-  // Scroll bottom anchor — keeps latest content in view during streaming
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -460,7 +338,6 @@ export default function RunStreamPage() {
   }, [toolEvents.length, textOutput])
 
   const loadMetaAndStream = useCallback(async () => {
-    // 1. Fetch run metadata
     const infoRes = await fetch(`/api/agents/runs/${params.runId}/info`).catch(() => null)
     if (infoRes?.ok) {
       const infoJson = await infoRes.json()
@@ -470,7 +347,6 @@ export default function RunStreamPage() {
     }
     setLoading(false)
 
-    // 2. Connect to SSE stream (executes or replays the run)
     const runRes = await fetch(`/api/agents/runs/${params.runId}/stream`).catch(() => null)
     if (!runRes?.ok || !runRes.body) {
       setErrorMsg(`Stream error: ${runRes?.status ?? 'unknown'}`)
@@ -524,9 +400,7 @@ export default function RunStreamPage() {
     }
   }, [params.runId])
 
-  useEffect(() => {
-    void loadMetaAndStream()
-  }, [loadMetaAndStream])
+  useEffect(() => { void loadMetaAndStream() }, [loadMetaAndStream])
 
   async function handleRetry() {
     if (!run?.agent_id) return
@@ -542,17 +416,45 @@ export default function RunStreamPage() {
   async function handleCancel() {
     setCancelling(true)
     const res = await fetch(`/api/agents/runs/${params.runId}/cancel`, { method: 'POST' })
-    if (!res.ok) {
-      // Cancel failed — dismiss the confirm panel and let the user try again
-      setCancelConfirm(false)
-    }
+    if (!res.ok) setCancelConfirm(false)
     setCancelling(false)
     setCancelConfirm(false)
-    // The SSE stream will receive a 'cancelled' event and update the status
+  }
+
+  async function handleCopyOutput() {
+    await navigator.clipboard.writeText(textOutput)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   const cfg    = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
   const isDone = status === 'success' || status === 'error' || status === 'cancelled'
+
+  // ── Derived values for section badges ──
+  const completedToolCount = toolEvents.filter(te => !te.inProgress).length
+
+  const activityBadge = isDone
+    ? `${completedToolCount} tool call${completedToolCount !== 1 ? 's' : ''} · ${durationSecs}s`
+    : undefined
+
+  const wordCount   = textOutput.trim() ? textOutput.trim().split(/\s+/).length : 0
+  const outputBadge = isDone
+    ? (errorMsg ? 'Error' : (textOutput ? `~${wordCount.toLocaleString()} words` : status === 'cancelled' ? 'Cancelled' : ''))
+    : undefined
+
+  const promptText = run?.input_context?.extra_instructions ?? ''
+  const briefBadge = promptText
+    ? (promptText.length > 60 ? promptText.slice(0, 57) + '…' : promptText)
+    : 'No additional instructions'
+
+  const modelLabel = run?.model_used
+    ? run.model_used.includes('opus') ? 'Claude Opus 4'
+      : run.model_used === 'gpt-4o'   ? 'GPT-4o'
+      : 'Claude Sonnet 4'
+    : null
+
+  const docCards    = renderDocCards(toolEvents)
+  const reportCards = renderReportCards(toolEvents)
 
   if (loading) {
     return (
@@ -597,7 +499,7 @@ export default function RunStreamPage() {
           </span>
         )}
 
-        {/* ── Cancel button — only while running ── */}
+        {/* Cancel button — only while running */}
         {status === 'running' && !cancelConfirm && (
           <Button
             size="sm"
@@ -612,8 +514,7 @@ export default function RunStreamPage() {
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs text-muted-foreground">Cancel this run?</span>
             <Button
-              size="sm"
-              variant="outline"
+              size="sm" variant="outline"
               className="h-7 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
               onClick={() => void handleCancel()}
               disabled={cancelling}
@@ -621,61 +522,151 @@ export default function RunStreamPage() {
               {cancelling && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
               Confirm
             </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 text-xs"
-              onClick={() => setCancelConfirm(false)}
-              disabled={cancelling}
-            >
+            <Button size="sm" variant="ghost" className="h-7 text-xs"
+              onClick={() => setCancelConfirm(false)} disabled={cancelling}>
               Nevermind
             </Button>
           </div>
         )}
       </div>
 
-      {/* ── Streaming timeline ── */}
-      <div className="rounded-lg border bg-card p-4 space-y-3">
-
-        {/* Thinking indicator — shown before first tool call */}
-        {status === 'running' && toolEvents.length === 0 && (
-          <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-            <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
-            Thinking…
-          </div>
-        )}
-
-        {/* Tool call timeline */}
-        {toolEvents.map((te, i) => (
-          <TimelineEntry key={i} entry={te} />
-        ))}
-
-        {/* Live text output — shown while running, moves to summary card on completion */}
-        {!isDone && textOutput && (
-          <div className="border-t pt-3 mt-1">
-            <MarkdownText content={textOutput} />
-            {status === 'running' && (
-              <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5 rounded-sm" />
+      {/* ── Brief section (collapsed by default) ── */}
+      <CollapsibleSection title="Brief" defaultOpen={false} badge={briefBadge}>
+        <div className="space-y-3 pt-0.5">
+          {/* Prompt / extra instructions */}
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Prompt</p>
+            {promptText ? (
+              <p className="text-sm text-foreground leading-relaxed">{promptText}</p>
+            ) : (
+              <p className="text-sm text-muted-foreground italic">No additional instructions</p>
             )}
           </div>
-        )}
 
-        {/* Scroll anchor */}
-        <div ref={bottomRef} />
-      </div>
+          {/* Agent + model */}
+          {agent && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Agent</p>
+              <span className="text-sm">{agent.name}</span>
+              {modelLabel && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{modelLabel}</Badge>
+              )}
+            </div>
+          )}
 
-      {/* ── Summary card — appears after run completes ── */}
+          {/* Tools */}
+          {agent && agent.tools.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Tools</p>
+              <div className="flex flex-wrap gap-1">
+                {agent.tools.map(t => (
+                  <Badge key={t} variant="secondary" className="text-[10px] px-1.5 py-0">
+                    {TOOL_LABEL[t] ?? t.replace(/_/g, ' ')}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Period context */}
+          {run?.input_context?.period && (
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Period</p>
+              <span className="text-sm">{run.input_context.period}</span>
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      {/* ── Activity section ── */}
+      <CollapsibleSection title="Activity" defaultOpen={true} badge={activityBadge}>
+        <div className="space-y-3">
+          {/* Thinking indicator — shown before first tool call */}
+          {status === 'running' && toolEvents.length === 0 && (
+            <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
+              Thinking…
+            </div>
+          )}
+
+          {/* Tool call timeline */}
+          {toolEvents.map((te, i) => (
+            <TimelineEntry key={i} entry={te} />
+          ))}
+
+          {/* Live text output — shown while running */}
+          {!isDone && textOutput && (
+            <div className="border-t pt-3 mt-1">
+              <MarkdownText content={textOutput} />
+              {status === 'running' && (
+                <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5 rounded-sm" />
+              )}
+            </div>
+          )}
+
+          {/* Empty state for completed run with no tools */}
+          {isDone && toolEvents.length === 0 && (
+            <p className="text-sm text-muted-foreground italic">No tool calls in this run</p>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+      </CollapsibleSection>
+
+      {/* ── Output section — appears after run completes ── */}
       {isDone && (
-        <SummaryCard
-          status={status}
-          toolCount={toolEvents.filter(te => !te.inProgress).length}
-          durationSecs={durationSecs}
-          textOutput={textOutput}
-          toolEvents={toolEvents}
-          errorMsg={errorMsg}
-          run={run}
-          tokens={tokens}
-        />
+        <CollapsibleSection title="Output" defaultOpen={true} badge={outputBadge}>
+          <div className="space-y-3 pt-0.5">
+            {/* Model + tokens meta */}
+            {(modelLabel ?? tokens > 0) && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {modelLabel && <span>{modelLabel}</span>}
+                {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
+              </div>
+            )}
+
+            {/* Error block */}
+            {errorMsg && (
+              <div className="flex items-start gap-2 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 px-3 py-2.5">
+                <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-red-800 dark:text-red-300">Error</p>
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 break-words">{errorMsg}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Document + Report cards */}
+            {(docCards.length > 0 || reportCards.length > 0) && (
+              <div className="space-y-2">
+                {docCards}
+                {reportCards}
+              </div>
+            )}
+
+            {/* Text output */}
+            {textOutput && (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Response</p>
+                  <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => void handleCopyOutput()}>
+                    {copied
+                      ? <><Check className="h-3 w-3 mr-1" /> Copied</>
+                      : <><Copy  className="h-3 w-3 mr-1" /> Copy</>}
+                  </Button>
+                </div>
+                <MarkdownText content={textOutput} />
+              </div>
+            )}
+
+            {/* Cancelled with no output */}
+            {status === 'cancelled' && !textOutput && !errorMsg && docCards.length === 0 && reportCards.length === 0 && (
+              <p className="text-sm text-amber-600 dark:text-amber-400 italic">
+                Run was cancelled before producing output.
+              </p>
+            )}
+          </div>
+        </CollapsibleSection>
       )}
 
       {/* ── Run Again button ── */}

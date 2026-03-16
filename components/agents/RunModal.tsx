@@ -28,11 +28,12 @@ function periodKey(agentId: string) {
 // ─── Run Modal ─────────────────────────────────────────────────────────────────
 
 interface RunModalProps {
-  agent:   Agent
-  onClose: () => void
+  agent:                Agent
+  onClose:              () => void
+  initialInstructions?: string
 }
 
-export default function RunModal({ agent, onClose }: RunModalProps) {
+export default function RunModal({ agent, onClose, initialInstructions = '' }: RunModalProps) {
   const router  = useRouter()
   const periods = getLastNMonths(12)
 
@@ -41,7 +42,7 @@ export default function RunModal({ agent, onClose }: RunModalProps) {
   const [period,             setPeriod]             = useState(periods[0])
   const [companies,          setCompanies]          = useState<Company[]>([])
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([])
-  const [extraInstructions,  setExtraInstructions]  = useState('')
+  const [extraInstructions,  setExtraInstructions]  = useState(initialInstructions)
   const [submitting,         setSubmitting]         = useState(false)
   const [error,              setError]              = useState<string | null>(null)
 

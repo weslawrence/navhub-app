@@ -1,6 +1,7 @@
 import Link     from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
+import AssistantButton from '@/components/assistant/AssistantButton'
 
 const NAV_LINKS = [
   { label: 'Dashboard',  href: '/admin' },
@@ -68,6 +69,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <div className="pt-12 min-h-screen">
         {children}
       </div>
+
+      {/* Floating AI Assistant */}
+      <AssistantButton isAdmin />
     </div>
   )
 }

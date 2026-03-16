@@ -777,6 +777,8 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent Rate Limit Optimisation | ✅ Complete | readReportTemplate scaffold_size, system prompt token reduction, token estimate in RunModal |
 | SuperAdmin Section | ✅ Complete | /admin area with platform dashboard, groups, users, agent runs, system; group impersonation |
 | Agent Kill Switch + Disable | ✅ Complete | Cancel running run (SSE checkpoint), disable/enable agent toggle, migration 015 |
+| Agent Run Detail Restructure | ✅ Complete | CollapsibleSection component, Brief/Activity/Output sections on run pages, brief preview in run history |
+| NavHub Assistant | ✅ Complete | Floating chat panel (claude-haiku), streaming, Agent Brief Cards, ?brief= pre-fill on agents page |
 
 ---
 
@@ -1231,6 +1233,137 @@ The DB poll happens before each model API call. This means the agent stops clean
 cancellation_requested: boolean
 cancelled_at:           string | null
 ```
+
+---
+
+## Agent Run Detail Restructure + CollapsibleSection
+
+### components/ui/CollapsibleSection.tsx (new)
+`'use client'` component used in both server and client components for collapsible panels.
+
+```typescript
+interface CollapsibleSectionProps {
+  title:           string
+  badge?:          string        // shown right-aligned in header, truncated to 280px
+  defaultOpen?:    boolean       // default true
+  children:        React.ReactNode
+  className?:      string        // override card bg/border (e.g. zinc dark theme for admin)
+  headerClassName?: string       // override hover colour
+}
+```
+- Chevron rotates 180° when expanded
+- Smooth expand/collapse via CSS grid trick: `grid-rows-[0fr]` ↔ `grid-rows-[1fr]`
+- `overflow-hidden` on inner wrapper prevents content flash during transition
+
+### app/(dashboard)/agents/runs/[runId]/page.tsx
+Restructured into three CollapsibleSections:
+- **Brief** (collapsed by default): `extra_instructions` prompt, agent name + model, tools badge list, period from `input_context`; badge = first 60 chars of instructions or "No additional instructions"
+- **Activity** (expanded): streaming timeline (unchanged); badge when isDone = "N tool calls · Xs"; badge hidden while running
+- **Output** (expanded, rendered only when `isDone`): doc/report cards + text response with copy button; badge = "Error" | "~N words" | "Cancelled"
+
+`SummaryCard` component removed entirely. `renderDocCards()` and `renderReportCards()` extracted as standalone functions. `copied/setCopied` state moved to main component.
+
+### app/(dashboard)/agents/[id]/runs/page.tsx
+Added brief preview below status badge in each table row — 60-char truncated `input_context.extra_instructions` shown as `text-[11px] text-muted-foreground`.
+
+### app/(admin)/admin/agent-runs/[runId]/page.tsx
+Full rewrite with same three CollapsibleSections (Brief/Activity/Output) matching the admin zinc dark theme:
+- Zinc styling passed via props: `className="bg-zinc-900 border-zinc-800"` + `headerClassName="hover:bg-zinc-800/50"`
+- `input_context` and `model_used` added to DB select query
+- Activity section uses `<details>` accordion for tool calls (same pattern as before, now inside CollapsibleSection)
+- `model_used` → human label: `claude-*-opus-*` → "Claude Opus 4", `gpt-4o` → "GPT-4o", else → "Claude Sonnet 4"
+
+---
+
+## NavHub Assistant
+
+### Overview
+A floating AI chat assistant available on every page. Uses Claude Haiku for fast, context-aware responses. Can generate **Agent Briefs** (structured prompts) that users can copy or launch directly into a Run.
+
+### lib/assistant.ts (new)
+Pure helpers and types — no side effects.
+
+```typescript
+export interface AssistantContext {
+  pathname:     string
+  groupName:    string
+  userRole:     string
+  agents:       { id: string; name: string; tools: string[] }[]
+  templates:    { id: string; name: string; type: string }[]
+}
+
+export interface AssistantMessage {
+  id:      string
+  role:    'user' | 'assistant'
+  content: string
+  brief?:  string | null
+}
+
+export function extractBrief(text: string): { displayText: string; brief: string | null }
+// Extracts [BRIEF_START]...[BRIEF_END] markers from assistant text.
+// Returns brief content + displayText with markers stripped.
+
+export function buildSystemPrompt(context: AssistantContext, isAdmin?: boolean): string
+// Builds system prompt injecting group name, role, agents list, templates, current page.
+// Instructs the model to emit [BRIEF_START]...[BRIEF_END] for agent briefs.
+```
+
+### app/api/assistant/chat/route.ts (new)
+```
+POST /api/assistant/chat
+  body: { messages: ChatMessage[], context: AssistantContext, isAdmin?: boolean }
+  → Auth check + active group check
+  → buildSystemPrompt(context, isAdmin)
+  → Call Anthropic API (claude-haiku-4-20250514, max_tokens: 1024, stream: true)
+  → Proxy SSE chunks back to client as: data: {"type":"chunk","content":"..."}
+  → On stream end: extractBrief(fullText), emit:
+       data: {"type":"done","brief":string|null,"displayText":string|null}
+  → On error: data: {"type":"error","message":"..."}
+```
+Returns `Content-Type: text/event-stream`.
+
+### components/assistant/AssistantButton.tsx (new)
+Fixed bottom-right circle button (`h-12 w-12`, `bg-primary`, `Sparkles` icon).
+- `z-50`, `bottom-6 right-6`
+- Opens `AssistantPanel` when clicked; re-renders panel on close (state reset)
+- Accepts `isAdmin?: boolean` → passed to `AssistantPanel`
+
+### components/assistant/AssistantPanel.tsx (new)
+420px slide-in chat panel from the right with backdrop. Features:
+
+**Context loading**: Fetches `/api/groups/active`, `/api/agents`, `/api/report-templates` in parallel on mount. Assembles `AssistantContext` for each message.
+
+**Suggested prompts**: When `messages.length === 0`, shows 4 clickable prompt chips. Disabled while context loads.
+
+**Streaming**: Calls `POST /api/assistant/chat`, reads SSE, accumulates `chunk` events into last assistant message. On `done` event: replaces content with `displayText` (brief markers stripped) + attaches `brief` to message.
+
+**AgentBriefCard**: Rendered below any assistant message that has `brief !== null`:
+- Shows brief text in a styled card (primary/5 bg, Sparkles icon)
+- "Copy Brief" button: `navigator.clipboard.writeText(brief)`
+- "Launch Agent →" button: navigates to `/agents?brief={encodeURIComponent(brief)}`
+
+**MessageBubble**: User = right-aligned `bg-primary`; Assistant = left-aligned `bg-muted` with `ReactMarkdown` + `remark-gfm`. Streaming cursor blink while `streaming: true`.
+
+**Input**: Auto-resizing textarea (max 4 lines / 96px). Enter → send; Shift+Enter → newline. Send button disabled when empty / streaming / context not loaded.
+
+**New conversation button** (Plus icon): clears `messages` state.
+
+### Layout integration
+- `app/(dashboard)/layout.tsx`: `<AssistantButton />` added after `<AppShell>` (renders on every dashboard page)
+- `app/(admin)/layout.tsx`: `<AssistantButton isAdmin />` added before closing `</div>`
+
+### Agents page — ?brief= pre-fill
+`app/(dashboard)/agents/page.tsx`:
+- `useSearchParams()` reads `?brief=` query param on mount
+- `briefParam` passed as `initialInstructions` to `RunModal` when any agent's Run button is clicked
+- If user arrives from assistant "Launch Agent →", the brief is pre-filled in Extra instructions textarea
+
+`components/agents/RunModal.tsx`:
+- New prop: `initialInstructions?: string` (default `''`)
+- `extraInstructions` state initialised to `initialInstructions`
+
+### Dependencies (already installed)
+- `react-markdown` + `remark-gfm` — already installed for Document Intelligence (Phase 7a)
 
 ---
 

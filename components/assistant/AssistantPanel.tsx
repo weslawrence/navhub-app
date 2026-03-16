@@ -10,7 +10,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { cn }     from '@/lib/utils'
 import type { AssistantContext, AssistantMessage } from '@/lib/assistant'
-import { extractBrief } from '@/lib/assistant'
 
 // ─── Suggested prompts ────────────────────────────────────────────────────────
 

@@ -353,10 +353,21 @@ await admin.from('companies').update({ is_active: false }).eq('id', params.id)
 ```css
 :root { --group-primary: #0ea5e9; }  /* injected server-side by layout.tsx */
 ```
+`tailwind.config.ts` maps `primary` to the palette CSS variable with fallback chain:
 ```ts
-colors: { primary: "var(--group-primary)" }
+primary: {
+  DEFAULT:    "var(--palette-primary, var(--group-primary, #0ea5e9))",
+  foreground: "#ffffff",
+}
 ```
 Use `text-primary`, `bg-primary`, `border-primary` classes everywhere.
+
+### tailwind.config.ts — full shadcn color palette
+`tailwind.config.ts` now includes the complete shadcn/ui color mapping:
+- `darkMode: ["class"]` — enables class-based dark mode (next-themes applies `.dark`)
+- All shadcn colors (`card`, `popover`, `secondary`, `muted`, `accent`, `destructive`, `border`, `input`, `ring`) mapped to their HSL CSS variables from `globals.css`
+- `borderRadius` tokens (`lg`, `md`, `sm`) mapped to `var(--radius)`
+- Without this full mapping, shadcn utility classes (`bg-secondary`, `text-muted-foreground`, etc.) generate no CSS
 
 ---
 
@@ -779,6 +790,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent Kill Switch + Disable | ✅ Complete | Cancel running run (SSE checkpoint), disable/enable agent toggle, migration 015 |
 | Agent Run Detail Restructure | ✅ Complete | CollapsibleSection component, Brief/Activity/Output sections on run pages, brief preview in run history |
 | NavHub Assistant | ✅ Complete | Floating chat panel (claude-haiku), streaming, Agent Brief Cards, ?brief= pre-fill on agents page |
+| Tailwind + AssistantButton Fix | ✅ Complete | Full shadcn color palette wired in tailwind.config.ts; agent.tools null safety on run page |
 
 ---
 

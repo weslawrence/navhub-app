@@ -128,7 +128,8 @@ function summariseTool(tool: string, output: string): string {
         return 'Done'
     }
   } catch {
-    return output.length > 60 ? output.slice(0, 57) + '…' : output
+    const safe = output ?? ''
+    return safe.length > 60 ? safe.slice(0, 57) + '…' : safe
   }
 }
 
@@ -555,11 +556,11 @@ export default function RunStreamPage() {
           )}
 
           {/* Tools */}
-          {agent && agent.tools.length > 0 && (
+          {agent && (agent.tools?.length ?? 0) > 0 && (
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Tools</p>
               <div className="flex flex-wrap gap-1">
-                {agent.tools.map(t => (
+                {(agent.tools ?? []).map(t => (
                   <Badge key={t} variant="secondary" className="text-[10px] px-1.5 py-0">
                     {TOOL_LABEL[t] ?? t.replace(/_/g, ' ')}
                   </Badge>

@@ -108,7 +108,7 @@ export default async function DashboardLayout({
       </AppShell>
 
       {/* Floating AI Assistant */}
-      <AssistantButton />
+      <AssistantButton groupId={activeGroup.id} />
     </>
   )
 }

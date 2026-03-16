@@ -6,10 +6,11 @@ import { cn } from '@/lib/utils'
 import AssistantPanel from './AssistantPanel'
 
 interface AssistantButtonProps {
-  isAdmin?: boolean
+  isAdmin?:  boolean
+  groupId?:  string
 }
 
-export default function AssistantButton({ isAdmin = false }: AssistantButtonProps) {
+export default function AssistantButton({ isAdmin = false, groupId }: AssistantButtonProps) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -32,10 +33,11 @@ export default function AssistantButton({ isAdmin = false }: AssistantButtonProp
         <Sparkles className="h-5 w-5" />
       </button>
 
-      {/* Slide-in panel */}
+      {/* Floating panel */}
       {open && (
         <AssistantPanel
           isAdmin={isAdmin}
+          groupId={groupId}
           onClose={() => setOpen(false)}
         />
       )}

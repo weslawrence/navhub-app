@@ -11,6 +11,18 @@ import { Button } from '@/components/ui/button'
 import { cn }     from '@/lib/utils'
 import type { AssistantContext, AssistantMessage } from '@/lib/assistant'
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const DEFAULT_WIDTH  = 420
+const DEFAULT_HEIGHT = 580
+const MIN_WIDTH      = 300
+const MIN_HEIGHT     = 400
+const MAX_WIDTH      = 800
+const MAX_HEIGHT     = 900
+
+const STORAGE_KEY_POSITION = 'navhub:assistant:position'
+const STORAGE_KEY_SIZE     = 'navhub:assistant:size'
+
 // ─── Suggested prompts ────────────────────────────────────────────────────────
 
 const SUGGESTED_PROMPTS = [
@@ -117,27 +129,102 @@ function MessageBubble({ msg }: { msg: AssistantMessage & { streaming?: boolean 
 // ─── Assistant Panel ──────────────────────────────────────────────────────────
 
 interface AssistantPanelProps {
-  isAdmin?: boolean
-  onClose:  () => void
+  isAdmin?:  boolean
+  onClose:   () => void
+  groupId?:  string
 }
 
-export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPanelProps) {
+export default function AssistantPanel({ isAdmin = false, onClose, groupId }: AssistantPanelProps) {
   const pathname = usePathname()
 
   const [messages,  setMessages]  = useState<(AssistantMessage & { streaming?: boolean })[]>([])
   const [input,     setInput]     = useState('')
   const [streaming, setStreaming] = useState(false)
-  const [context,   setContext]   = useState<AssistantContext | null>(null)
 
-  const bottomRef  = useRef<HTMLDivElement>(null)
+  // Minimal context — just pathname + role; server builds the full context
+  const [userRole,  setUserRole]  = useState('member')
+  const [contextReady, setContextReady] = useState(false)
+
+  // ── Position & size ──
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
+  const [size,     setSize]     = useState<{ width: number; height: number }>({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT })
+
+  // ── Drag state ──
+  const dragging    = useRef(false)
+  const dragOffset  = useRef({ x: 0, y: 0 })
+
+  // ── Resize state ──
+  const resizing         = useRef<'left' | 'bottom' | null>(null)
+  const resizeStartX     = useRef(0)
+  const resizeStartY     = useRef(0)
+  const resizeStartW     = useRef(0)
+  const resizeStartH     = useRef(0)
+  const resizeStartLeft  = useRef(0)
+
+  const bottomRef   = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef    = useRef<HTMLDivElement>(null)
 
-  // Scroll to bottom on new messages
+  // ── Derived localStorage key for history ──
+  const historyKey = groupId ? `navhub:assistant:messages:${groupId}` : null
+
+  // ── Load persisted position, size, and history on mount ──
+  useEffect(() => {
+    try {
+      const savedPos = localStorage.getItem(STORAGE_KEY_POSITION)
+      if (savedPos) {
+        const p = JSON.parse(savedPos) as { x: number; y: number }
+        setPosition(p)
+      }
+      const savedSize = localStorage.getItem(STORAGE_KEY_SIZE)
+      if (savedSize) {
+        const s = JSON.parse(savedSize) as { width: number; height: number }
+        setSize({
+          width:  Math.min(Math.max(s.width,  MIN_WIDTH),  MAX_WIDTH),
+          height: Math.min(Math.max(s.height, MIN_HEIGHT), MAX_HEIGHT),
+        })
+      }
+    } catch { /* ignore */ }
+
+    if (historyKey) {
+      try {
+        const saved = localStorage.getItem(historyKey)
+        if (saved) {
+          setMessages(JSON.parse(saved) as (AssistantMessage & { streaming?: boolean })[])
+        }
+      } catch { /* ignore */ }
+    }
+  }, [historyKey])
+
+  // ── Fetch user role once on mount ──
+  useEffect(() => {
+    async function loadRole() {
+      try {
+        const res  = await fetch('/api/groups/active')
+        const json = await res.json() as { data?: { role?: string } }
+        setUserRole(json.data?.role ?? 'member')
+      } catch { /* use default */ }
+      setContextReady(true)
+    }
+    void loadRole()
+  }, [])
+
+  // ── Persist messages to localStorage whenever they change ──
+  useEffect(() => {
+    if (!historyKey || messages.length === 0) return
+    // Don't save in-flight streaming messages
+    const toSave = messages.filter(m => !m.streaming)
+    try {
+      localStorage.setItem(historyKey, JSON.stringify(toSave))
+    } catch { /* ignore quota errors */ }
+  }, [messages, historyKey])
+
+  // ── Scroll to bottom on new messages ──
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Auto-resize textarea
+  // ── Auto-resize textarea ──
   useEffect(() => {
     const ta = textareaRef.current
     if (!ta) return
@@ -145,50 +232,101 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
     ta.style.height = `${Math.min(ta.scrollHeight, 96)}px`  // max 4 lines ≈ 96px
   }, [input])
 
-  // Load context (agents, templates, group info) once on mount
-  useEffect(() => {
-    async function loadContext() {
-      try {
-        const [groupRes, agentsRes, templatesRes] = await Promise.all([
-          fetch('/api/groups/active'),
-          fetch('/api/agents'),
-          fetch('/api/report-templates'),
-        ])
-        const [groupJson, agentsJson, templatesJson] = await Promise.all([
-          groupRes.json(),
-          agentsRes.json(),
-          templatesRes.json(),
-        ])
-        setContext({
-          pathname,
-          groupName:   groupJson.data?.group?.name ?? 'Unknown group',
-          userRole:    groupJson.data?.role         ?? 'member',
-          agents:      (agentsJson.data ?? []).map((a: { id: string; name: string; tools: string[] }) => ({
-            id:    a.id,
-            name:  a.name,
-            tools: a.tools ?? [],
-          })),
-          templates: (templatesJson.data ?? []).map((t: { id: string; name: string; template_type: string }) => ({
-            id:   t.id,
-            name: t.name,
-            type: t.template_type,
-          })),
-        })
-      } catch {
-        setContext({
-          pathname,
-          groupName:  'NavHub',
-          userRole:   'member',
-          agents:     [],
-          templates:  [],
-        })
-      }
+  // ── Default position (bottom-right, offset from corner) ──
+  function getDefaultPosition(): { x: number; y: number } {
+    if (typeof window === 'undefined') return { x: 0, y: 0 }
+    return {
+      x: window.innerWidth  - size.width  - 24,
+      y: window.innerHeight - size.height - 24,
     }
-    void loadContext()
-  }, [pathname])
+  }
 
+  function resolvedPosition(): { x: number; y: number } {
+    return position ?? getDefaultPosition()
+  }
+
+  // ── Drag handlers ──
+  function handleHeaderMouseDown(e: React.MouseEvent) {
+    if ((e.target as HTMLElement).closest('button')) return
+    dragging.current = true
+    const pos = resolvedPosition()
+    dragOffset.current = { x: e.clientX - pos.x, y: e.clientY - pos.y }
+    e.preventDefault()
+  }
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (dragging.current) {
+      const newX = Math.max(0, Math.min(e.clientX - dragOffset.current.x, window.innerWidth  - size.width))
+      const newY = Math.max(0, Math.min(e.clientY - dragOffset.current.y, window.innerHeight - size.height))
+      setPosition({ x: newX, y: newY })
+    }
+
+    if (resizing.current === 'left') {
+      const deltaX  = resizeStartX.current - e.clientX
+      const newW    = Math.min(Math.max(resizeStartW.current + deltaX, MIN_WIDTH), MAX_WIDTH)
+      const newLeft = resizeStartLeft.current + (resizeStartW.current - newW)
+      setSize(s  => ({ ...s, width: newW }))
+      setPosition(p => ({ x: newLeft, y: (p ?? getDefaultPosition()).y }))
+    }
+
+    if (resizing.current === 'bottom') {
+      const deltaY = e.clientY - resizeStartY.current
+      const newH   = Math.min(Math.max(resizeStartH.current + deltaY, MIN_HEIGHT), MAX_HEIGHT)
+      setSize(s => ({ ...s, height: newH }))
+    }
+  }, [size.width]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleMouseUp = useCallback(() => {
+    if (dragging.current) {
+      dragging.current = false
+      try {
+        localStorage.setItem(STORAGE_KEY_POSITION, JSON.stringify(position ?? getDefaultPosition()))
+      } catch { /* ignore */ }
+    }
+    if (resizing.current) {
+      resizing.current = null
+      try {
+        localStorage.setItem(STORAGE_KEY_SIZE, JSON.stringify(size))
+      } catch { /* ignore */ }
+    }
+  }, [position, size]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup',   handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup',   handleMouseUp)
+    }
+  }, [handleMouseMove, handleMouseUp])
+
+  // ── Resize handle mouse down ──
+  function handleLeftResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    resizing.current      = 'left'
+    resizeStartX.current  = e.clientX
+    resizeStartW.current  = size.width
+    resizeStartLeft.current = resolvedPosition().x
+  }
+
+  function handleBottomResizeMouseDown(e: React.MouseEvent) {
+    e.preventDefault()
+    resizing.current     = 'bottom'
+    resizeStartY.current = e.clientY
+    resizeStartH.current = size.height
+  }
+
+  // ── New conversation ──
+  function handleNewConversation() {
+    setMessages([])
+    if (historyKey) {
+      try { localStorage.removeItem(historyKey) } catch { /* ignore */ }
+    }
+  }
+
+  // ── Send message ──
   const sendMessage = useCallback(async (text: string) => {
-    if (!text.trim() || streaming || !context) return
+    if (!text.trim() || streaming || !contextReady) return
 
     const userMsg: AssistantMessage = {
       id:      crypto.randomUUID(),
@@ -209,6 +347,12 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
     // Build conversation history for API
     const history = messages.map(m => ({ role: m.role, content: m.content }))
     history.push({ role: 'user', content: text.trim() })
+
+    // Minimal context — server builds the full picture from groupId cookie
+    const context = {
+      pathname,
+      userRole,
+    }
 
     try {
       const res = await fetch('/api/assistant/chat', {
@@ -281,7 +425,7 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
     } finally {
       setStreaming(false)
     }
-  }, [messages, streaming, context, isAdmin])
+  }, [messages, streaming, contextReady, pathname, userRole, isAdmin])
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -290,19 +434,44 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
     }
   }
 
+  const pos = resolvedPosition()
+
   return (
     <>
-      {/* Backdrop */}
+      {/* Non-blocking backdrop — pointer events disabled so clicks pass through */}
       <div
-        className="fixed inset-0 z-40 bg-black/20 backdrop-blur-[1px]"
-        onClick={onClose}
+        className="fixed inset-0 z-40 bg-black/10"
+        style={{ pointerEvents: 'none' }}
       />
 
       {/* Panel */}
-      <div className="fixed top-0 right-0 z-50 h-full w-[420px] max-w-[100vw] bg-background border-l shadow-2xl flex flex-col">
+      <div
+        ref={panelRef}
+        className="fixed z-50 bg-background border shadow-2xl flex flex-col rounded-xl overflow-hidden"
+        style={{
+          left:   pos.x,
+          top:    pos.y,
+          width:  size.width,
+          height: size.height,
+        }}
+      >
+        {/* ── Left resize handle ── */}
+        <div
+          onMouseDown={handleLeftResizeMouseDown}
+          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-primary/20 transition-colors"
+        />
 
-        {/* ── Header ── */}
-        <div className="flex items-center gap-2 px-4 py-3.5 border-b bg-background shrink-0">
+        {/* ── Bottom resize handle ── */}
+        <div
+          onMouseDown={handleBottomResizeMouseDown}
+          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize z-10 hover:bg-primary/20 transition-colors"
+        />
+
+        {/* ── Header (drag target) ── */}
+        <div
+          onMouseDown={handleHeaderMouseDown}
+          className="flex items-center gap-2 px-4 py-3.5 border-b bg-background shrink-0 select-none cursor-grab active:cursor-grabbing"
+        >
           <Sparkles className="h-4 w-4 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold leading-none">NavHub Assistant</p>
@@ -313,7 +482,7 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
             variant="ghost"
             className="h-7 w-7 p-0 text-muted-foreground"
             title="New conversation"
-            onClick={() => setMessages([])}
+            onClick={handleNewConversation}
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -341,7 +510,7 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
                     key={prompt}
                     type="button"
                     onClick={() => void sendMessage(prompt)}
-                    disabled={!context}
+                    disabled={!contextReady}
                     className={cn(
                       'w-full text-left text-sm px-3.5 py-2.5 rounded-lg border',
                       'text-muted-foreground hover:text-foreground hover:border-primary/40',
@@ -384,8 +553,8 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={context ? 'Ask anything about NavHub…' : 'Loading…'}
-              disabled={!context || streaming}
+              placeholder={contextReady ? 'Ask anything about NavHub…' : 'Loading…'}
+              disabled={!contextReady || streaming}
               rows={1}
               className={cn(
                 'flex-1 resize-none rounded-xl border border-input bg-muted/30',
@@ -399,7 +568,7 @@ export default function AssistantPanel({ isAdmin = false, onClose }: AssistantPa
               size="sm"
               className="h-[38px] w-[38px] p-0 rounded-xl shrink-0"
               onClick={() => void sendMessage(input)}
-              disabled={!input.trim() || !context || streaming}
+              disabled={!input.trim() || !contextReady || streaming}
             >
               <Send className="h-4 w-4" />
             </Button>

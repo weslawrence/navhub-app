@@ -791,6 +791,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent Run Detail Restructure | ✅ Complete | CollapsibleSection component, Brief/Activity/Output sections on run pages, brief preview in run history |
 | NavHub Assistant | ✅ Complete | Floating chat panel (claude-haiku), streaming, Agent Brief Cards, ?brief= pre-fill on agents page |
 | Tailwind + AssistantButton Fix | ✅ Complete | Full shadcn color palette wired in tailwind.config.ts; agent.tools null safety on run page |
+| Assistant Data + UX Enhancements | ✅ Complete | Server-side context (runs/companies/docs/reports/folders), localStorage history, draggable + resizable panel, pointer-pass-through backdrop |
 
 ---
 
@@ -1292,16 +1293,22 @@ Full rewrite with same three CollapsibleSections (Brief/Activity/Output) matchin
 ### Overview
 A floating AI chat assistant available on every page. Uses Claude Haiku for fast, context-aware responses. Can generate **Agent Briefs** (structured prompts) that users can copy or launch directly into a Run.
 
-### lib/assistant.ts (new)
+### lib/assistant.ts
 Pure helpers and types — no side effects.
 
 ```typescript
 export interface AssistantContext {
-  pathname:     string
-  groupName:    string
-  userRole:     string
-  agents:       { id: string; name: string; tools: string[] }[]
-  templates:    { id: string; name: string; type: string }[]
+  pathname:         string
+  groupName:        string
+  companyName?:     string
+  userRole:         string
+  agents:           { id: string; name: string; tools: string[]; is_active: boolean }[]
+  templates:        { id: string; name: string; template_type: string }[]
+  recentRuns:       { id: string; agentName: string; status: string; created_at: string; duration_seconds: number | null }[]
+  companies:        { id: string; name: string }[]
+  recentDocuments:  { id: string; title: string; document_type: string; created_at: string }[]
+  recentReports:    { id: string; name: string; created_at: string }[]
+  folders:          { id: string; name: string }[]
 }
 
 export interface AssistantMessage {
@@ -1316,17 +1323,20 @@ export function extractBrief(text: string): { displayText: string; brief: string
 // Returns brief content + displayText with markers stripped.
 
 export function buildSystemPrompt(context: AssistantContext, isAdmin?: boolean): string
-// Builds system prompt injecting group name, role, agents list, templates, current page.
+// Builds system prompt injecting all context: group, role, agents, templates, recent runs,
+// companies, recent documents, recent reports, folders, and current page.
 // Instructs the model to emit [BRIEF_START]...[BRIEF_END] for agent briefs.
 ```
 
-### app/api/assistant/chat/route.ts (new)
+### app/api/assistant/chat/route.ts
 ```
 POST /api/assistant/chat
-  body: { messages: ChatMessage[], context: AssistantContext, isAdmin?: boolean }
-  → Auth check + active group check
-  → buildSystemPrompt(context, isAdmin)
-  → Call Anthropic API (claude-haiku-4-20250514, max_tokens: 1024, stream: true)
+  body: { messages: ChatMessage[], context: { pathname, userRole }, isAdmin?: boolean }
+  → Auth check + active group check (from cookie)
+  → buildAssistantContext(groupId, pathname, userRole) — fetches all live data server-side:
+      agents, templates, last 10 runs, companies, last 5 docs, last 5 reports, folders
+  → buildSystemPrompt(fullContext, isAdmin)
+  → Call Anthropic API (claude-haiku-4-5-20251001, max_tokens: 1024, stream: true)
   → Proxy SSE chunks back to client as: data: {"type":"chunk","content":"..."}
   → On stream end: extractBrief(fullText), emit:
        data: {"type":"done","brief":string|null,"displayText":string|null}
@@ -1334,41 +1344,53 @@ POST /api/assistant/chat
 ```
 Returns `Content-Type: text/event-stream`.
 
-### components/assistant/AssistantButton.tsx (new)
+**`buildAssistantContext(groupId, pathname, userRole)`** — server-side only (admin client):
+- Fetches in parallel via `Promise.allSettled`: agents, templates, agent_runs (last 10), companies, documents (last 5), custom_reports (last 5), document_folders
+- Any failed fetch silently degrades to empty array — assistant still works with partial data
+
+### components/assistant/AssistantButton.tsx
 Fixed bottom-right circle button (`h-12 w-12`, `bg-primary`, `Sparkles` icon).
-- `z-50`, `bottom-6 right-6`
+- `z-40`, `bottom-6 right-6`
 - Opens `AssistantPanel` when clicked; re-renders panel on close (state reset)
-- Accepts `isAdmin?: boolean` → passed to `AssistantPanel`
+- Accepts `isAdmin?: boolean` + `groupId?: string` → both passed to `AssistantPanel`
 
-### components/assistant/AssistantPanel.tsx (new)
-420px slide-in chat panel from the right with backdrop. Features:
+### components/assistant/AssistantPanel.tsx
+Floating, draggable, resizable chat panel. Default: 420×580px, positioned bottom-right.
 
-**Context loading**: Fetches `/api/groups/active`, `/api/agents`, `/api/report-templates` in parallel on mount. Assembles `AssistantContext` for each message.
+**Position & size**: tracked in state; defaults to `window.innerWidth - width - 24, window.innerHeight - height - 24`.
+- Persisted to `localStorage`: `navhub:assistant:position` and `navhub:assistant:size`
+- Restored on mount; size clamped to min 300×400 / max 800×900
 
-**Suggested prompts**: When `messages.length === 0`, shows 4 clickable prompt chips. Disabled while context loads.
+**Dragging**: `onMouseDown` on header sets `dragging=true`; `mousemove` on `window` updates position; `mouseup` ends drag + saves to localStorage. Buttons in header excluded from drag target.
 
-**Streaming**: Calls `POST /api/assistant/chat`, reads SSE, accumulates `chunk` events into last assistant message. On `done` event: replaces content with `displayText` (brief markers stripped) + attaches `brief` to message.
+**Resizing**: 6px handle on left edge (`cursor: ew-resize`) + bottom edge (`cursor: ns-resize`); `mousedown` captures start state; `mousemove` computes new size. Left resize also adjusts `position.x` to keep right edge fixed.
 
-**AgentBriefCard**: Rendered below any assistant message that has `brief !== null`:
-- Shows brief text in a styled card (primary/5 bg, Sparkles icon)
-- "Copy Brief" button: `navigator.clipboard.writeText(brief)`
-- "Launch Agent →" button: navigates to `/agents?brief={encodeURIComponent(brief)}`
+**History persistence**: Messages saved to `localStorage` keyed by `navhub:assistant:messages:{groupId}`. Loaded on mount. "New conversation" (Plus icon) clears both state and localStorage. In-flight streaming messages are not persisted (filtered by `!m.streaming`).
+
+**Backdrop**: `bg-black/10` with `pointer-events: none` — clicks pass through to page content behind the panel. Panel does NOT close when clicking the backdrop.
+
+**Context (client-side)**: Only `pathname` + `userRole` (from one GET `/api/groups/active` on mount) sent to server. Server fetches all live data itself.
+
+**Suggested prompts**: When `messages.length === 0`, shows 4 clickable prompt chips. Disabled until role fetch completes.
+
+**Streaming**: Calls `POST /api/assistant/chat`, reads SSE, accumulates `chunk` events. On `done`: replaces content with `displayText` (markers stripped) + attaches `brief` to message.
+
+**AgentBriefCard**: Rendered below any assistant message with `brief !== null`.
+- "Copy Brief": `navigator.clipboard.writeText(brief)`
+- "Launch Agent →": navigates to `/agents?brief={encodeURIComponent(brief)}`
 
 **MessageBubble**: User = right-aligned `bg-primary`; Assistant = left-aligned `bg-muted` with `ReactMarkdown` + `remark-gfm`. Streaming cursor blink while `streaming: true`.
 
-**Input**: Auto-resizing textarea (max 4 lines / 96px). Enter → send; Shift+Enter → newline. Send button disabled when empty / streaming / context not loaded.
-
-**New conversation button** (Plus icon): clears `messages` state.
+**Input**: Auto-resizing textarea (max 4 lines / 96px). Enter → send; Shift+Enter → newline.
 
 ### Layout integration
-- `app/(dashboard)/layout.tsx`: `<AssistantButton />` added after `<AppShell>` (renders on every dashboard page)
-- `app/(admin)/layout.tsx`: `<AssistantButton isAdmin />` added before closing `</div>`
+- `app/(dashboard)/layout.tsx`: `<AssistantButton groupId={activeGroup.id} />` — history keyed per group
+- `app/(admin)/layout.tsx`: `<AssistantButton isAdmin />` — no groupId (admin spans all groups)
 
 ### Agents page — ?brief= pre-fill
 `app/(dashboard)/agents/page.tsx`:
 - `useSearchParams()` reads `?brief=` query param on mount
 - `briefParam` passed as `initialInstructions` to `RunModal` when any agent's Run button is clicked
-- If user arrives from assistant "Launch Agent →", the brief is pre-filled in Extra instructions textarea
 
 `components/agents/RunModal.tsx`:
 - New prop: `initialInstructions?: string` (default `''`)

@@ -6,12 +6,17 @@
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AssistantContext {
-  pathname:     string
-  groupName:    string
-  companyName?: string
-  userRole:     string
-  agents:       { id: string; name: string; tools: string[] }[]
-  templates:    { id: string; name: string; type: string }[]
+  pathname:         string
+  groupName:        string
+  companyName?:     string
+  userRole:         string
+  agents:           { id: string; name: string; tools: string[]; is_active: boolean }[]
+  templates:        { id: string; name: string; template_type: string }[]
+  recentRuns:       { id: string; agentName: string; status: string; created_at: string; duration_seconds: number | null }[]
+  companies:        { id: string; name: string }[]
+  recentDocuments:  { id: string; title: string; document_type: string; created_at: string }[]
+  recentReports:    { id: string; name: string; created_at: string }[]
+  folders:          { id: string; name: string }[]
 }
 
 export interface AssistantMessage {
@@ -43,13 +48,46 @@ export function extractBrief(text: string): { displayText: string; brief: string
  * Pure function — safe to call on server or client.
  */
 export function buildSystemPrompt(context: AssistantContext, isAdmin = false): string {
+  // ── Agents ──
   const agentsList = context.agents.length > 0
-    ? context.agents.map(a => `• ${a.name} (tools: ${a.tools.join(', ')})`).join('\n')
+    ? context.agents.map(a => {
+        const status = a.is_active ? '' : ' [DISABLED]'
+        return `• ${a.name}${status} (tools: ${a.tools.join(', ')})`
+      }).join('\n')
     : '(no agents configured)'
 
+  // ── Templates ──
   const templatesList = context.templates.length > 0
-    ? context.templates.map(t => `• ${t.name} (${t.type})`).join('\n')
+    ? context.templates.map(t => `• ${t.name} (${t.template_type})`).join('\n')
     : '(no templates available)'
+
+  // ── Recent runs ──
+  const runsList = context.recentRuns.length > 0
+    ? context.recentRuns.map(r => {
+        const dur = r.duration_seconds != null ? ` — ${r.duration_seconds}s` : ''
+        return `• ${r.agentName} — ${r.status}${dur} (${r.created_at.slice(0, 10)})`
+      }).join('\n')
+    : '(no recent runs)'
+
+  // ── Companies ──
+  const companiesList = context.companies.length > 0
+    ? context.companies.map(c => `• ${c.name}`).join('\n')
+    : '(no companies)'
+
+  // ── Recent documents ──
+  const docsList = context.recentDocuments.length > 0
+    ? context.recentDocuments.map(d => `• ${d.title} (${d.document_type}, ${d.created_at.slice(0, 10)})`).join('\n')
+    : '(no recent documents)'
+
+  // ── Recent reports ──
+  const reportsList = context.recentReports.length > 0
+    ? context.recentReports.map(r => `• ${r.name} (${r.created_at.slice(0, 10)})`).join('\n')
+    : '(no recent reports)'
+
+  // ── Folders ──
+  const foldersList = context.folders.length > 0
+    ? context.folders.map(f => `• ${f.name}`).join('\n')
+    : '(no document folders)'
 
   let prompt = `You are NavHub Assistant, an intelligent helper built into the NavHub financial dashboard application.
 
@@ -62,10 +100,27 @@ Current context:
 - Page: ${context.pathname}
 - Group: ${context.groupName}${context.companyName ? `\n- Company: ${context.companyName}` : ''}
 - User role: ${context.userRole}
-- Available agents:
+
+Available agents:
 ${agentsList}
-- Available templates:
+
+Available report templates:
 ${templatesList}
+
+Recent agent runs (last 10):
+${runsList}
+
+Companies in this group:
+${companiesList}
+
+Recent documents (last 5):
+${docsList}
+
+Recent custom reports (last 5):
+${reportsList}
+
+Document folders:
+${foldersList}
 
 When helping with agent briefs:
 - Ask clarifying questions if needed (what period? what audience? what company?)

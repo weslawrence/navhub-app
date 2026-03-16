@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
-  Bot, Plus, Play, Pencil, Clock, Zap,
+  Bot, Plus, Play, Pencil, Clock, Zap, PowerOff,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button }  from '@/components/ui/button'
@@ -57,9 +57,9 @@ function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' 
 // ─── Agents list page ─────────────────────────────────────────────────────────
 
 export default function AgentsPage() {
-  const [agents,   setAgents]   = useState<Agent[]>([])
-  const [loading,  setLoading]  = useState(true)
-  const [isAdmin,  setIsAdmin]  = useState(false)
+  const [agents,    setAgents]    = useState<Agent[]>([])
+  const [loading,   setLoading]   = useState(true)
+  const [isAdmin,   setIsAdmin]   = useState(false)
   const [runTarget, setRunTarget] = useState<Agent | null>(null)
 
   useEffect(() => {
@@ -76,6 +76,23 @@ export default function AgentsPage() {
     }
     void load()
   }, [])
+
+  async function handleToggleActive(agent: Agent) {
+    const newValue = !agent.is_active
+    // Optimistic update
+    setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, is_active: newValue } : a))
+
+    const res = await fetch(`/api/agents/${agent.id}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ is_active: newValue }),
+    })
+
+    if (!res.ok) {
+      // Revert on error
+      setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, is_active: agent.is_active } : a))
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -139,6 +156,7 @@ export default function AgentsPage() {
               agent={agent}
               isAdmin={isAdmin}
               onRun={() => setRunTarget(agent)}
+              onToggleActive={() => void handleToggleActive(agent)}
             />
           ))}
         </div>
@@ -155,28 +173,53 @@ export default function AgentsPage() {
 // ─── Agent card ───────────────────────────────────────────────────────────────
 
 function AgentCard({
-  agent, isAdmin, onRun,
+  agent, isAdmin, onRun, onToggleActive,
 }: {
-  agent:   Agent
-  isAdmin: boolean
-  onRun:   () => void
+  agent:          Agent
+  isAdmin:        boolean
+  onRun:          () => void
+  onToggleActive: () => void
 }) {
+  const isDisabled = !agent.is_active
+
   const modelShort = agent.model === 'gpt-4o' ? 'GPT-4o'
     : agent.model.includes('opus') ? 'Opus 4'
     : 'Sonnet 4'
 
   return (
-    <Card className="hover:border-primary/40 transition-colors">
+    <Card className={cn('transition-colors', isDisabled ? 'opacity-60' : 'hover:border-primary/40')}>
       <CardContent className="p-5 space-y-4">
         {/* Header */}
         <div className="flex items-start gap-3">
           <AgentAvatar agent={agent} />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold truncate">{agent.name}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-semibold truncate">{agent.name}</p>
+              {isDisabled && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0 flex items-center gap-0.5">
+                  <PowerOff className="h-2.5 w-2.5" /> Disabled
+                </Badge>
+              )}
+            </div>
             {agent.description && (
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{agent.description}</p>
             )}
           </div>
+          {/* Active/Disabled toggle pill — admins only */}
+          {isAdmin && (
+            <button
+              onClick={onToggleActive}
+              title={isDisabled ? 'Enable agent' : 'Disable agent'}
+              className={cn(
+                'shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors',
+                isDisabled
+                  ? 'border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 hover:border-green-400 dark:hover:border-green-500 hover:text-green-600 dark:hover:text-green-400'
+                  : 'border-green-400/50 text-green-600 dark:text-green-400 hover:border-red-400/50 hover:text-red-600 dark:hover:text-red-400'
+              )}
+            >
+              {isDisabled ? '○ Off' : '● On'}
+            </button>
+          )}
         </div>
 
         {/* Meta */}
@@ -198,11 +241,13 @@ function AgentCard({
 
         {/* Actions */}
         <div className="flex gap-2 pt-1">
-          <Button size="sm" className="flex-1" onClick={onRun}>
-            <Play className="h-3.5 w-3.5 mr-1.5" /> Run
-          </Button>
+          {!isDisabled && (
+            <Button size="sm" className="flex-1" onClick={onRun}>
+              <Play className="h-3.5 w-3.5 mr-1.5" /> Run
+            </Button>
+          )}
           {isAdmin && (
-            <Button size="sm" variant="outline" asChild>
+            <Button size="sm" variant="outline" asChild className={cn(isDisabled && 'ml-auto')}>
               <Link href={`/agents/${agent.id}/edit`}>
                 <Pencil className="h-3.5 w-3.5" />
               </Link>

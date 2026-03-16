@@ -6,6 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, CheckCircle2, XCircle, Loader2, Clock, Copy, Check,
   Play, ChevronDown, ChevronRight, FileText, AlertCircle, ExternalLink, Library,
+  Ban,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
@@ -254,7 +255,8 @@ function SummaryCard({
   const [outputOpen, setOutputOpen] = useState(false)
   const [copied,     setCopied]     = useState(false)
 
-  const isSuccess = status === 'success'
+  const isSuccess   = status === 'success'
+  const isCancelled = status === 'cancelled'
 
   // ── Document Created cards ──
   const docCards = toolEvents
@@ -361,9 +363,11 @@ function SummaryCard({
       <div className="flex items-center gap-1.5 flex-wrap text-sm">
         {isSuccess
           ? <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-          : <XCircle     className="h-4 w-4 text-red-500  shrink-0" />}
+          : isCancelled
+            ? <Ban        className="h-4 w-4 text-amber-500 shrink-0" />
+            : <XCircle    className="h-4 w-4 text-red-500   shrink-0" />}
         <span className="font-medium">
-          {isSuccess ? 'Run complete' : 'Run failed'}
+          {isSuccess ? 'Run complete' : isCancelled ? 'Run cancelled' : 'Run failed'}
         </span>
         {toolCount > 0 && (
           <span className="text-muted-foreground">
@@ -436,15 +440,17 @@ export default function RunStreamPage() {
   const params = useParams<{ runId: string }>()
   const router = useRouter()
 
-  const [agent,        setAgent]        = useState<Agent | null>(null)
-  const [run,          setRun]          = useState<AgentRun | null>(null)
-  const [status,       setStatus]       = useState<RunStatus>('queued')
-  const [textOutput,   setTextOutput]   = useState('')
-  const [toolEvents,   setToolEvents]   = useState<ToolEventEntry[]>([])
-  const [tokens,       setTokens]       = useState(0)
-  const [errorMsg,     setErrorMsg]     = useState<string | null>(null)
-  const [loading,      setLoading]      = useState(true)
-  const [durationSecs, setDurationSecs] = useState(0)
+  const [agent,         setAgent]         = useState<Agent | null>(null)
+  const [run,           setRun]           = useState<AgentRun | null>(null)
+  const [status,        setStatus]        = useState<RunStatus>('queued')
+  const [textOutput,    setTextOutput]    = useState('')
+  const [toolEvents,    setToolEvents]    = useState<ToolEventEntry[]>([])
+  const [tokens,        setTokens]        = useState(0)
+  const [errorMsg,      setErrorMsg]      = useState<string | null>(null)
+  const [loading,       setLoading]       = useState(true)
+  const [durationSecs,  setDurationSecs]  = useState(0)
+  const [cancelConfirm, setCancelConfirm] = useState(false)
+  const [cancelling,    setCancelling]    = useState(false)
 
   // Scroll bottom anchor — keeps latest content in view during streaming
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -510,6 +516,9 @@ export default function RunStreamPage() {
           setErrorMsg(event.message)
           setStatus('error')
           setDurationSecs(Math.round((Date.now() - start) / 1000))
+        } else if (event.type === 'cancelled') {
+          setStatus('cancelled')
+          setDurationSecs(Math.round((Date.now() - start) / 1000))
         }
       }
     }
@@ -528,6 +537,18 @@ export default function RunStreamPage() {
     })
     const json = await res.json()
     if (res.ok) router.push(`/agents/runs/${json.data.run_id as string}`)
+  }
+
+  async function handleCancel() {
+    setCancelling(true)
+    const res = await fetch(`/api/agents/runs/${params.runId}/cancel`, { method: 'POST' })
+    if (!res.ok) {
+      // Cancel failed — dismiss the confirm panel and let the user try again
+      setCancelConfirm(false)
+    }
+    setCancelling(false)
+    setCancelConfirm(false)
+    // The SSE stream will receive a 'cancelled' event and update the status
   }
 
   const cfg    = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
@@ -563,9 +584,10 @@ export default function RunStreamPage() {
           <p className="text-sm font-medium truncate">{agent?.name ?? 'Agent'}</p>
         </div>
         <Badge className={cn('gap-1', cfg.badgeClass)}>
-          {status === 'running' && <Loader2      className="h-3 w-3 animate-spin" />}
-          {status === 'success' && <CheckCircle2 className="h-3 w-3" />}
-          {status === 'error'   && <XCircle      className="h-3 w-3" />}
+          {status === 'running'   && <Loader2      className="h-3 w-3 animate-spin" />}
+          {status === 'success'   && <CheckCircle2 className="h-3 w-3" />}
+          {status === 'error'     && <XCircle      className="h-3 w-3" />}
+          {status === 'cancelled' && <Ban          className="h-3 w-3" />}
           {cfg.label}
         </Badge>
         {run?.started_at && (
@@ -573,6 +595,42 @@ export default function RunStreamPage() {
             <Clock className="h-3 w-3" />
             {new Date(run.started_at).toLocaleTimeString()}
           </span>
+        )}
+
+        {/* ── Cancel button — only while running ── */}
+        {status === 'running' && !cancelConfirm && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950"
+            onClick={() => setCancelConfirm(true)}
+          >
+            <Ban className="h-3.5 w-3.5 mr-1.5" /> Cancel Run
+          </Button>
+        )}
+        {status === 'running' && cancelConfirm && (
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-muted-foreground">Cancel this run?</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
+              onClick={() => void handleCancel()}
+              disabled={cancelling}
+            >
+              {cancelling && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+              Confirm
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs"
+              onClick={() => setCancelConfirm(false)}
+              disabled={cancelling}
+            >
+              Nevermind
+            </Button>
+          </div>
         )}
       </div>
 

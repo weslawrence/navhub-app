@@ -776,6 +776,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent UX Fixes | ✅ Complete | Period toggle (per-agent localStorage), streaming timeline with one-line summaries, completion summary card |
 | Agent Rate Limit Optimisation | ✅ Complete | readReportTemplate scaffold_size, system prompt token reduction, token estimate in RunModal |
 | SuperAdmin Section | ✅ Complete | /admin area with platform dashboard, groups, users, agent runs, system; group impersonation |
+| Agent Kill Switch + Disable | ✅ Complete | Cancel running run (SSE checkpoint), disable/enable agent toggle, migration 015 |
 
 ---
 
@@ -1184,6 +1185,55 @@ Display: muted row showing `"~4,100 tokens"`. Turns **amber** with a warning mes
 
 ---
 
+## Agent Kill Switch + Disable
+
+### Migration (015_agent_cancel.sql)
+```sql
+ALTER TABLE agent_runs
+  ADD COLUMN IF NOT EXISTS cancellation_requested boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS cancelled_at           timestamptz;
+```
+Note: `agents.is_active` already existed from `007_agents.sql`.
+
+### Fix 1 — Cancel Running Agent Run
+
+**Flow**
+1. User clicks "Cancel Run" button on run stream page (only visible when `status === 'running'`)
+2. Inline confirmation panel: "Cancel this run?" + Confirm / Nevermind buttons
+3. Confirm → `POST /api/agents/runs/[runId]/cancel`
+4. Cancel route sets `cancellation_requested = true` on the `agent_runs` row
+5. The `executeAgentRun()` loop polls for this flag at the **start of each iteration** (before calling the model)
+6. When detected: updates run to `status='cancelled'`, emits `{ type: 'cancelled' }` SSE event, returns early
+7. Run page handles `cancelled` event → sets `status = 'cancelled'`, shows summary card with amber "Run cancelled" message
+
+**Key files**
+- `app/api/agents/runs/[runId]/cancel/route.ts` (new) — POST sets `cancellation_requested=true`; only works on `running`/`queued` runs
+- `lib/agent-runner.ts` — cancellation check added at top of agentic while-loop; `RunEvent` union extended with `{ type: 'cancelled' }`
+- `app/api/agents/runs/[runId]/stream/route.ts` — replay of cancelled runs now emits partial output + `{ type: 'cancelled' }`
+- `app/(dashboard)/agents/runs/[runId]/page.tsx` — Cancel button with inline confirmation; handles `cancelled` SSE event; SummaryCard shows `Ban` icon + "Run cancelled" for `isCancelled` status
+
+**Cancellation checkpoint timing**
+The DB poll happens before each model API call. This means the agent stops cleanly between model calls — never mid-stream. Current tool execution completes before the stop is detected.
+
+### Fix 2 — Disable/Enable Agent
+
+**Behaviour**
+- Each agent card on `/agents` shows a small pill toggle (admin only): `● On` / `○ Off`
+- Hovering the `● On` pill previews red (disable intent); hovering `○ Off` previews green (enable intent)
+- Clicking does an optimistic UI update + `PATCH /api/agents/[id]` with `{ is_active: false/true }`
+- On error: reverts to previous state
+- When disabled: card is dimmed (`opacity-60`), "Disabled" badge shown next to name, **Run button hidden**
+- `PATCH /api/agents/[id]` already accepts `{ is_active }` — no route change needed
+- `POST /api/agents/[id]/run` already validates `agent.is_active` and returns 422 if false — no route change needed
+
+**lib/types.ts — AgentRun additions**
+```typescript
+cancellation_requested: boolean
+cancelled_at:           string | null
+```
+
+---
+
 ## Next Steps
 
 1. Set up Supabase Storage bucket `report-files` with RLS policies (manual — see Phase 2f section)
@@ -1197,7 +1247,8 @@ Display: muted row showing `"~4,100 tokens"`. Turns **amber** with a warning mes
 9. **Run migration `011_group_slug.sql`** in Supabase dashboard (group slug column + unique index)
 10. **Run migration `012_report_sharing.sql`** in Supabase dashboard (is_shareable, share_token, share_token_created_at on custom_reports)
 11. **Run migration `014_documents.sql`** in Supabase dashboard (Phase 7a — document_folders, documents, document_versions, document_sync tables)
-12. Add `error.tsx` files for each route segment
+12. **Run migration `015_agent_cancel.sql`** in Supabase dashboard (Agent Kill Switch — cancellation_requested + cancelled_at on agent_runs)
+13. Add `error.tsx` files for each route segment
 13. Add chart visualisations to financial report pages (trend lines, bar charts)
 14. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
 15. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export

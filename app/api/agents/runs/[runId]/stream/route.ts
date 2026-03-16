@@ -47,6 +47,12 @@ export async function GET(
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'done', tokens: runData.tokens_used ?? 0 })}\n\n`))
         } else if (runData.status === 'error') {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: runData.error_message ?? 'Unknown error' })}\n\n`))
+        } else if (runData.status === 'cancelled') {
+          // Replay any partial output generated before cancellation
+          if (runData.output) {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'text', content: runData.output })}\n\n`))
+          }
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'cancelled' })}\n\n`))
         }
         controller.close()
       },

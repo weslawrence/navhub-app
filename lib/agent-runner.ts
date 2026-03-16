@@ -42,6 +42,7 @@ export type RunEvent =
   | { type: 'tool_end';   tool: string; output: string }
   | { type: 'error';      message: string }
   | { type: 'done';       tokens: number }
+  | { type: 'cancelled' }
 
 export interface RunContext {
   period?:              string
@@ -742,6 +743,31 @@ export async function executeAgentRun(
 
     // Agentic loop — continue until no more tool calls
     while (continueLoop) {
+      // ── Cancellation checkpoint ──────────────────────────────────────────
+      // Poll the DB at the start of every iteration. If a cancel was requested
+      // (via POST /api/agents/runs/[id]/cancel) while we were executing tools,
+      // we stop here before the next model call.
+      const { data: cancelCheck } = await admin
+        .from('agent_runs')
+        .select('cancellation_requested')
+        .eq('id', runId)
+        .single()
+      if (cancelCheck?.cancellation_requested) {
+        await admin
+          .from('agent_runs')
+          .update({
+            status:       'cancelled',
+            cancelled_at: new Date().toISOString(),
+            completed_at: new Date().toISOString(),
+            tool_calls:   toolCallLogs,
+            tokens_used:  totalTokens,
+          })
+          .eq('id', runId)
+        onChunk({ type: 'cancelled' })
+        return
+      }
+      // ────────────────────────────────────────────────────────────────────
+
       let result: ModelResponse
 
       if (agent.model === 'gpt-4o') {

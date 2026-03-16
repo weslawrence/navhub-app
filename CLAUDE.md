@@ -773,6 +773,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 5d | ✅ Complete | V5 Matrix E2E Test — seed script, V5 agent prompt, Run V5 Test modal, Report Generated card, template health page |
 | Phase 7a | ✅ Complete | Document Intelligence UI — Documents section, folders, editor/viewer with locking, share tokens, standalone viewer |
 | Phase 7b | ✅ Complete | Agent Document Tools — 4 new tools (list/read/create/update_document), Document Created card in run stream |
+| Agent UX Fixes | ✅ Complete | Period toggle (per-agent localStorage), streaming timeline with one-line summaries, completion summary card |
 
 ---
 
@@ -1017,6 +1018,107 @@ Four new tools. All use admin Supabase client after group/ownership verification
 ### Agent pages
 - `app/(dashboard)/agents/page.tsx`: `TOOL_LABELS` extended with 4 entries
 - `app/(dashboard)/agents/_form.tsx`: `TOOL_OPTIONS` extended with labels, emoji, and descriptions for all 4 tools
+
+---
+
+## Agent UX Fixes — Period Toggle + Streaming Timeline
+
+### Fix 1 — Period Selector Toggle (`components/agents/RunModal.tsx`)
+
+**Behaviour**
+- Toggle: "Include period context" (default: **off**)
+- When **off**: period selector is hidden; no `period` field in the POST body → agent receives no period in its system prompt
+- When **on**: period dropdown appears; `period` is sent as before
+- Toggle state is persisted in `localStorage` keyed by agent ID (`navhub:agent-period:{agentId}`) so each agent remembers its last setting
+
+**Implementation**
+```typescript
+// State
+const [includePeriod, setIncludePeriod] = useState(false)
+
+// Restore from localStorage on mount
+useEffect(() => {
+  const saved = localStorage.getItem(`navhub:agent-period:${agent.id}`)
+  if (saved === 'true') setIncludePeriod(true)
+}, [agent.id])
+
+// Persist on toggle
+function handlePeriodToggle() {
+  const next = !includePeriod
+  setIncludePeriod(next)
+  localStorage.setItem(`navhub:agent-period:${agent.id}`, next ? 'true' : 'false')
+}
+
+// POST body — period only sent when toggle is on
+body: JSON.stringify({
+  ...(includePeriod ? { period } : {}),
+  ...
+})
+```
+
+Toggle rendered as an inline switch (`role="switch"`) using Tailwind — no extra dependencies.
+
+---
+
+### Fix 2 — Streaming Timeline + Summary Card (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+
+**During run — streaming timeline**
+
+Replaced the previous "Tool calls" accordion + "Output area" with a unified streaming view:
+
+```
+● Thinking…                              ← animated pulse (before first tool call)
+✓ 📋 List Templates                      ← completed tool (green check)
+   → Found 3 templates                   ← one-line result summary (muted)
+   Details ›                             ← disclosure, hidden by default
+✓ 🔍 Read Template                       ← completed
+   → Role & Task Matrix — 8 slots
+● 🖨️ Render Report                       ← in-progress (animated blue dot)
+   running…
+```
+
+Text output from the agent streams in below the tool events as a live area (with blinking cursor). When run completes, the live text area is removed and reappears in the summary card's "Full output" collapsible.
+
+**`TimelineEntry` component**
+- `inProgress=true`: animated blue dot + "running…" label
+- `inProgress=false`: green `CheckCircle2` icon
+- `resultSummary`: one-line human-readable string extracted by `summariseTool()`
+- "Details" disclosure: opens input/output raw JSON, **hidden by default**
+
+**`summariseTool(tool, output)` helper**
+Parses JSON output and returns a compact summary per tool:
+
+| Tool | Summary format |
+|------|----------------|
+| `list_report_templates` | "Found N templates" |
+| `read_report_template` | "{name} — N slots" |
+| `render_report` | "Rendered: {report_name}" |
+| `create_document` | "Created: {title}" |
+| `list_documents` | "Found N documents" |
+| `read_companies` | "Found N companies" |
+| `send_email` | "Email sent" |
+| other | "Done" / truncated raw output |
+
+**After completion — summary card**
+
+```
+┌────────────────────────────────────────────┐
+│ ✓ Run complete · 4 tool calls · 12s · Claude Sonnet 4 · 1,234 tokens │
+│                                            │
+│ [Document Created card (blue)]             │
+│ [Report Generated card (green)]            │
+│                                            │
+│ Full output  ›  (collapsible)  [Copy]      │
+└────────────────────────────────────────────┘
+```
+
+For failed runs: `XCircle` icon + red error detail block inside the summary card (no separate error banner).
+
+**Duration tracking**: `start = Date.now()` captured when stream begins; `durationSecs = Math.round((Date.now() - start) / 1000)` set on `done` / `error` event.
+
+**Files modified**
+- `components/agents/RunModal.tsx` — period toggle
+- `app/(dashboard)/agents/runs/[runId]/page.tsx` — streaming timeline + summary card
 
 ---
 

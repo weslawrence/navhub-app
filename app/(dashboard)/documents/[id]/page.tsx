@@ -1,13 +1,13 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useParams, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
-  History, RotateCcw, Share2, ChevronDown,
+  History, RotateCcw, Share2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn }     from '@/lib/utils'
@@ -145,7 +145,6 @@ function SharePopover({ docId, isAdmin, onClose }: { docId: string; isAdmin: boo
 
 export default function DocumentPage() {
   const params       = useParams()
-  const router       = useRouter()
   const searchParams = useSearchParams()
   const docId        = params.id as string
 

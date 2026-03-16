@@ -5,7 +5,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 
 // ─── GET — list folders ─────────────────────────────────────────────────────
 
-export async function GET(_request: Request) {
+export async function GET(_req: Request) {
   const supabase = createClient()
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })

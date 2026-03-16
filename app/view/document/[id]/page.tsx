@@ -37,7 +37,6 @@ export default async function ViewDocumentPage({
 
   // ── Path 1: Session user ────────────────────────────────────────────────
 
-  const cookieStore = cookies()
   const supabase    = createClient()
   const { data: { session } } = await supabase.auth.getSession()
 

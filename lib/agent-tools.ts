@@ -591,7 +591,17 @@ export async function listReportTemplates(
   if (error) return `Error fetching templates: ${error.message}`
   if (!data || data.length === 0) return 'No report templates found for this group.'
 
-  return JSON.stringify({ success: true, data })
+  // Use template_id (not id) so the agent can pass it directly to read_report_template
+  const templates = (data as { id: string; name: string; template_type: string }[]).map(t => ({
+    template_id:   t.id,
+    name:          t.name,
+    template_type: t.template_type,
+  }))
+
+  return JSON.stringify({
+    success:   true,
+    templates, // flat array under "templates" key — each has template_id, name, template_type
+  })
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -602,6 +612,14 @@ export async function readReportTemplate(
   params:  ReadReportTemplateParams,
   context: ToolContext
 ): Promise<string> {
+  // Guard: template_id must be a real UUID, not the literal string "undefined"
+  if (!params.template_id || params.template_id === 'undefined' || params.template_id.trim() === '') {
+    return JSON.stringify({
+      success: false,
+      error:   'template_id is required. Call list_report_templates first to get a template_id, then pass that value here.',
+    })
+  }
+
   const admin = createAdminClient()
 
   // Always fetch scaffold fields so we can compute scaffold_size,

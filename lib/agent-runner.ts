@@ -119,7 +119,7 @@ const ALL_TOOL_DEFS: Record<string, object> = {
   },
   list_report_templates: {
     name:        'list_report_templates',
-    description: 'List all report templates available to the current group.',
+    description: 'List all report templates available to the current group. Returns a list where each template has a template_id field — use that value when calling read_report_template or render_report.',
     input_schema: {
       type: 'object',
       properties: {

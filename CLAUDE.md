@@ -792,6 +792,7 @@ Three tabs: **Display** | **Group** | **Members**
 | NavHub Assistant | ✅ Complete | Floating chat panel (claude-haiku), streaming, Agent Brief Cards, ?brief= pre-fill on agents page |
 | Tailwind + AssistantButton Fix | ✅ Complete | Full shadcn color palette wired in tailwind.config.ts; agent.tools null safety on run page |
 | Assistant Data + UX Enhancements | ✅ Complete | Server-side context (runs/companies/docs/reports/folders), localStorage history, draggable + resizable panel, pointer-pass-through backdrop |
+| Agent Run Inverted Layout + Template ID Fix | ✅ Complete | Run page: sticky toolbar, Output top (live streaming), Activity newest-at-top, Brief collapsed bottom; list_report_templates returns template_id key; readReportTemplate guard for undefined input |
 
 ---
 
@@ -1398,6 +1399,55 @@ Floating, draggable, resizable chat panel. Default: 420×580px, positioned botto
 
 ### Dependencies (already installed)
 - `react-markdown` + `remark-gfm` — already installed for Document Intelligence (Phase 7a)
+
+---
+
+## Agent Run Inverted Layout + Template ID Fix
+
+### Run page layout restructure (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+
+**New section order** (top to bottom):
+1. **Sticky toolbar** — `sticky top-0 z-10 bg-background border-b`; always shows back link, status badge, duration, Cancel Run button
+2. **Output** (`CollapsibleSection`, defaultOpen) — appears as soon as `textOutput.length > 0 || isDone`; streams live text with blinking cursor during run; Copy button + Run Again button shown when done
+3. **Activity** (`CollapsibleSection`, defaultOpen) — tool call timeline with newest entries prepended (not appended); "Thinking…" indicator before first tool call; badge shows "N tool calls · Xs" when done
+4. **Brief** (`CollapsibleSection`, defaultOpen=false) — collapsed by default; shows extra instructions prompt, agent name + model, tools list, period context
+
+**Activity timeline — newest-first**
+Tool events are prepended using:
+```typescript
+setToolEvents(prev => [{ tool: event.tool, input: event.input, inProgress: true }, ...prev])
+```
+`tool_end` matching uses a `found` flag to match the first (topmost) in-progress entry for the same tool, preventing double-completion when the same tool is called multiple times.
+
+**`showOutput` condition**:
+```typescript
+const showOutput = textOutput.length > 0 || isDone
+```
+Output section becomes visible as soon as text starts streaming — not just after completion.
+
+**`summariseTool` updated** for `list_report_templates` to use `parsed.templates` (not `parsed.data`) to match the new return format.
+
+---
+
+### Template ID bug fix
+
+**Root cause**: `list_report_templates` was returning `{ success: true, data: [{ id: "...", name: "..." }] }`. The agent would call `read_report_template` with the field named `id` (not `template_id`), resulting in `template_id: undefined` being passed.
+
+**Fix in `lib/agent-tools.ts`**:
+- `listReportTemplates` now maps `id → template_id` and returns under `templates` key (not `data`):
+```typescript
+const templates = data.map(t => ({ template_id: t.id, name: t.name, template_type: t.template_type }))
+return JSON.stringify({ success: true, templates })
+```
+- `readReportTemplate` has an early guard:
+```typescript
+if (!params.template_id || params.template_id === 'undefined' || params.template_id.trim() === '') {
+  return JSON.stringify({ success: false, error: 'template_id is required. Call list_report_templates first...' })
+}
+```
+
+**Fix in `lib/agent-runner.ts`**:
+- `list_report_templates` description updated: `"Returns a list where each template has a template_id field — use that value when calling read_report_template or render_report."`
 
 ---
 

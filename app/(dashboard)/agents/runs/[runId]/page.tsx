@@ -67,55 +67,55 @@ const STATUS_CONFIG: Record<RunStatus, { label: string; badgeClass: string }> = 
 
 function summariseTool(tool: string, output: string): string {
   try {
-    const parsed = JSON.parse(output) as { success?: boolean; error?: string; data?: unknown }
+    const parsed = JSON.parse(output) as { success?: boolean; error?: string; data?: unknown; templates?: unknown[] }
     if (!parsed.success) return parsed.error ?? 'Failed'
-    const data = parsed.data
 
     switch (tool) {
       case 'list_report_templates': {
-        const n = Array.isArray(data) ? data.length : 0
+        const list = Array.isArray(parsed.templates) ? parsed.templates : []
+        const n = list.length
         return `Found ${n} template${n !== 1 ? 's' : ''}`
       }
       case 'read_report_template': {
-        const d = data as { name?: string; slots?: unknown[] }
+        const d = parsed.data as { name?: string; slots?: unknown[] }
         return `${d?.name ?? 'Template'} — ${d?.slots?.length ?? 0} slots`
       }
       case 'create_report_template': {
-        const d = data as { name?: string }
+        const d = parsed.data as { name?: string }
         return `Created: ${d?.name ?? 'template'}`
       }
       case 'update_report_template': {
-        const d = data as { name?: string }
+        const d = parsed.data as { name?: string }
         return `Updated: ${d?.name ?? 'template'}`
       }
       case 'render_report': {
-        const d = data as { report_name?: string }
+        const d = parsed.data as { report_name?: string }
         return `Rendered: ${d?.report_name ?? 'report'}`
       }
       case 'generate_report': {
-        const d = data as { report_name?: string }
+        const d = parsed.data as { report_name?: string }
         return `Saved: ${d?.report_name ?? 'report'}`
       }
       case 'list_documents': {
-        const n = Array.isArray(data) ? data.length : 0
+        const n = Array.isArray(parsed.data) ? (parsed.data as unknown[]).length : 0
         return `Found ${n} document${n !== 1 ? 's' : ''}`
       }
       case 'read_document': {
-        const d = data as { title?: string }
+        const d = parsed.data as { title?: string }
         return `Read: ${d?.title ?? 'document'}`
       }
       case 'create_document': {
-        const d = data as { title?: string }
+        const d = parsed.data as { title?: string }
         return `Created: ${d?.title ?? 'document'}`
       }
       case 'update_document': {
-        const d = data as { title?: string }
+        const d = parsed.data as { title?: string }
         return `Updated: ${d?.title ?? 'document'}`
       }
       case 'read_financials':
         return 'Financial data loaded'
       case 'read_companies': {
-        const n = Array.isArray(data) ? data.length : 0
+        const n = Array.isArray(parsed.data) ? (parsed.data as unknown[]).length : 0
         return `Found ${n} compan${n !== 1 ? 'ies' : 'y'}`
       }
       case 'send_email':
@@ -124,8 +124,10 @@ function summariseTool(tool: string, output: string): string {
         return 'Slack message sent'
       case 'analyse_document':
         return 'Analysis complete'
-      default:
-        return 'Done'
+      default: {
+        const safe = output ?? ''
+        return safe.length > 60 ? safe.slice(0, 57) + '…' : safe
+      }
     }
   } catch {
     const safe = output ?? ''
@@ -323,6 +325,7 @@ export default function RunStreamPage() {
   const [run,           setRun]           = useState<AgentRun | null>(null)
   const [status,        setStatus]        = useState<RunStatus>('queued')
   const [textOutput,    setTextOutput]    = useState('')
+  // Stored newest-first so the UI renders newest at top without reversing
   const [toolEvents,    setToolEvents]    = useState<ToolEventEntry[]>([])
   const [tokens,        setTokens]        = useState(0)
   const [errorMsg,      setErrorMsg]      = useState<string | null>(null)
@@ -332,11 +335,12 @@ export default function RunStreamPage() {
   const [cancelling,    setCancelling]    = useState(false)
   const [copied,        setCopied]        = useState(false)
 
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const topRef = useRef<HTMLDivElement>(null)
 
+  // Scroll to top of output as new text arrives (content is at top of page)
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [toolEvents.length, textOutput])
+    topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [])   // only on mount — we don't want to keep jumping to top on every chunk
 
   const loadMetaAndStream = useCallback(async () => {
     const infoRes = await fetch(`/api/agents/runs/${params.runId}/info`).catch(() => null)
@@ -377,14 +381,21 @@ export default function RunStreamPage() {
         if (event.type === 'text') {
           setTextOutput(prev => prev + event.content)
         } else if (event.type === 'tool_start') {
-          setToolEvents(prev => [...prev, { tool: event.tool, input: event.input, inProgress: true }])
+          // PREPEND so newest is at the top of the list
+          setToolEvents(prev => [{ tool: event.tool, input: event.input, inProgress: true }, ...prev])
         } else if (event.type === 'tool_end') {
           const summary = summariseTool(event.tool, event.output ?? '')
-          setToolEvents(prev => prev.map(te =>
-            te.tool === event.tool && te.inProgress
-              ? { ...te, output: event.output, inProgress: false, resultSummary: summary }
-              : te
-          ))
+          setToolEvents(prev => {
+            // Find the first (topmost) matching in-progress entry and complete it
+            let found = false
+            return prev.map(te => {
+              if (!found && te.tool === event.tool && te.inProgress) {
+                found = true
+                return { ...te, output: event.output, inProgress: false, resultSummary: summary }
+              }
+              return te
+            })
+          })
         } else if (event.type === 'done') {
           setTokens(event.tokens)
           setStatus('success')
@@ -457,6 +468,8 @@ export default function RunStreamPage() {
   const docCards    = renderDocCards(toolEvents)
   const reportCards = renderReportCards(toolEvents)
 
+  const showOutput = textOutput.length > 0 || isDone
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-48">
@@ -467,71 +480,169 @@ export default function RunStreamPage() {
 
   return (
     <div className="space-y-4">
+      <div ref={topRef} />
 
-      {/* ── Header ── */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={run?.agent_id ? `/agents/${run.agent_id}/runs` : '/agents'}>
-            <ArrowLeft className="h-4 w-4 mr-1" /> Run History
-          </Link>
-        </Button>
-        {agent && (
-          <div
-            className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
-            style={{ backgroundColor: agent.avatar_color }}
-          >
-            {agent.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()}
-          </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium truncate">{agent?.name ?? 'Agent'}</p>
-        </div>
-        <Badge className={cn('gap-1', cfg.badgeClass)}>
-          {status === 'running'   && <Loader2      className="h-3 w-3 animate-spin" />}
-          {status === 'success'   && <CheckCircle2 className="h-3 w-3" />}
-          {status === 'error'     && <XCircle      className="h-3 w-3" />}
-          {status === 'cancelled' && <Ban          className="h-3 w-3" />}
-          {cfg.label}
-        </Badge>
-        {run?.started_at && (
-          <span className="text-xs text-muted-foreground flex items-center gap-1">
-            <Clock className="h-3 w-3" />
-            {new Date(run.started_at).toLocaleTimeString()}
-          </span>
-        )}
-
-        {/* Cancel button — only while running */}
-        {status === 'running' && !cancelConfirm && (
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-8 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950"
-            onClick={() => setCancelConfirm(true)}
-          >
-            <Ban className="h-3.5 w-3.5 mr-1.5" /> Cancel Run
+      {/* ── Sticky toolbar — always visible ── */}
+      <div className="sticky top-0 z-10 bg-background border-b pb-3 -mx-1 px-1 pt-1">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button variant="ghost" size="sm" asChild>
+            <Link href={run?.agent_id ? `/agents/${run.agent_id}/runs` : '/agents'}>
+              <ArrowLeft className="h-4 w-4 mr-1" /> Run History
+            </Link>
           </Button>
-        )}
-        {status === 'running' && cancelConfirm && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs text-muted-foreground">Cancel this run?</span>
-            <Button
-              size="sm" variant="outline"
-              className="h-7 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
-              onClick={() => void handleCancel()}
-              disabled={cancelling}
+          {agent && (
+            <div
+              className="h-8 w-8 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0"
+              style={{ backgroundColor: agent.avatar_color }}
             >
-              {cancelling && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
-              Confirm
-            </Button>
-            <Button size="sm" variant="ghost" className="h-7 text-xs"
-              onClick={() => setCancelConfirm(false)} disabled={cancelling}>
-              Nevermind
-            </Button>
+              {agent.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()}
+            </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium truncate">{agent?.name ?? 'Agent'}</p>
           </div>
-        )}
+          <Badge className={cn('gap-1', cfg.badgeClass)}>
+            {status === 'running'   && <Loader2      className="h-3 w-3 animate-spin" />}
+            {status === 'success'   && <CheckCircle2 className="h-3 w-3" />}
+            {status === 'error'     && <XCircle      className="h-3 w-3" />}
+            {status === 'cancelled' && <Ban          className="h-3 w-3" />}
+            {cfg.label}
+          </Badge>
+          {run?.started_at && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Clock className="h-3 w-3" />
+              {new Date(run.started_at).toLocaleTimeString()}
+            </span>
+          )}
+
+          {/* Cancel button — only while running, always in toolbar */}
+          {status === 'running' && !cancelConfirm && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950"
+              onClick={() => setCancelConfirm(true)}
+            >
+              <Ban className="h-3.5 w-3.5 mr-1.5" /> Cancel Run
+            </Button>
+          )}
+          {status === 'running' && cancelConfirm && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs text-muted-foreground">Cancel this run?</span>
+              <Button
+                size="sm" variant="outline"
+                className="h-7 text-xs border-red-300 text-red-600 hover:bg-red-50 dark:border-red-700 dark:text-red-400"
+                onClick={() => void handleCancel()}
+                disabled={cancelling}
+              >
+                {cancelling && <Loader2 className="h-3 w-3 animate-spin mr-1" />}
+                Confirm
+              </Button>
+              <Button size="sm" variant="ghost" className="h-7 text-xs"
+                onClick={() => setCancelConfirm(false)} disabled={cancelling}>
+                Nevermind
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* ── Brief section (collapsed by default) ── */}
+      {/* ── 1. Output section — top, streams live ── */}
+      {showOutput && (
+        <CollapsibleSection title="Output" defaultOpen={true} badge={outputBadge}>
+          <div className="space-y-3 pt-0.5">
+
+            {/* Model + tokens meta — shown when done */}
+            {isDone && (modelLabel ?? tokens > 0) && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                {modelLabel && <span>{modelLabel}</span>}
+                {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
+              </div>
+            )}
+
+            {/* Error block */}
+            {errorMsg && (
+              <div className="flex items-start gap-2 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 px-3 py-2.5">
+                <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-red-800 dark:text-red-300">Error</p>
+                  <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 break-words">{errorMsg}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Document + Report cards */}
+            {(docCards.length > 0 || reportCards.length > 0) && (
+              <div className="space-y-2">
+                {docCards}
+                {reportCards}
+              </div>
+            )}
+
+            {/* Text output — streams live and shown when done */}
+            {textOutput && (
+              <div>
+                {isDone && (
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Response</p>
+                    <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => void handleCopyOutput()}>
+                      {copied
+                        ? <><Check className="h-3 w-3 mr-1" /> Copied</>
+                        : <><Copy  className="h-3 w-3 mr-1" /> Copy</>}
+                    </Button>
+                  </div>
+                )}
+                <MarkdownText content={textOutput} />
+                {/* Streaming cursor */}
+                {status === 'running' && (
+                  <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5 rounded-sm" />
+                )}
+              </div>
+            )}
+
+            {/* Cancelled with no output */}
+            {status === 'cancelled' && !textOutput && !errorMsg && docCards.length === 0 && reportCards.length === 0 && (
+              <p className="text-sm text-amber-600 dark:text-amber-400 italic">
+                Run was cancelled before producing output.
+              </p>
+            )}
+
+            {/* Run Again — inside output section when done */}
+            {isDone && (
+              <div className="flex justify-end pt-1 border-t">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleRetry()}>
+                  <Play className="h-3 w-3 mr-1" /> Run Again
+                </Button>
+              </div>
+            )}
+          </div>
+        </CollapsibleSection>
+      )}
+
+      {/* ── 2. Activity section — tool timeline, newest at top ── */}
+      <CollapsibleSection title="Activity" defaultOpen={true} badge={activityBadge}>
+        <div className="space-y-3">
+          {/* Thinking indicator — shown before first tool call */}
+          {status === 'running' && toolEvents.length === 0 && (
+            <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+              <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
+              Thinking…
+            </div>
+          )}
+
+          {/* Tool call timeline — newest first (prepended on arrival) */}
+          {toolEvents.map((te, i) => (
+            <TimelineEntry key={i} entry={te} />
+          ))}
+
+          {/* Empty state for completed run with no tools */}
+          {isDone && toolEvents.length === 0 && (
+            <p className="text-sm text-muted-foreground italic">No tool calls in this run</p>
+          )}
+        </div>
+      </CollapsibleSection>
+
+      {/* ── 3. Brief section — collapsed, anchored at bottom ── */}
       <CollapsibleSection title="Brief" defaultOpen={false} badge={briefBadge}>
         <div className="space-y-3 pt-0.5">
           {/* Prompt / extra instructions */}
@@ -578,106 +689,6 @@ export default function RunStreamPage() {
           )}
         </div>
       </CollapsibleSection>
-
-      {/* ── Activity section ── */}
-      <CollapsibleSection title="Activity" defaultOpen={true} badge={activityBadge}>
-        <div className="space-y-3">
-          {/* Thinking indicator — shown before first tool call */}
-          {status === 'running' && toolEvents.length === 0 && (
-            <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-400 animate-pulse shrink-0" />
-              Thinking…
-            </div>
-          )}
-
-          {/* Tool call timeline */}
-          {toolEvents.map((te, i) => (
-            <TimelineEntry key={i} entry={te} />
-          ))}
-
-          {/* Live text output — shown while running */}
-          {!isDone && textOutput && (
-            <div className="border-t pt-3 mt-1">
-              <MarkdownText content={textOutput} />
-              {status === 'running' && (
-                <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5 rounded-sm" />
-              )}
-            </div>
-          )}
-
-          {/* Empty state for completed run with no tools */}
-          {isDone && toolEvents.length === 0 && (
-            <p className="text-sm text-muted-foreground italic">No tool calls in this run</p>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-      </CollapsibleSection>
-
-      {/* ── Output section — appears after run completes ── */}
-      {isDone && (
-        <CollapsibleSection title="Output" defaultOpen={true} badge={outputBadge}>
-          <div className="space-y-3 pt-0.5">
-            {/* Model + tokens meta */}
-            {(modelLabel ?? tokens > 0) && (
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                {modelLabel && <span>{modelLabel}</span>}
-                {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
-              </div>
-            )}
-
-            {/* Error block */}
-            {errorMsg && (
-              <div className="flex items-start gap-2 rounded-md border border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950 px-3 py-2.5">
-                <AlertCircle className="h-4 w-4 text-red-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-red-800 dark:text-red-300">Error</p>
-                  <p className="text-xs text-red-600 dark:text-red-400 mt-0.5 break-words">{errorMsg}</p>
-                </div>
-              </div>
-            )}
-
-            {/* Document + Report cards */}
-            {(docCards.length > 0 || reportCards.length > 0) && (
-              <div className="space-y-2">
-                {docCards}
-                {reportCards}
-              </div>
-            )}
-
-            {/* Text output */}
-            {textOutput && (
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Response</p>
-                  <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => void handleCopyOutput()}>
-                    {copied
-                      ? <><Check className="h-3 w-3 mr-1" /> Copied</>
-                      : <><Copy  className="h-3 w-3 mr-1" /> Copy</>}
-                  </Button>
-                </div>
-                <MarkdownText content={textOutput} />
-              </div>
-            )}
-
-            {/* Cancelled with no output */}
-            {status === 'cancelled' && !textOutput && !errorMsg && docCards.length === 0 && reportCards.length === 0 && (
-              <p className="text-sm text-amber-600 dark:text-amber-400 italic">
-                Run was cancelled before producing output.
-              </p>
-            )}
-          </div>
-        </CollapsibleSection>
-      )}
-
-      {/* ── Run Again button ── */}
-      {isDone && (
-        <div className="flex justify-end">
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleRetry()}>
-            <Play className="h-3 w-3 mr-1" /> Run Again
-          </Button>
-        </div>
-      )}
 
     </div>
   )

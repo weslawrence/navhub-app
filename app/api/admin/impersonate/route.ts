@@ -4,7 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 import { encrypt } from '@/lib/encryption'
 
-export const IMPERSONATE_COOKIE = 'navhub_impersonate_group'
+const IMPERSONATE_COOKIE = 'navhub_impersonate_group'
 
 // ─── POST /api/admin/impersonate ──────────────────────────────────────────────
 // Sets the impersonation cookie (super_admin only).

@@ -342,10 +342,12 @@ export interface AgentRun {
   model_used:       string | null
   tokens_used:      number | null
   error_message:    string | null
-  draft_report_id:  string | null
-  started_at:       string | null
-  completed_at:     string | null
-  created_at:       string
+  draft_report_id:         string | null
+  cancellation_requested:  boolean
+  cancelled_at:            string | null
+  started_at:              string | null
+  completed_at:            string | null
+  created_at:              string
 }
 
 export const PERSONA_PRESETS: Record<PersonaPreset, string> = {

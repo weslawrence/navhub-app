@@ -37,6 +37,7 @@ const TOOL_LABELS: Record<AgentTool, string> = {
   update_cashflow_item:     'Update CF Item',
   create_cashflow_snapshot: 'CF Snapshot',
   summarise_cashflow:       'Summarise CF',
+  ask_user:                 'Ask User',
 }
 
 // ─── Agent avatar ─────────────────────────────────────────────────────────────

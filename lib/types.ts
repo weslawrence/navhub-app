@@ -278,6 +278,7 @@ export type AgentTool =
   | 'update_cashflow_item'
   | 'create_cashflow_snapshot'
   | 'summarise_cashflow'
+  | 'ask_user'
 
 export type PersonaPreset =
   | 'executive_analyst'
@@ -286,7 +287,7 @@ export type PersonaPreset =
   | 'custom'
 
 export type RunStatus =
-  | 'queued' | 'running' | 'success' | 'error' | 'cancelled'
+  | 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'awaiting_input'
 
 export interface Agent {
   id:                 string
@@ -351,9 +352,20 @@ export interface AgentRun {
   draft_report_id:         string | null
   cancellation_requested:  boolean
   cancelled_at:            string | null
+  awaiting_input_question: string | null
+  awaiting_input_at:       string | null
   started_at:              string | null
   completed_at:            string | null
   created_at:              string
+}
+
+export interface AgentRunInteraction {
+  id:          string
+  run_id:      string
+  question:    string
+  answer:      string | null
+  answered_at: string | null
+  created_at:  string
 }
 
 export const PERSONA_PRESETS: Record<PersonaPreset, string> = {

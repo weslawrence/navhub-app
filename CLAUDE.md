@@ -796,6 +796,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Admin Portal Enhancements + Subscription Foundation | ✅ Complete | Migration 016 (subscription cols + audit log), SortableTable, GroupFormModal, UserFormModal, /admin/agents + /admin/audit pages, CRUD APIs for groups/users/agents, New User/Group buttons, token usage progress bars, platform token MTD card |
 | User Invites + Forgot Password | ✅ Complete | Invite emails (Supabase magic-link for new users, Resend notification for existing), /auth/accept-invite page, /api/groups/[id]/join route, forgot-password + reset-password pages, AppShell "Change password" link |
 | Invite Flow + First Login Fixes | ✅ Complete | Fixed redirectTo URL (/accept-invite not /auth/accept-invite), Resend notification for new users, cookie auto-repair in layout, /no-group page for groupless accounts |
+| Agent Interactive Responses | ✅ Complete | ask_user tool, pause/resume agentic loop, agent_run_interactions table, awaiting_input status, reply card on run stream page + RunModal |
 
 ---
 
@@ -1470,11 +1471,12 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 12. **Run migration `015_agent_cancel.sql`** in Supabase dashboard (Agent Kill Switch — cancellation_requested + cancelled_at on agent_runs)
 13. **Run migration `016_admin_enhancements.sql`** in Supabase dashboard (subscription_tier, token_usage_mtd, token_limit_mtd, owner_id, is_active on groups + admin_audit_log table)
 14. **Supabase Auth → URL Configuration** — add redirect URLs: `https://app.navhub.co/accept-invite` and `https://app.navhub.co/reset-password` (required for invite + password reset flows)
-15. Add `error.tsx` files for each route segment
-13. Add chart visualisations to financial report pages (trend lines, bar charts)
-14. **Run migration `017_cashflow_xero.sql`** in Supabase dashboard (Phase 4b — bank_account_id on cashflow_settings, extended cashflow_xero_items columns)
-15. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
-16. Phase 7c: Document sync connections (Xero AR/AP pull into documents, external sync)
+15. **Run migration `018_agent_interactions.sql`** in Supabase dashboard (Agent Interactive Responses — awaiting_input_question/at on agent_runs + agent_run_interactions table)
+16. Add `error.tsx` files for each route segment
+17. Add chart visualisations to financial report pages (trend lines, bar charts)
+18. **Run migration `017_cashflow_xero.sql`** in Supabase dashboard (Phase 4b — bank_account_id on cashflow_settings, extended cashflow_xero_items columns)
+19. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
+20. Phase 7c: Document sync connections (Xero AR/AP pull into documents, external sync)
 
 ---
 
@@ -2520,3 +2522,144 @@ if (activeGroupId !== activeUserGroup.group_id) {
 - Shows "Your account isn't linked to a group yet. Contact your administrator." message
 - Sign out button (calls `signOut()` server action)
 - Added `pathname === '/no-group'` to `isPublic` in `middleware.ts`
+
+---
+
+## Agent Interactive Responses
+
+### Overview
+Agents can pause mid-run to ask the user a clarifying question using the `ask_user` tool. The run enters `awaiting_input` status, the user replies from either the run stream page or a RunModal polling card, and the agent continues automatically.
+
+### Database (migration 018)
+```sql
+ALTER TABLE agent_runs
+  ADD COLUMN IF NOT EXISTS awaiting_input_question text,
+  ADD COLUMN IF NOT EXISTS awaiting_input_at       timestamptz;
+
+CREATE TABLE IF NOT EXISTS agent_run_interactions (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id      uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  question    text NOT NULL,
+  answer      text,
+  answered_at timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+-- RLS: group members can SELECT; admin required for INSERT/UPDATE
+```
+
+### lib/types.ts additions
+```typescript
+// RunStatus union extended:
+| 'awaiting_input'
+
+// AgentTool union extended:
+| 'ask_user'
+
+// AgentRun interface extended:
+awaiting_input_question: string | null
+awaiting_input_at:       string | null
+
+// New interface:
+export interface AgentRunInteraction {
+  id:          string
+  run_id:      string
+  question:    string
+  answer:      string | null
+  answered_at: string | null
+  created_at:  string
+}
+```
+
+### lib/agent-runner.ts — ask_user implementation
+
+**System prompt guidance** (added to tool rules):
+```
+* Use ask_user when you need specific information from the user (e.g. which company, which period,
+  preferred format). Ask one concise question at a time. The user will reply and the run will
+  continue automatically.
+```
+
+**`ask_user` always included** in tool list (regardless of `agent.tools` setting):
+```typescript
+const toolDefs = [
+  ...enabledTools.filter(t => ALL_TOOL_DEFS[t] && t !== 'ask_user').map(t => ALL_TOOL_DEFS[t]),
+  ALL_TOOL_DEFS['ask_user'],
+]
+```
+
+**`handleAskUser()` function** (internal, between `loadCredentials` and `callClaude`):
+- Inserts row into `agent_run_interactions`
+- Sets run `status='awaiting_input'`, `awaiting_input_question`, `awaiting_input_at`
+- Emits `{ type: 'awaiting_input', question, interaction_id }` SSE event
+- Polls every 2 seconds for up to 10 minutes:
+  - Checks `cancellation_requested` → returns `'__CANCELLED__'` sentinel
+  - Checks `agent_run_interactions.answered_at` → on answer, resets run to `status='running'`, clears `awaiting_input_question`/`awaiting_input_at`, returns answer string
+
+**Tool loop special-casing** (in `executeAgentRun()`):
+```typescript
+if (toolName === 'ask_user') {
+  const question = (tc.input.question as string) ?? 'Please provide additional information.'
+  const answer   = await handleAskUser(question, runId, onChunk)
+  if (answer === '__CANCELLED__') {
+    // … cancel run, emit 'cancelled' event, return
+  }
+  output = `User replied: ${answer}`
+} else {
+  output = await executeTool(...)
+}
+```
+
+### API route — `POST /api/agents/runs/[runId]/respond`
+
+- Auth + active group check (RLS via server client)
+- Body: `{ answer: string, interaction_id?: string }` — `interaction_id` is optional
+- If `interaction_id` provided: looks up that specific interaction (must belong to run)
+- If omitted: finds latest unanswered interaction for the run (`answered_at IS NULL`)
+- Validates: run exists, `status === 'awaiting_input'`, interaction not already answered
+- Updates `agent_run_interactions.answer` + `answered_at`
+
+### Run stream page (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+
+**SSE event handling:**
+```typescript
+} else if (event.type === 'awaiting_input') {
+  setStatus('awaiting_input')
+  setAwaitingInput({ question: event.question, interaction_id: event.interaction_id })
+}
+```
+
+**State added:** `awaitingInput`, `replyText`, `sendingReply`, `replyError`
+
+**`handleSendReply()`**: POSTs to `/api/agents/runs/${runId}/respond` with `interaction_id` + `answer`; on success clears `awaitingInput`, resets `status` to `'running'`
+
+**`isActive` derived value:** `status === 'running' || status === 'awaiting_input'` — controls Cancel button visibility
+
+**Amber reply card UI** (shown while `awaitingInput !== null`):
+- Question text
+- Textarea with Enter-to-send
+- Send button
+
+**`STATUS_CONFIG`** extended with `awaiting_input: { label: 'Awaiting Reply', icon: MessageSquare, badgeClass: amber }`
+
+**`summariseTool`** extended: `ask_user → 'User replied'`
+
+### Run list page (`app/(dashboard)/agents/[id]/runs/page.tsx`)
+
+- `awaiting_input` added to `STATUS_CONFIG` with `MessageSquare` icon + amber badge class
+- `AwaitingInputIndicator` component: amber "Reply needed" link → `/agents/runs/${runId}`
+- Rendered below status badge for `awaiting_input` runs in the table
+
+### RunModal (`components/agents/RunModal.tsx`)
+
+**Post-launch polling:**
+After a successful POST, the modal polls `GET /api/agents/runs/${runId}/info` every 500ms for up to 5 seconds. If `awaiting_input` is detected before the deadline, the modal transitions to a reply card instead of closing and navigating.
+
+**Reply card UI:**
+- Shows the agent's question
+- Textarea with Enter-to-send
+- "Send Reply" button → POST `/api/agents/runs/${runId}/respond` (no `interaction_id` — route finds latest)
+- "View Run" link (skips reply, navigates to stream page)
+- After reply sent: `onClose()` + navigate to stream page
+
+**Normal flow (no awaiting_input):**
+If polling times out without detecting `awaiting_input` → `onClose()` + navigate to stream page (unchanged from before).

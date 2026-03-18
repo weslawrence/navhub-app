@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Play, CheckCircle2, XCircle, Clock, Loader2,
-  AlertCircle, ChevronLeft, ChevronRight,
+  AlertCircle, ChevronLeft, ChevronRight, MessageSquare,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -17,11 +17,12 @@ import type { Agent, AgentRun, RunStatus } from '@/lib/types'
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<RunStatus, { label: string; icon: React.ComponentType<{ className?: string }>; class: string }> = {
-  queued:    { label: 'Queued',    icon: Clock,          class: 'bg-muted text-muted-foreground' },
-  running:   { label: 'Running',   icon: Loader2,        class: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
-  success:   { label: 'Complete',  icon: CheckCircle2,   class: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
-  error:     { label: 'Error',     icon: XCircle,        class: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
-  cancelled: { label: 'Cancelled', icon: AlertCircle,    class: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
+  queued:          { label: 'Queued',         icon: Clock,          class: 'bg-muted text-muted-foreground' },
+  running:         { label: 'Running',        icon: Loader2,        class: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
+  success:         { label: 'Complete',       icon: CheckCircle2,   class: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
+  error:           { label: 'Error',          icon: XCircle,        class: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
+  cancelled:       { label: 'Cancelled',      icon: AlertCircle,    class: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
+  awaiting_input:  { label: 'Reply needed',   icon: MessageSquare,  class: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
 }
 
 function RunStatusBadge({ status }: { status: RunStatus }) {
@@ -32,6 +33,15 @@ function RunStatusBadge({ status }: { status: RunStatus }) {
       <Icon className={cn('h-3 w-3', status === 'running' && 'animate-spin')} />
       {cfg.label}
     </Badge>
+  )
+}
+
+// Run list view shows amber "Reply needed" link to the run
+function AwaitingInputIndicator({ runId }: { runId: string }) {
+  return (
+    <Link href={`/agents/runs/${runId}`} className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5 flex items-center gap-0.5 hover:underline">
+      <MessageSquare className="h-2.5 w-2.5" /> Reply needed
+    </Link>
   )
 }
 
@@ -148,6 +158,9 @@ export default function AgentRunsPage() {
                     <tr key={run.id} className="hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-3">
                         <RunStatusBadge status={run.status} />
+                        {run.status === 'awaiting_input' && (
+                          <AwaitingInputIndicator runId={run.id} />
+                        )}
                         {run.input_context?.extra_instructions && (
                           <p className="text-[11px] text-muted-foreground mt-0.5 max-w-[160px] truncate">
                             {run.input_context.extra_instructions.length > 60

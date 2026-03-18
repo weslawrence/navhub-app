@@ -43,12 +43,13 @@ import { PERSONA_PRESETS as PRESETS } from '@/lib/types'
 // ────────────────────────────────────────────────────────────────────────────
 
 export type RunEvent =
-  | { type: 'text';       content: string }
-  | { type: 'tool_start'; tool: string; input: Record<string, unknown> }
-  | { type: 'tool_end';   tool: string; output: string }
-  | { type: 'error';      message: string }
-  | { type: 'done';       tokens: number }
+  | { type: 'text';            content: string }
+  | { type: 'tool_start';      tool: string; input: Record<string, unknown> }
+  | { type: 'tool_end';        tool: string; output: string }
+  | { type: 'error';           message: string }
+  | { type: 'done';            tokens: number }
   | { type: 'cancelled' }
+  | { type: 'awaiting_input';  question: string; interaction_id: string }
 
 export interface RunContext {
   period?:              string
@@ -360,6 +361,18 @@ const ALL_TOOL_DEFS: Record<string, object> = {
       required: ['company_id'],
     },
   },
+  ask_user: {
+    name:        'ask_user',
+    description: 'Pause the run and ask the user a clarifying question. The run will resume automatically once they respond. Use when you need specific information that is not available in your context. Keep questions concise and ask only one at a time.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: 'The question to ask the user. Be specific about what information you need.' },
+        context:  { type: 'string', description: 'Optional: brief explanation of why you need this information.' },
+      },
+      required: ['question'],
+    },
+  },
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -430,6 +443,7 @@ async function buildSystemPrompt(
     '* NEVER assume or guess a template_id — always look it up first via list_report_templates',
     '* NEVER call render_report without first calling read_report_template to verify the slots',
     '* list_report_templates returns a template_id field — use that exact value in subsequent calls',
+    '* Use ask_user when you need specific information from the user (e.g. which company, which period, preferred format). Ask one concise question at a time. The user will reply and the run will continue automatically.',
   ].filter(Boolean).join('\n')
 }
 
@@ -455,6 +469,86 @@ async function loadCredentials(agentId: string): Promise<Record<string, string>>
     }
   }
   return result
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// ask_user handler — pauses run and waits for user reply (up to 10 minutes)
+// ────────────────────────────────────────────────────────────────────────────
+
+async function handleAskUser(
+  question: string,
+  runId:    string,
+  onChunk:  (event: RunEvent) => void
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // 1. Insert interaction record
+  const { data: interaction, error } = await admin
+    .from('agent_run_interactions')
+    .insert({ run_id: runId, question })
+    .select('id')
+    .single()
+
+  if (error || !interaction) {
+    return `Error creating interaction: ${error?.message ?? 'unknown'}`
+  }
+
+  const interactionId = (interaction as { id: string }).id
+
+  // 2. Set run to awaiting_input
+  await admin
+    .from('agent_runs')
+    .update({
+      status:                  'awaiting_input',
+      awaiting_input_question: question,
+      awaiting_input_at:       new Date().toISOString(),
+    })
+    .eq('id', runId)
+
+  // 3. Emit SSE event so UI can show reply card
+  onChunk({ type: 'awaiting_input', question, interaction_id: interactionId })
+
+  // 4. Poll every 2s for up to 10 minutes
+  const maxWaitMs = 10 * 60 * 1_000
+  const pollMs    = 2_000
+  const deadline  = Date.now() + maxWaitMs
+
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, pollMs))
+
+    // Check cancellation first
+    const { data: cancelCheck } = await admin
+      .from('agent_runs')
+      .select('cancellation_requested')
+      .eq('id', runId)
+      .single()
+    if (cancelCheck?.cancellation_requested) {
+      return '__CANCELLED__'
+    }
+
+    // Check for answer
+    const { data: row } = await admin
+      .from('agent_run_interactions')
+      .select('answer, answered_at')
+      .eq('id', interactionId)
+      .single()
+
+    if (row?.answered_at && row.answer !== null) {
+      // Restore run status to running
+      await admin
+        .from('agent_runs')
+        .update({
+          status:                  'running',
+          awaiting_input_question: null,
+          awaiting_input_at:       null,
+        })
+        .eq('id', runId)
+      return (row as { answer: string }).answer
+    }
+  }
+
+  // Timed out — treat as cancelled
+  return '__CANCELLED__'
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -786,6 +880,9 @@ async function executeTool(
       return createCashflowSnapshot(input as unknown as Parameters<typeof createCashflowSnapshot>[0], context)
     case 'summarise_cashflow':
       return summariseCashflow(input as unknown as Parameters<typeof summariseCashflow>[0], context)
+    case 'ask_user':
+      // Handled specially in executeAgentRun — should never reach executeTool
+      return 'ask_user is handled by the runner directly.'
     default:
       return `Unknown tool: ${toolName}`
   }
@@ -819,11 +916,12 @@ export async function executeAgentRun(
     // Build system prompt
     const systemPrompt = await buildSystemPrompt(agent, groupName, context, groupId)
 
-    // Build tool list
+    // Build tool list — ask_user is always included regardless of agent.tools setting
     const enabledTools = (agent.tools ?? []) as AgentTool[]
-    const toolDefs = enabledTools
-      .filter(t => ALL_TOOL_DEFS[t])
-      .map(t => ALL_TOOL_DEFS[t])
+    const toolDefs = [
+      ...enabledTools.filter(t => ALL_TOOL_DEFS[t] && t !== 'ask_user').map(t => ALL_TOOL_DEFS[t]),
+      ALL_TOOL_DEFS['ask_user'],
+    ]
 
     // Initial messages
     const messages: AnthropicMessage[] = [
@@ -919,10 +1017,35 @@ export async function executeAgentRun(
         onChunk({ type: 'tool_start', tool: toolName, input: tc.input })
 
         let output: string
-        try {
-          output = await executeTool(toolName, tc.input, agent, groupId, groupName, runId, credentials)
-        } catch (err) {
-          output = `Error: ${err instanceof Error ? err.message : 'Unknown error'}`
+
+        // ask_user is handled specially — it pauses the run and waits for user input
+        if (toolName === 'ask_user') {
+          const question = (tc.input.question as string) ?? 'Please provide additional information.'
+          const answer   = await handleAskUser(question, runId, onChunk)
+
+          if (answer === '__CANCELLED__') {
+            // Cancellation detected during wait — clean up and return
+            await admin
+              .from('agent_runs')
+              .update({
+                status:       'cancelled',
+                cancelled_at: new Date().toISOString(),
+                completed_at: new Date().toISOString(),
+                tool_calls:   toolCallLogs,
+                tokens_used:  totalTokens,
+              })
+              .eq('id', runId)
+            onChunk({ type: 'cancelled' })
+            return
+          }
+
+          output = `User replied: ${answer}`
+        } else {
+          try {
+            output = await executeTool(toolName, tc.input, agent, groupId, groupName, runId, credentials)
+          } catch (err) {
+            output = `Error: ${err instanceof Error ? err.message : 'Unknown error'}`
+          }
         }
 
         const durationMs = Date.now() - startTs

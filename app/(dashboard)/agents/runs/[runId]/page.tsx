@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, CheckCircle2, XCircle, Loader2, Clock, Copy, Check,
   Play, ChevronDown, ChevronRight, FileText, AlertCircle, ExternalLink, Library,
-  Ban,
+  Ban, MessageSquare, Send,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
@@ -33,6 +33,7 @@ const TOOL_EMOJI: Record<string, string> = {
   read_document:          '📖',
   create_document:        '📝',
   update_document:        '✍️',
+  ask_user:               '❓',
 }
 
 const TOOL_LABEL: Record<string, string> = {
@@ -51,16 +52,18 @@ const TOOL_LABEL: Record<string, string> = {
   read_document:          'Read Document',
   create_document:        'Create Document',
   update_document:        'Update Document',
+  ask_user:               'Ask User',
 }
 
 // ─── Status config ─────────────────────────────────────────────────────────────
 
 const STATUS_CONFIG: Record<RunStatus, { label: string; badgeClass: string }> = {
-  queued:    { label: 'Queued',    badgeClass: 'bg-muted text-muted-foreground' },
-  running:   { label: 'Running',   badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
-  success:   { label: 'Complete',  badgeClass: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
-  error:     { label: 'Error',     badgeClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
-  cancelled: { label: 'Cancelled', badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
+  queued:          { label: 'Queued',         badgeClass: 'bg-muted text-muted-foreground' },
+  running:         { label: 'Running',        badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
+  success:         { label: 'Complete',       badgeClass: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
+  error:           { label: 'Error',          badgeClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
+  cancelled:       { label: 'Cancelled',      badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
+  awaiting_input:  { label: 'Awaiting Reply', badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
 }
 
 // ─── Tool result summariser ────────────────────────────────────────────────────
@@ -124,6 +127,8 @@ function summariseTool(tool: string, output: string): string {
         return 'Slack message sent'
       case 'analyse_document':
         return 'Analysis complete'
+      case 'ask_user':
+        return 'User replied'
       default: {
         const safe = output ?? ''
         return safe.length > 60 ? safe.slice(0, 57) + '…' : safe
@@ -331,9 +336,13 @@ export default function RunStreamPage() {
   const [errorMsg,      setErrorMsg]      = useState<string | null>(null)
   const [loading,       setLoading]       = useState(true)
   const [durationSecs,  setDurationSecs]  = useState(0)
-  const [cancelConfirm, setCancelConfirm] = useState(false)
-  const [cancelling,    setCancelling]    = useState(false)
-  const [copied,        setCopied]        = useState(false)
+  const [cancelConfirm,  setCancelConfirm]  = useState(false)
+  const [cancelling,     setCancelling]     = useState(false)
+  const [copied,         setCopied]         = useState(false)
+  const [awaitingInput,  setAwaitingInput]  = useState<{ question: string; interaction_id: string } | null>(null)
+  const [replyText,      setReplyText]      = useState('')
+  const [sendingReply,   setSendingReply]   = useState(false)
+  const [replyError,     setReplyError]     = useState<string | null>(null)
 
   const topRef = useRef<HTMLDivElement>(null)
 
@@ -407,6 +416,9 @@ export default function RunStreamPage() {
         } else if (event.type === 'cancelled') {
           setStatus('cancelled')
           setDurationSecs(Math.round((Date.now() - start) / 1000))
+        } else if (event.type === 'awaiting_input') {
+          setStatus('awaiting_input')
+          setAwaitingInput({ question: event.question, interaction_id: event.interaction_id })
         }
       }
     }
@@ -439,8 +451,35 @@ export default function RunStreamPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  const cfg    = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
-  const isDone = status === 'success' || status === 'error' || status === 'cancelled'
+  async function handleSendReply() {
+    if (!awaitingInput || !replyText.trim()) return
+    setSendingReply(true)
+    setReplyError(null)
+    try {
+      const res = await fetch(`/api/agents/runs/${params.runId}/respond`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ interaction_id: awaitingInput.interaction_id, answer: replyText.trim() }),
+      })
+      if (!res.ok) {
+        const json = await res.json()
+        setReplyError((json as { error?: string }).error ?? 'Failed to send reply')
+      } else {
+        // Clear the input card — the runner will resume and emit further events
+        setAwaitingInput(null)
+        setReplyText('')
+        setStatus('running')
+      }
+    } catch {
+      setReplyError('Network error — please try again')
+    } finally {
+      setSendingReply(false)
+    }
+  }
+
+  const cfg       = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
+  const isDone    = status === 'success' || status === 'error' || status === 'cancelled'
+  const isActive  = status === 'running' || status === 'awaiting_input'
 
   // ── Derived values for section badges ──
   const completedToolCount = toolEvents.filter(te => !te.inProgress).length
@@ -502,10 +541,11 @@ export default function RunStreamPage() {
             <p className="text-sm font-medium truncate">{agent?.name ?? 'Agent'}</p>
           </div>
           <Badge className={cn('gap-1', cfg.badgeClass)}>
-            {status === 'running'   && <Loader2      className="h-3 w-3 animate-spin" />}
-            {status === 'success'   && <CheckCircle2 className="h-3 w-3" />}
-            {status === 'error'     && <XCircle      className="h-3 w-3" />}
-            {status === 'cancelled' && <Ban          className="h-3 w-3" />}
+            {status === 'running'        && <Loader2        className="h-3 w-3 animate-spin" />}
+            {status === 'awaiting_input' && <MessageSquare  className="h-3 w-3" />}
+            {status === 'success'        && <CheckCircle2   className="h-3 w-3" />}
+            {status === 'error'          && <XCircle        className="h-3 w-3" />}
+            {status === 'cancelled'      && <Ban            className="h-3 w-3" />}
             {cfg.label}
           </Badge>
           {run?.started_at && (
@@ -515,8 +555,8 @@ export default function RunStreamPage() {
             </span>
           )}
 
-          {/* Cancel button — only while running, always in toolbar */}
-          {status === 'running' && !cancelConfirm && (
+          {/* Cancel button — while running or awaiting input */}
+          {isActive && !cancelConfirm && (
             <Button
               size="sm"
               variant="outline"
@@ -526,7 +566,7 @@ export default function RunStreamPage() {
               <Ban className="h-3.5 w-3.5 mr-1.5" /> Cancel Run
             </Button>
           )}
-          {status === 'running' && cancelConfirm && (
+          {isActive && cancelConfirm && (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-muted-foreground">Cancel this run?</span>
               <Button
@@ -597,6 +637,7 @@ export default function RunStreamPage() {
                 {status === 'running' && (
                   <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5 rounded-sm" />
                 )}
+
               </div>
             )}
 
@@ -619,10 +660,52 @@ export default function RunStreamPage() {
         </CollapsibleSection>
       )}
 
+      {/* ── Awaiting input reply card ── */}
+      {awaitingInput && (
+        <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 p-4 space-y-3">
+          <div className="flex items-start gap-2">
+            <MessageSquare className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Agent needs your input</p>
+              <p className="text-sm text-amber-700 dark:text-amber-400 mt-1">{awaitingInput.question}</p>
+            </div>
+          </div>
+          <div className="flex items-end gap-2">
+            <textarea
+              className="flex-1 resize-none rounded-md border border-amber-300 dark:border-amber-700 bg-white dark:bg-amber-900/30 text-sm px-3 py-2 focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[60px]"
+              placeholder="Type your reply…"
+              value={replyText}
+              onChange={e => setReplyText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  void handleSendReply()
+                }
+              }}
+              disabled={sendingReply}
+            />
+            <Button
+              size="sm"
+              className="h-9 bg-amber-600 hover:bg-amber-700 text-white shrink-0"
+              onClick={() => void handleSendReply()}
+              disabled={sendingReply || !replyText.trim()}
+            >
+              {sendingReply
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Send    className="h-3.5 w-3.5" />}
+              <span className="ml-1.5">{sendingReply ? 'Sending…' : 'Send'}</span>
+            </Button>
+          </div>
+          {replyError && (
+            <p className="text-xs text-red-600 dark:text-red-400">{replyError}</p>
+          )}
+        </div>
+      )}
+
       {/* ── 2. Activity section — tool timeline, newest at top ── */}
       <CollapsibleSection title="Activity" defaultOpen={true} badge={activityBadge}>
         <div className="space-y-3">
-          {/* Thinking indicator — shown before first tool call */}
+          {/* Thinking indicator — shown before first tool call and not awaiting input */}
           {status === 'running' && toolEvents.length === 0 && (
             <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
               <span className="inline-block h-2.5 w-2.5 rounded-full bg-blue-400 animate-pulse shrink-0" />

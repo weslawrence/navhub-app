@@ -48,6 +48,7 @@ const TOOL_OPTIONS: {
   { value: 'update_cashflow_item',     label: 'Update CF Item',        emoji: '✅', description: 'Accept, update, or deactivate a cash flow item' },
   { value: 'create_cashflow_snapshot', label: 'Create CF Snapshot',    emoji: '📸', description: 'Save a named point-in-time cash flow snapshot' },
   { value: 'summarise_cashflow',       label: 'Summarise Cash Flow',   emoji: '🤖', description: 'AI executive summary with risks and recommendations' },
+  { value: 'ask_user',                 label: 'Ask User',              emoji: '❓', description: 'Pause and ask the user a clarifying question (always enabled)' },
 ]
 
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [

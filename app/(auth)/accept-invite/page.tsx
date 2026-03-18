@@ -137,7 +137,7 @@ export default function AcceptInvitePage() {
             Nav<span style={{ color: 'var(--group-primary)' }}>Hub</span>
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            You've been invited to join NavHub
+            You&apos;ve been invited to join NavHub
           </p>
         </div>
 

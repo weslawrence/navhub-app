@@ -35,11 +35,11 @@ function ForgotPasswordForm() {
     return (
       <div className="space-y-4 text-center">
         <p className="text-sm text-foreground">
-          If an account exists for <strong>{email}</strong>, you'll
+          If an account exists for <strong>{email}</strong>, you will
           receive a password reset link shortly.
         </p>
         <p className="text-xs text-muted-foreground">
-          Didn't receive it? Check your spam folder or try again.
+          Didn&apos;t receive it? Check your spam folder or try again.
         </p>
         <Button variant="outline" className="w-full" onClick={() => setSent(false)}>
           Try again

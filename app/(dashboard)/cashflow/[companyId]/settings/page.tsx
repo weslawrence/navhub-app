@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronLeft, Loader2, CheckCircle2 } from 'lucide-react'
+import { ChevronLeft, Loader2, CheckCircle2, RefreshCw } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+
+interface BankAccount { id: string; name: string; code: string }
 
 const WEEK_DAYS = [
   { value: 0, label: 'Sunday'    },
@@ -30,17 +32,36 @@ export default function CashflowSettingsPage() {
   const [saved,          setSaved]          = useState(false)
   const [error,          setError]          = useState<string | null>(null)
 
+  // Xero state
+  const [xeroConnected,   setXeroConnected]   = useState(false)
+  const [bankAccounts,    setBankAccounts]    = useState<BankAccount[]>([])
+  const [bankAccountId,   setBankAccountId]   = useState<string>('')
+  const [xeroLastSync,    setXeroLastSync]    = useState<string | null>(null)
+  const [syncingXero,     setSyncingXero]     = useState(false)
+  const [xeroSyncMsg,     setXeroSyncMsg]     = useState<string | null>(null)
+  const [syncBalance,     setSyncBalance]     = useState(false)
+
   const loadSettings = useCallback(async () => {
     try {
-      const res  = await fetch(`/api/cashflow/${companyId}/settings`)
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error)
-      const s = json.data
+      const [settingsRes, xeroRes] = await Promise.all([
+        fetch(`/api/cashflow/${companyId}/settings`),
+        fetch(`/api/cashflow/${companyId}/xero-sync`),
+      ])
+      const [settingsJson, xeroJson] = await Promise.all([settingsRes.json(), xeroRes.json()])
+      if (!settingsRes.ok) throw new Error(settingsJson.error)
+      const s = settingsJson.data
       setOpeningBalance(String(s.opening_balance_cents / 100))
       setWeekStartDay(s.week_start_day)
       setArLagDays(s.ar_lag_days)
       setApLagDays(s.ap_lag_days)
       setCurrency(s.currency)
+
+      if (xeroRes.ok && xeroJson.data?.connected) {
+        setXeroConnected(true)
+        setBankAccounts(xeroJson.data.bank_accounts ?? [])
+        setBankAccountId(xeroJson.data.bank_account_id ?? '')
+        setXeroLastSync(xeroJson.data.last_synced_at ?? null)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error loading settings')
     } finally {
@@ -49,6 +70,33 @@ export default function CashflowSettingsPage() {
   }, [companyId])
 
   useEffect(() => { loadSettings() }, [loadSettings])
+
+  async function handleXeroSync() {
+    setSyncingXero(true)
+    setXeroSyncMsg(null)
+    try {
+      const res  = await fetch(`/api/cashflow/${companyId}/xero-sync`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          bank_account_id: bankAccountId || undefined,
+          sync_balance:    syncBalance && !!bankAccountId,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Sync failed')
+      const d = json.data
+      setXeroSyncMsg(`Synced ${d.ar_count} AR + ${d.ap_count} AP invoices${d.new_balance !== null ? ` · Opening balance updated` : ''}`)
+      setXeroLastSync(d.synced_at)
+      if (d.new_balance !== null) {
+        setOpeningBalance(String(d.new_balance / 100))
+      }
+    } catch (e) {
+      setXeroSyncMsg(`Error: ${e instanceof Error ? e.message : 'Sync failed'}`)
+    } finally {
+      setSyncingXero(false)
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
@@ -191,6 +239,74 @@ export default function CashflowSettingsPage() {
             </div>
           </form>
         </CardContent>
+      </Card>
+
+      {/* Xero Integration card */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Xero Integration</CardTitle>
+          <CardDescription>
+            {xeroConnected
+              ? 'Pull outstanding AR/AP invoices from Xero into the cash flow forecast.'
+              : 'No Xero connection found. Connect Xero via Settings → Integrations first.'}
+          </CardDescription>
+        </CardHeader>
+        {xeroConnected && (
+          <CardContent className="space-y-4">
+            {/* Bank account selector */}
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-foreground">Bank Account (for opening balance)</label>
+              <p className="text-xs text-muted-foreground">Select which Xero bank account to use as the opening balance source</p>
+              <select
+                value={bankAccountId}
+                onChange={e => setBankAccountId(e.target.value)}
+                className="w-full px-3 py-2 rounded-md border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-primary/50"
+              >
+                <option value="">— none —</option>
+                {bankAccounts.map(b => (
+                  <option key={b.id} value={b.id}>{b.name} ({b.code})</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Sync balance toggle */}
+            {bankAccountId && (
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={syncBalance}
+                  onChange={e => setSyncBalance(e.target.checked)}
+                  className="rounded border-border"
+                />
+                <span className="text-sm text-foreground">Sync bank balance as opening balance on next sync</span>
+              </label>
+            )}
+
+            {/* Last sync info */}
+            {xeroLastSync && (
+              <p className="text-xs text-muted-foreground">
+                Last synced: {new Date(xeroLastSync).toLocaleString('en-AU')}
+              </p>
+            )}
+
+            {/* Sync message */}
+            {xeroSyncMsg && (
+              <p className={`text-xs ${xeroSyncMsg.startsWith('Error') ? 'text-destructive' : 'text-green-600'}`}>
+                {xeroSyncMsg}
+              </p>
+            )}
+
+            <button
+              type="button"
+              onClick={handleXeroSync}
+              disabled={syncingXero}
+              className="flex items-center gap-2 px-4 py-2 rounded-md border text-sm font-medium text-teal-700 dark:text-teal-400 border-teal-300 dark:border-teal-700 hover:bg-teal-50 dark:hover:bg-teal-950/30 disabled:opacity-60 transition-colors"
+            >
+              <RefreshCw className={`h-4 w-4 ${syncingXero ? 'animate-spin' : ''}`} />
+              {syncingXero ? 'Syncing AR/AP…' : 'Sync Xero AR/AP Now'}
+            </button>
+          </CardContent>
+        )}
       </Card>
     </div>
   )

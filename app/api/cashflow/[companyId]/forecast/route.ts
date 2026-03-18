@@ -2,7 +2,7 @@ import { NextResponse }   from 'next/server'
 import { createClient }  from '@/lib/supabase/server'
 import { cookies }       from 'next/headers'
 import { get13Weeks, buildForecastGrid } from '@/lib/cashflow'
-import type { CashflowItem, CashflowSettings } from '@/lib/types'
+import type { CashflowItem, CashflowSettings, CashflowXeroItem } from '@/lib/types'
 
 export const runtime = 'nodejs'
 
@@ -45,21 +45,29 @@ export async function GET(
     updated_at:            new Date().toISOString(),
   }
 
-  // Fetch active items
-  const { data: items, error: itemsErr } = await supabase
-    .from('cashflow_items')
-    .select('*')
-    .eq('company_id', params.companyId)
-    .eq('is_active', true)
-    .order('created_at', { ascending: true })
+  // Fetch active items + Xero items in parallel
+  const [itemsResult, xeroResult] = await Promise.all([
+    supabase
+      .from('cashflow_items')
+      .select('*')
+      .eq('company_id', params.companyId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: true }),
+    supabase
+      .from('cashflow_xero_items')
+      .select('*')
+      .eq('company_id', params.companyId)
+      .neq('sync_status', 'excluded'),
+  ])
 
-  if (itemsErr) return NextResponse.json({ error: itemsErr.message }, { status: 500 })
+  if (itemsResult.error) return NextResponse.json({ error: itemsResult.error.message }, { status: 500 })
 
   const weeks = get13Weeks(settings.week_start_day)
   const grid  = buildForecastGrid({
-    items:    (items ?? []) as CashflowItem[],
+    items:     (itemsResult.data ?? []) as CashflowItem[],
     settings,
     weeks,
+    xeroItems: (xeroResult.data ?? []) as CashflowXeroItem[],
   })
 
   return NextResponse.json({ data: { grid, settings } })

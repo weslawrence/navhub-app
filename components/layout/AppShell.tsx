@@ -62,7 +62,8 @@ const FORECAST_CHILDREN_BASE = [
 ]
 
 const CASHFLOW_CHILDREN = [
-  { label: 'Overview', href: '/cashflow' },
+  { label: 'Overview',   href: '/cashflow'       },
+  { label: 'Group View', href: '/cashflow/group' },
 ]
 
 const TOP_NAV = [

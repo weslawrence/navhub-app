@@ -17,6 +17,7 @@ export const XERO_SCOPES = [
   'accounting.reports.balancesheet.read',
   'accounting.reports.tenninetynine.read',
   'accounting.settings.read',
+  'accounting.transactions.read',   // Phase 4b — AR/AP invoices + bank accounts
   'offline_access',
 ].join(' ')
 
@@ -248,6 +249,131 @@ function parseRows(rows: XeroRow[]): FinancialRow[] {
 
     return [result]
   })
+}
+
+// ============================================================
+// Phase 4b — AR/AP invoices + bank accounts
+// ============================================================
+
+export interface XeroInvoice {
+  InvoiceID:    string
+  Contact:      { Name: string }
+  DueDate:      string    // "/Date(timestamp)/" format
+  AmountDue:    number    // in dollars (Xero returns dollars, not cents)
+  Type:         'ACCREC' | 'ACCPAY'
+  Status:       string
+}
+
+export interface XeroBankAccount {
+  AccountID:    string
+  Name:         string
+  Code:         string
+  Type:         string
+}
+
+/**
+ * Fetch outstanding AR or AP invoices for a Xero org.
+ * invoiceType: 'ACCREC' (Accounts Receivable) or 'ACCPAY' (Accounts Payable)
+ */
+export async function getOutstandingInvoices(
+  accessToken:   string,
+  tenantId:      string,
+  invoiceType:   'ACCREC' | 'ACCPAY'
+): Promise<XeroInvoice[]> {
+  const params = new URLSearchParams({
+    Type:     invoiceType,
+    Statuses: 'AUTHORISED,SUBMITTED',
+  })
+  const url = `${XERO_API_BASE}/Invoices?${params}`
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization:    `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      Accept:           'application/json',
+    },
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Xero Invoices (${invoiceType}) fetch failed: ${res.status} ${body}`)
+  }
+
+  const data = await res.json()
+  return (data.Invoices ?? []) as XeroInvoice[]
+}
+
+/** Parse Xero's "/Date(1234567890000)/" timestamp format to ISO date string */
+export function parseXeroDate(xeroDate: string): string | null {
+  const match = /\/Date\((\d+)\)\//.exec(xeroDate)
+  if (!match) return null
+  return new Date(Number(match[1])).toISOString().split('T')[0]
+}
+
+/**
+ * Fetch bank accounts (Type=BANK, Status=ACTIVE) from Xero org.
+ */
+export async function getBankAccounts(
+  accessToken: string,
+  tenantId:    string
+): Promise<XeroBankAccount[]> {
+  const params = new URLSearchParams({ Type: 'BANK', Status: 'ACTIVE' })
+  const url    = `${XERO_API_BASE}/Accounts?${params}`
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization:    `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      Accept:           'application/json',
+    },
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Xero bank accounts fetch failed: ${res.status} ${body}`)
+  }
+
+  const data = await res.json()
+  return (data.Accounts ?? []) as XeroBankAccount[]
+}
+
+/**
+ * Fetch the current balance for a specific bank account via the BankSummary report.
+ * Returns balance in cents (integer), or null if not found.
+ */
+export async function getBankBalance(
+  accessToken:   string,
+  tenantId:      string,
+  bankAccountId: string
+): Promise<number | null> {
+  const url = `${XERO_API_BASE}/Reports/BankSummary`
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization:    `Bearer ${accessToken}`,
+      'Xero-tenant-id': tenantId,
+      Accept:           'application/json',
+    },
+  })
+
+  if (!res.ok) return null
+
+  const data = await res.json()
+  const rows: XeroRow[] = data.Reports?.[0]?.Rows ?? []
+
+  for (const row of rows) {
+    for (const child of row.Rows ?? []) {
+      // Each child row: Cells[0] = account name/id, Cells[1] = closing balance
+      const attrs = child.Cells?.[0]?.Attributes ?? []
+      const idAttr = attrs.find((a: { Id: string; Value: string }) => a.Id === 'account')
+      if (idAttr?.Value === bankAccountId) {
+        const val = parseFloat((child.Cells?.[1]?.Value ?? '').replace(/,/g, ''))
+        if (!isNaN(val)) return Math.round(val * 100)
+      }
+    }
+  }
+
+  return null
 }
 
 // ============================================================

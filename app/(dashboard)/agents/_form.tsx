@@ -41,7 +41,13 @@ const TOOL_OPTIONS: {
   { value: 'list_documents',         label: 'List Documents',        emoji: '📂', description: 'List documents in the Documents section' },
   { value: 'read_document',          label: 'Read Document',         emoji: '📖', description: 'Read the full content of a document' },
   { value: 'create_document',        label: 'Create Document',       emoji: '📝', description: 'Create and save a new document' },
-  { value: 'update_document',        label: 'Update Document',       emoji: '✍️', description: 'Update an existing document (auto-versions)' },
+  { value: 'update_document',          label: 'Update Document',       emoji: '✍️', description: 'Update an existing document (auto-versions)' },
+  { value: 'read_cashflow',            label: 'Read Cash Flow',        emoji: '💰', description: 'Read the 13-week rolling cash flow forecast' },
+  { value: 'read_cashflow_items',      label: 'Read CF Items',         emoji: '🗂️', description: 'List recurring and one-off cash flow line items' },
+  { value: 'suggest_cashflow_item',    label: 'Suggest CF Item',       emoji: '💡', description: 'Suggest a new cash flow line item for review' },
+  { value: 'update_cashflow_item',     label: 'Update CF Item',        emoji: '✅', description: 'Accept, update, or deactivate a cash flow item' },
+  { value: 'create_cashflow_snapshot', label: 'Create CF Snapshot',    emoji: '📸', description: 'Save a named point-in-time cash flow snapshot' },
+  { value: 'summarise_cashflow',       label: 'Summarise Cash Flow',   emoji: '🤖', description: 'AI executive summary with risks and recommendations' },
 ]
 
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [

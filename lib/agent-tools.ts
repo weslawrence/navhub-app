@@ -9,7 +9,8 @@
 import { createAdminClient } from '@/lib/supabase/admin'
 import { getSummaryValue } from '@/lib/financial'
 import { renderTemplate, validateSlots } from '@/lib/template-renderer'
-import type { FinancialData, Agent, ReportTemplate, SlotDefinition, DocumentType, DocumentAudience } from '@/lib/types'
+import { buildForecastGrid, get13Weeks, formatWeekHeader } from '@/lib/cashflow'
+import type { FinancialData, Agent, ReportTemplate, SlotDefinition, DocumentType, DocumentAudience, CashflowItem, CashflowSettings, CashflowXeroItem } from '@/lib/types'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -1119,4 +1120,414 @@ export async function updateDocument(
       reason:      params.reason ?? 'Updated by agent',
     },
   })
+}
+
+// ============================================================
+// Phase 4c — Cash Flow Tools
+// ============================================================
+
+export interface ReadCashflowParams {
+  company_id: string
+}
+
+export interface ReadCashflowItemsParams {
+  company_id: string
+  section?:   'inflow' | 'regular_outflow' | 'payable'
+}
+
+export interface SuggestCashflowItemParams {
+  company_id:   string
+  label:        string
+  section:      'inflow' | 'regular_outflow' | 'payable'
+  amount_cents: number
+  recurrence:   'weekly' | 'fortnightly' | 'monthly' | 'one_off'
+  start_date:   string
+  end_date?:    string
+  day_of_week?:  number
+  day_of_month?: number
+  reason?:      string
+}
+
+export interface UpdateCashflowItemParams {
+  company_id:    string
+  item_id:       string
+  pending_review?: boolean
+  label?:        string
+  amount_cents?: number
+  is_active?:    boolean
+}
+
+export interface CreateCashflowSnapshotParams {
+  company_id: string
+  name:       string
+  notes?:     string
+}
+
+export interface SummariseCashflowParams {
+  company_id: string
+}
+
+/** Read the current 13-week forecast grid summary for a company */
+export async function readCashflow(
+  params:  ReadCashflowParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Verify ownership
+  const { data: co } = await admin
+    .from('companies')
+    .select('id, name')
+    .eq('id', params.company_id)
+    .eq('group_id', context.groupId)
+    .single()
+  if (!co) return `Error: Company ${params.company_id} not found in group.`
+
+  // Load settings, items, xero items
+  const [settingsRes, itemsRes, xeroRes] = await Promise.all([
+    admin.from('cashflow_settings').select('*').eq('company_id', params.company_id).maybeSingle(),
+    admin.from('cashflow_items').select('*').eq('company_id', params.company_id).eq('is_active', true),
+    admin.from('cashflow_xero_items').select('*').eq('company_id', params.company_id).neq('sync_status', 'excluded'),
+  ])
+
+  const settings: CashflowSettings = settingsRes.data ?? {
+    company_id: params.company_id, opening_balance_cents: 0,
+    week_start_day: 1, ar_lag_days: 30, ap_lag_days: 30, currency: 'AUD',
+    updated_at: new Date().toISOString(),
+  }
+
+  const weeks = get13Weeks(settings.week_start_day)
+  const grid  = buildForecastGrid({
+    items:     (itemsRes.data ?? []) as CashflowItem[],
+    settings,
+    weeks,
+    xeroItems: (xeroRes.data ?? []) as CashflowXeroItem[],
+  })
+
+  const currency = settings.currency ?? 'AUD'
+  const fmt = (cents: number) => `${currency} ${(cents / 100).toLocaleString('en-AU', { minimumFractionDigits: 0 })}`
+
+  const lines: string[] = [
+    `13-Week Cash Flow Forecast — ${(co as { name: string }).name}`,
+    `Opening Balance: ${fmt(grid.summary.openingBalance[0] ?? 0)}`,
+    '',
+    'Week-by-week summary:',
+    ...weeks.map((w, i) =>
+      `  ${formatWeekHeader(w)}: Inflows ${fmt(grid.sections.inflows.subtotals[i])} | Outflows ${fmt(grid.sections.regularOutflows.subtotals[i])} | Payables ${fmt(grid.sections.payables.subtotals[i])} | Net ${fmt(grid.summary.netCashFlow[i])} | Closing ${fmt(grid.summary.closingBalance[i])}`
+    ),
+    '',
+    `Min Closing Balance: ${fmt(Math.min(...grid.summary.closingBalance))}`,
+    `Max Closing Balance: ${fmt(Math.max(...grid.summary.closingBalance))}`,
+  ]
+
+  const negativeWeeks = grid.summary.closingBalance.filter(b => b < 0).length
+  if (negativeWeeks > 0) {
+    lines.push(`⚠ ${negativeWeeks} week(s) with negative closing balance`)
+  }
+
+  return JSON.stringify({ success: true, data: { summary: lines.join('\n') } })
+}
+
+/** Read all cash flow line items for a company */
+export async function readCashflowItems(
+  params:  ReadCashflowItemsParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  const { data: co } = await admin
+    .from('companies')
+    .select('id, name')
+    .eq('id', params.company_id)
+    .eq('group_id', context.groupId)
+    .single()
+  if (!co) return `Error: Company ${params.company_id} not found in group.`
+
+  let query = admin
+    .from('cashflow_items')
+    .select('id, label, section, amount_cents, recurrence, start_date, end_date, pending_review, is_active')
+    .eq('company_id', params.company_id)
+    .eq('is_active', true)
+    .order('section')
+    .order('created_at')
+
+  if (params.section) query = query.eq('section', params.section)
+
+  const { data: items, error } = await query
+  if (error) return `Error: ${error.message}`
+
+  return JSON.stringify({
+    success: true,
+    data: {
+      company: (co as { name: string }).name,
+      items:   (items ?? []).map(i => ({
+        id:             i.id,
+        label:          i.label,
+        section:        i.section,
+        amount_dollars: ((i.amount_cents as number) / 100).toFixed(2),
+        recurrence:     i.recurrence,
+        start_date:     i.start_date,
+        end_date:       i.end_date ?? null,
+        pending_review: i.pending_review,
+      })),
+    },
+  })
+}
+
+/**
+ * Suggest a new cash flow item (creates with pending_review = true so a human can review it).
+ */
+export async function suggestCashflowItem(
+  params:  SuggestCashflowItemParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Verify ownership
+  const { data: co } = await admin
+    .from('companies')
+    .select('id')
+    .eq('id', params.company_id)
+    .eq('group_id', context.groupId)
+    .single()
+  if (!co) return `Error: Company ${params.company_id} not found in group.`
+
+  const { data: item, error } = await admin
+    .from('cashflow_items')
+    .insert({
+      company_id:     params.company_id,
+      label:          params.label,
+      section:        params.section,
+      amount_cents:   params.amount_cents,
+      recurrence:     params.recurrence,
+      start_date:     params.start_date,
+      end_date:       params.end_date ?? null,
+      day_of_week:    params.day_of_week ?? null,
+      day_of_month:   params.day_of_month ?? null,
+      pending_review: true,   // always flagged for human review
+      is_active:      true,
+    })
+    .select('id, label, section, amount_cents')
+    .single()
+
+  if (error) return `Error creating item: ${error.message}`
+
+  return JSON.stringify({
+    success: true,
+    data: {
+      item_id:       (item as { id: string }).id,
+      label:         params.label,
+      section:       params.section,
+      amount_dollars: (params.amount_cents / 100).toFixed(2),
+      reason:        params.reason ?? 'Suggested by agent',
+      note:          'Item created with pending_review = true — a human must approve it before it affects the forecast.',
+    },
+  })
+}
+
+/** Update an existing cash flow item (e.g. clear pending_review, toggle is_active, update amount). */
+export async function updateCashflowItem(
+  params:  UpdateCashflowItemParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Verify the item belongs to this group's company
+  const { data: existing } = await admin
+    .from('cashflow_items')
+    .select('id, company_id, label')
+    .eq('id', params.item_id)
+    .single()
+
+  if (!existing) return `Error: Item ${params.item_id} not found.`
+
+  // Verify company belongs to this group
+  const { data: co } = await admin
+    .from('companies')
+    .select('id')
+    .eq('id', (existing as { company_id: string }).company_id)
+    .eq('group_id', context.groupId)
+    .single()
+  if (!co) return `Error: Item does not belong to this group.`
+
+  const updates: Record<string, unknown> = {}
+  if (params.pending_review !== undefined) updates.pending_review = params.pending_review
+  if (params.label          !== undefined) updates.label          = params.label
+  if (params.amount_cents   !== undefined) updates.amount_cents   = params.amount_cents
+  if (params.is_active      !== undefined) updates.is_active      = params.is_active
+
+  const { error } = await admin
+    .from('cashflow_items')
+    .update(updates)
+    .eq('id', params.item_id)
+
+  if (error) return `Error updating item: ${error.message}`
+
+  return JSON.stringify({
+    success: true,
+    data: {
+      item_id: params.item_id,
+      label:   params.label ?? (existing as { label: string }).label,
+      updates,
+    },
+  })
+}
+
+/** Create a named cash flow snapshot of the current forecast. */
+export async function createCashflowSnapshot(
+  params:  CreateCashflowSnapshotParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Verify company
+  const { data: co } = await admin
+    .from('companies')
+    .select('id, name')
+    .eq('id', params.company_id)
+    .eq('group_id', context.groupId)
+    .single()
+  if (!co) return `Error: Company ${params.company_id} not found.`
+
+  // Build the grid
+  const [settingsRes, itemsRes, xeroRes] = await Promise.all([
+    admin.from('cashflow_settings').select('*').eq('company_id', params.company_id).maybeSingle(),
+    admin.from('cashflow_items').select('*').eq('company_id', params.company_id).eq('is_active', true),
+    admin.from('cashflow_xero_items').select('*').eq('company_id', params.company_id).neq('sync_status', 'excluded'),
+  ])
+
+  const settings: CashflowSettings = settingsRes.data ?? {
+    company_id: params.company_id, opening_balance_cents: 0,
+    week_start_day: 1, ar_lag_days: 30, ap_lag_days: 30, currency: 'AUD',
+    updated_at: new Date().toISOString(),
+  }
+
+  const weeks    = get13Weeks(settings.week_start_day)
+  const grid     = buildForecastGrid({
+    items:     (itemsRes.data ?? []) as CashflowItem[],
+    settings,
+    weeks,
+    xeroItems: (xeroRes.data ?? []) as CashflowXeroItem[],
+  })
+
+  const { data: snapshot, error } = await admin
+    .from('cashflow_snapshots')
+    .insert({
+      company_id: params.company_id,
+      name:       params.name,
+      notes:      params.notes ?? `Created by agent run ${context.runId}`,
+      grid_data:  grid,
+      created_by: null,
+    })
+    .select('id, name')
+    .single()
+
+  if (error) return `Error creating snapshot: ${error.message}`
+
+  return JSON.stringify({
+    success: true,
+    data: {
+      snapshot_id:  (snapshot as { id: string }).id,
+      name:         params.name,
+      company:      (co as { name: string }).name,
+      view_url:     `/cashflow/${params.company_id}/history`,
+    },
+  })
+}
+
+/**
+ * Summarise the cash flow forecast using a secondary AI call (cash flow analyst persona).
+ * Returns a concise executive summary with risks and recommendations.
+ */
+export async function summariseCashflow(
+  params:  SummariseCashflowParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  const { data: co } = await admin
+    .from('companies')
+    .select('id, name')
+    .eq('id', params.company_id)
+    .eq('group_id', context.groupId)
+    .single()
+  if (!co) return `Error: Company ${params.company_id} not found.`
+
+  // Build the raw forecast data
+  const [settingsRes, itemsRes, xeroRes] = await Promise.all([
+    admin.from('cashflow_settings').select('*').eq('company_id', params.company_id).maybeSingle(),
+    admin.from('cashflow_items').select('*').eq('company_id', params.company_id).eq('is_active', true),
+    admin.from('cashflow_xero_items').select('*').eq('company_id', params.company_id).neq('sync_status', 'excluded'),
+  ])
+
+  const settings: CashflowSettings = settingsRes.data ?? {
+    company_id: params.company_id, opening_balance_cents: 0,
+    week_start_day: 1, ar_lag_days: 30, ap_lag_days: 30, currency: 'AUD',
+    updated_at: new Date().toISOString(),
+  }
+
+  const weeks = get13Weeks(settings.week_start_day)
+  const grid  = buildForecastGrid({
+    items:     (itemsRes.data ?? []) as CashflowItem[],
+    settings,
+    weeks,
+    xeroItems: (xeroRes.data ?? []) as CashflowXeroItem[],
+  })
+
+  const currency = settings.currency ?? 'AUD'
+  const fmt = (cents: number) => `${currency} ${(cents / 100).toLocaleString('en-AU', { minimumFractionDigits: 0 })}`
+
+  const forecastText = [
+    `Company: ${(co as { name: string }).name}`,
+    `Opening Balance: ${fmt(grid.summary.openingBalance[0] ?? 0)}`,
+    '',
+    weeks.map((w, i) =>
+      `${formatWeekHeader(w)}: In=${fmt(grid.sections.inflows.subtotals[i])} Out=${fmt(grid.sections.regularOutflows.subtotals[i] + grid.sections.payables.subtotals[i])} Net=${fmt(grid.summary.netCashFlow[i])} Close=${fmt(grid.summary.closingBalance[i])}`
+    ).join('\n'),
+  ].join('\n')
+
+  // Secondary Claude API call — cash flow analyst (raw fetch, same pattern as agent-runner.ts)
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    return JSON.stringify({ success: false, error: 'ANTHROPIC_API_KEY not configured' })
+  }
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:  'POST',
+      headers: {
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type':      'application/json',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 800,
+        system: `You are a cash flow analyst. Analyse the 13-week cash flow forecast and provide:
+1. A brief executive summary (2–3 sentences)
+2. Key risks (negative weeks, large swings, concentration of outflows)
+3. 2–3 actionable recommendations
+Be concise and direct. Format as plain text with clear headings.`,
+        messages: [{ role: 'user', content: forecastText }],
+      }),
+    })
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({})) as { error?: { message?: string } }
+      throw new Error(`Anthropic API error ${res.status}: ${errBody.error?.message ?? 'Unknown'}`)
+    }
+
+    const message = await res.json() as { content: { type: string; text?: string }[] }
+    const summary = message.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text ?? '')
+      .join('')
+
+    return JSON.stringify({ success: true, data: { company: (co as { name: string }).name, summary } })
+  } catch (err) {
+    return JSON.stringify({
+      success: false,
+      error: `Summarisation failed: ${err instanceof Error ? err.message : String(err)}`,
+    })
+  }
 }

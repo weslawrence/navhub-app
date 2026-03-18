@@ -23,6 +23,12 @@ import {
   readDocument,
   createDocument,
   updateDocument,
+  readCashflow,
+  readCashflowItems,
+  suggestCashflowItem,
+  updateCashflowItem,
+  createCashflowSnapshot,
+  summariseCashflow,
 } from '@/lib/agent-tools'
 import type {
   Agent,
@@ -270,6 +276,88 @@ const ALL_TOOL_DEFS: Record<string, object> = {
         reason:           { type: 'string', description: 'Why this document is being updated.' },
       },
       required: ['document_id', 'content_markdown'],
+    },
+  },
+  read_cashflow: {
+    name:        'read_cashflow',
+    description: 'Read the 13-week rolling cash flow forecast for a company. Returns week-by-week summary with opening/closing balances, net cash flow, and risk indicators.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'UUID of the company to fetch the forecast for.' },
+      },
+      required: ['company_id'],
+    },
+  },
+  read_cashflow_items: {
+    name:        'read_cashflow_items',
+    description: 'List the recurring and one-off cash flow line items (inflows, outflows, payables) for a company.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'UUID of the company.' },
+        section:    { type: 'string', enum: ['inflow', 'regular_outflow', 'payable'], description: 'Optional filter by section.' },
+      },
+      required: ['company_id'],
+    },
+  },
+  suggest_cashflow_item: {
+    name:        'suggest_cashflow_item',
+    description: 'Suggest a new cash flow line item for human review. The item is created with pending_review=true so the user can accept or reject it.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id:    { type: 'string', description: 'UUID of the company.' },
+        label:         { type: 'string', description: 'Human-readable name for the line item.' },
+        section:       { type: 'string', enum: ['inflow', 'regular_outflow', 'payable'], description: 'Which section this item belongs to.' },
+        amount:        { type: 'number', description: 'Dollar amount (not cents).' },
+        recurrence:    { type: 'string', enum: ['weekly', 'fortnightly', 'monthly', 'one_off'], description: 'How often this item occurs.' },
+        start_date:    { type: 'string', description: 'ISO date when this item starts (YYYY-MM-DD).' },
+        end_date:      { type: 'string', description: 'Optional ISO date when this item ends (YYYY-MM-DD).' },
+        day_of_week:   { type: 'number', description: 'For weekly/fortnightly: 0=Sunday … 6=Saturday.' },
+        day_of_month:  { type: 'number', description: 'For monthly: day of month (1–31).' },
+        reason:        { type: 'string', description: 'Why you are suggesting this item.' },
+      },
+      required: ['company_id', 'label', 'section', 'amount', 'recurrence', 'start_date'],
+    },
+  },
+  update_cashflow_item: {
+    name:        'update_cashflow_item',
+    description: 'Update an existing cash flow item — typically to accept a pending_review item (set pending_review:false) or adjust its label/amount.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        item_id:        { type: 'string', description: 'UUID of the cash flow item to update.' },
+        pending_review: { type: 'boolean', description: 'Set to false to accept/approve the item.' },
+        label:          { type: 'string', description: 'New label for the item.' },
+        amount:         { type: 'number', description: 'New dollar amount (not cents).' },
+        is_active:      { type: 'boolean', description: 'Set to false to deactivate (soft delete) the item.' },
+      },
+      required: ['item_id'],
+    },
+  },
+  create_cashflow_snapshot: {
+    name:        'create_cashflow_snapshot',
+    description: 'Save a named snapshot of the current 13-week forecast for a company. Useful for preserving a point-in-time view before making changes.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'UUID of the company.' },
+        name:       { type: 'string', description: 'Name for this snapshot (e.g. "Pre-budget baseline Mar 2026").' },
+        notes:      { type: 'string', description: 'Optional notes about why this snapshot was taken.' },
+      },
+      required: ['company_id', 'name'],
+    },
+  },
+  summarise_cashflow: {
+    name:        'summarise_cashflow',
+    description: 'Generate an AI-powered executive summary of the 13-week cash flow forecast, including risks and recommendations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'UUID of the company to summarise.' },
+      },
+      required: ['company_id'],
     },
   },
 }
@@ -686,6 +774,18 @@ async function executeTool(
       return createDocument(input as unknown as Parameters<typeof createDocument>[0], context)
     case 'update_document':
       return updateDocument(input as unknown as Parameters<typeof updateDocument>[0], context)
+    case 'read_cashflow':
+      return readCashflow(input as unknown as Parameters<typeof readCashflow>[0], context)
+    case 'read_cashflow_items':
+      return readCashflowItems(input as unknown as Parameters<typeof readCashflowItems>[0], context)
+    case 'suggest_cashflow_item':
+      return suggestCashflowItem(input as unknown as Parameters<typeof suggestCashflowItem>[0], context)
+    case 'update_cashflow_item':
+      return updateCashflowItem(input as unknown as Parameters<typeof updateCashflowItem>[0], context)
+    case 'create_cashflow_snapshot':
+      return createCashflowSnapshot(input as unknown as Parameters<typeof createCashflowSnapshot>[0], context)
+    case 'summarise_cashflow':
+      return summariseCashflow(input as unknown as Parameters<typeof summariseCashflow>[0], context)
     default:
       return `Unknown tool: ${toolName}`
   }

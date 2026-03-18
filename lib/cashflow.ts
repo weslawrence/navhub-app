@@ -2,7 +2,7 @@
 // Phase 4a — Cash Flow Projection Engine
 // ============================================================
 
-import type { CashflowItem, CashflowSettings, ForecastGrid, ForecastRow, ForecastSection } from '@/lib/types'
+import type { CashflowItem, CashflowSettings, CashflowXeroItem, ForecastGrid, ForecastRow, ForecastSection } from '@/lib/types'
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -137,12 +137,52 @@ export function projectItem(item: CashflowItem, weeks: string[]): number[] {
   })
 }
 
+// ─── Xero item projection ─────────────────────────────────────────────────────
+
+/**
+ * Project a single Xero invoice item (AR or AP) into 13 weekly buckets.
+ * 'overridden' items use overridden_week and overridden_amount.
+ * 'excluded' items should be filtered before calling this function.
+ */
+export function projectXeroItem(item: CashflowXeroItem, weeks: string[]): number[] {
+  const amounts = weeks.map(() => 0)
+
+  // Determine the due date and amount to use
+  const dueDate =
+    item.sync_status === 'overridden' && item.overridden_week
+      ? item.overridden_week
+      : (item.xero_due_date ?? null)
+
+  const amount =
+    item.sync_status === 'overridden' && item.overridden_amount !== null
+      ? item.overridden_amount
+      : (item.xero_amount_due ?? 0)
+
+  if (!dueDate || !amount) return amounts
+
+  const due = new Date(dueDate + 'T00:00:00')
+
+  for (let i = 0; i < weeks.length; i++) {
+    const weekStart = new Date(weeks[i] + 'T00:00:00')
+    const weekEnd   = new Date(weekStart)
+    weekEnd.setDate(weekStart.getDate() + 6)
+
+    if (due >= weekStart && due <= weekEnd) {
+      amounts[i] = amount
+      break
+    }
+  }
+
+  return amounts
+}
+
 // ─── Grid builder ─────────────────────────────────────────────────────────────
 
 interface BuildForecastGridParams {
-  items:    CashflowItem[]
-  settings: CashflowSettings
-  weeks:    string[]
+  items:      CashflowItem[]
+  settings:   CashflowSettings
+  weeks:      string[]
+  xeroItems?: CashflowXeroItem[]
 }
 
 function buildSection(
@@ -165,18 +205,58 @@ function buildSection(
 }
 
 /**
- * Build a complete 13-week ForecastGrid from items + settings.
+ * Build a complete 13-week ForecastGrid from items + settings (+ optional Xero items).
  */
 export function buildForecastGrid(params: BuildForecastGridParams): ForecastGrid {
-  const { items, settings, weeks } = params
+  const { items, settings, weeks, xeroItems = [] } = params
 
+  // Build manual sections
   const inflows        = buildSection(items.filter(i => i.section === 'inflow'),         weeks)
   const regularOutflows = buildSection(items.filter(i => i.section === 'regular_outflow'), weeks)
   const payables       = buildSection(items.filter(i => i.section === 'payable'),        weeks)
 
+  // Append Xero AR rows → inflows; Xero AP rows → payables
+  // Skip 'excluded' items
+  const activeXero = xeroItems.filter(x => x.sync_status !== 'excluded')
+
+  const xeroInflowRows: ForecastRow[] = activeXero
+    .filter(x => x.invoice_type === 'AR')
+    .map(x => ({
+      item_id:          null,
+      label:            x.xero_contact_name ?? x.xero_invoice_id ?? 'Xero AR',
+      amounts_cents:    projectXeroItem(x, weeks),
+      is_editable:      false,
+      pending_review:   false,
+      xero_source:      true,
+      xero_contact:     x.xero_contact_name,
+      xero_invoice_id:  x.xero_invoice_id,
+      xero_sync_status: x.sync_status,
+    }))
+
+  const xeroPayableRows: ForecastRow[] = activeXero
+    .filter(x => x.invoice_type === 'AP')
+    .map(x => ({
+      item_id:          null,
+      label:            x.xero_contact_name ?? x.xero_invoice_id ?? 'Xero AP',
+      amounts_cents:    projectXeroItem(x, weeks),
+      is_editable:      false,
+      pending_review:   false,
+      xero_source:      true,
+      xero_contact:     x.xero_contact_name,
+      xero_invoice_id:  x.xero_invoice_id,
+      xero_sync_status: x.sync_status,
+    }))
+
+  // Merge Xero rows into sections and recompute subtotals
+  const allInflowRows = [...inflows.rows, ...xeroInflowRows]
+  const allPayableRows = [...payables.rows, ...xeroPayableRows]
+
+  const inflowSubtotals  = weeks.map((_, i) => allInflowRows.reduce((s, r)  => s + r.amounts_cents[i], 0))
+  const payableSubtotals = weeks.map((_, i) => allPayableRows.reduce((s, r) => s + r.amounts_cents[i], 0))
+
   // Net = inflows − outflows − payables (outflows and payables are costs)
   const netCashFlow = weeks.map((_, i) =>
-    inflows.subtotals[i] - regularOutflows.subtotals[i] - payables.subtotals[i]
+    inflowSubtotals[i] - regularOutflows.subtotals[i] - payableSubtotals[i]
   )
 
   // Rolling opening/closing balance
@@ -193,9 +273,9 @@ export function buildForecastGrid(params: BuildForecastGridParams): ForecastGrid
   return {
     weeks,
     sections: {
-      inflows,
-      regularOutflows,
-      payables,
+      inflows:        { rows: allInflowRows,  subtotals: inflowSubtotals },
+      regularOutflows: { rows: regularOutflows.rows, subtotals: regularOutflows.subtotals },
+      payables:       { rows: allPayableRows, subtotals: payableSubtotals },
     },
     summary: {
       netCashFlow,

@@ -272,6 +272,12 @@ export type AgentTool =
   | 'read_document'
   | 'create_document'
   | 'update_document'
+  | 'read_cashflow'
+  | 'read_cashflow_items'
+  | 'suggest_cashflow_item'
+  | 'update_cashflow_item'
+  | 'create_cashflow_snapshot'
+  | 'summarise_cashflow'
 
 export type PersonaPreset =
   | 'executive_analyst'
@@ -468,6 +474,7 @@ export interface CashflowSettings {
   ar_lag_days:           number
   ap_lag_days:           number
   currency:              string
+  bank_account_id:       string | null   // Xero bank account ID (Phase 4b)
   updated_at:            string
 }
 
@@ -489,15 +496,25 @@ export interface CashflowItem {
 }
 
 export interface CashflowXeroItem {
-  id:              string
-  company_id:      string
-  xero_invoice_id: string
-  contact_name:    string
-  amount_cents:    number
-  due_date:        string
-  section:         'inflow' | 'payable'
-  is_overridden:   boolean
-  created_at:      string
+  id:                string
+  company_id:        string
+  // legacy columns (stub from migration 009)
+  xero_invoice_id:   string
+  contact_name:      string | null
+  amount_cents:      number | null
+  due_date:          string | null
+  section:           'inflow' | 'payable'
+  is_overridden:     boolean
+  created_at:        string
+  // Phase 4b columns (migration 017)
+  xero_contact_name: string | null
+  xero_due_date:     string | null   // ISO date "YYYY-MM-DD"
+  xero_amount_due:   number | null   // bigint cents
+  invoice_type:      'AR' | 'AP' | null
+  sync_status:       'pending' | 'synced' | 'overridden' | 'excluded'
+  overridden_week:   string | null   // ISO date — which week to move the item to
+  overridden_amount: number | null   // bigint cents — override the amount
+  last_synced_at:    string | null
 }
 
 export interface CashflowForecast {
@@ -517,11 +534,16 @@ export interface CashflowSnapshot {
 }
 
 export interface ForecastRow {
-  item_id:       string | null
-  label:         string
-  amounts_cents: number[]   // one value per week (13 values)
-  is_editable:   boolean
+  item_id:        string | null
+  label:          string
+  amounts_cents:  number[]   // one value per week (13 values)
+  is_editable:    boolean
   pending_review: boolean
+  // Phase 4b — Xero-sourced rows
+  xero_source?:       boolean
+  xero_contact?:      string | null
+  xero_invoice_id?:   string | null
+  xero_sync_status?:  'pending' | 'synced' | 'overridden' | 'excluded'
 }
 
 export interface ForecastSection {

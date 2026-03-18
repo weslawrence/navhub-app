@@ -777,7 +777,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 3b | ✅ Complete | Settings overhaul (5-tab), Excel upload pipeline, FY-aware periods, Xero connection matching, CreateGroup modal |
 | Phase 3c | Planned | Agent scheduling, email inbound triggers, Slack slash commands |
 | Phase 4a | ✅ Complete | 13-Week Rolling Cash Flow Forecast (manual mode) — items, projection engine, grid UI, snapshots |
-| Phase 4b | Planned | Cash Flow — Xero AR/AP pull, group summary page |
+| Phase 4b | ✅ Complete | Cash Flow — Xero AR/AP pull, group summary page, Agent CF Tools (6 tools), CashFlowReviewModal |
 | Phase 5a | ✅ Complete | Report Template Infrastructure — templates DB, renderer, 7 API routes, 3 UI pages, seed (Matrix V5) |
 | Phase 5b | ✅ Complete | Agent Template Tools — 6 new tools: list/read/create/update template, render_report, analyse_document |
 | Phase 5c | ✅ Complete | Template Editor UI — 3-path creation wizard, review diff page, manual editor, edit page, Restore button |
@@ -1472,7 +1472,7 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 14. **Supabase Auth → URL Configuration** — add redirect URLs: `https://app.navhub.co/accept-invite` and `https://app.navhub.co/reset-password` (required for invite + password reset flows)
 15. Add `error.tsx` files for each route segment
 13. Add chart visualisations to financial report pages (trend lines, bar charts)
-14. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
+14. **Run migration `017_cashflow_xero.sql`** in Supabase dashboard (Phase 4b — bank_account_id on cashflow_settings, extended cashflow_xero_items columns)
 15. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
 16. Phase 7c: Document sync connections (Xero AR/AP pull into documents, external sync)
 
@@ -1651,6 +1651,247 @@ interface ForecastRow { item_id: string|null; label: string; amounts_cents: numb
 - `pending_review` flag on items: agent or admin sets this to true for items needing human review; shown as amber dot in grid rows
 - Snapshots are hard-deleted (not soft-deleted) — they are named versions, not primary data
 - Items are soft-deleted (`is_active = false`) — primary source of truth for the forecast
+
+---
+
+## Phase 4b — Xero AR/AP Integration + Agent Cash Flow Tools + Group View
+
+### Database (migration 017)
+- `cashflow_settings.bank_account_id` — text; stores the selected Xero bank account ID for opening balance sync
+- `cashflow_xero_items` columns extended:
+  - `xero_contact_name` — text; display name from Xero invoice
+  - `xero_due_date` — date; from Xero invoice
+  - `xero_amount_due` — bigint cents; outstanding amount
+  - `invoice_type` — text (`'ACCREC'|'ACCPAY'`); AR vs AP
+  - `sync_status` — text (`'pending'|'synced'|'overridden'|'excluded'`); override tracking
+  - `overridden_week` — date; manual week assignment (overrides due date bucketing)
+  - `overridden_amount` — bigint cents; manual amount override
+  - `last_synced_at` — timestamptz; when the Xero sync last ran
+- Performance index: `idx_cashflow_xero_items_company_id` on `(company_id, sync_status)`
+
+### lib/xero.ts additions
+```typescript
+export async function getOutstandingInvoices(
+  accessToken: string, tenantId: string, type: 'ACCREC' | 'ACCPAY'
+): Promise<XeroInvoice[]>
+  // GET /Invoices?Statuses=AUTHORISED,SUBMITTED&Type={type}
+  // Returns: InvoiceID, Contact.Name, DueDateString, AmountDue, Type
+
+export function parseXeroDate(xeroDateStr: string): Date
+  // Parses Xero's '/Date(timestamp+offset)/' format → JS Date
+
+export async function getBankAccounts(
+  accessToken: string, tenantId: string
+): Promise<{ AccountID: string; Name: string; Code: string; CurrentBalance: number }[]>
+  // GET /Accounts?Type=BANK&Status=ACTIVE
+
+export async function getBankBalance(
+  accessToken: string, tenantId: string, accountId: string
+): Promise<number | null>
+  // GET /Reports/BankSummary; finds matching account → returns balance in cents (×100)
+```
+
+`XERO_SCOPES` updated to include `'accounting.transactions.read'`.
+
+### lib/cashflow.ts additions
+
+```typescript
+export function projectXeroItem(
+  item: CashflowXeroItem, weeks: string[]
+): number[]
+  // Buckets one AR/AP invoice into the correct week:
+  // 1. If sync_status='overridden' and overridden_week set → use that week
+  // 2. Else use xero_due_date
+  // Returns array of 13 amounts (0 for most weeks, overridden_amount or xero_amount_due for matching week)
+
+export function buildForecastGrid(params: {
+  items:      CashflowItem[]
+  settings:   CashflowSettings
+  weeks:      string[]
+  xeroItems?: CashflowXeroItem[]   // ← new optional param
+}): ForecastGrid
+  // Extended: if xeroItems present, prepends XeroItemRow entries to each section
+  // AR invoices (ACCREC) → inflows section; AP invoices (ACCPAY) → payables section
+  // XeroItemRow: { item_id: null, label: '{contact} (Xero AR/AP)', ..., xero_source: true, xero_invoice_id, xero_contact, xero_sync_status }
+```
+
+### API routes
+
+```
+GET  /api/cashflow/[companyId]/xero-sync
+  → { has_xero: boolean, bank_accounts: [...] | null, last_synced_at: string | null }
+  → Checks if company/divisions have active Xero connections
+  → Fetches bank accounts if Xero is connected
+
+POST /api/cashflow/[companyId]/xero-sync
+  → Syncs AR+AP invoices from Xero → upserts into cashflow_xero_items
+  → Optionally syncs opening balance from Xero bank account (if bank_account_id set in settings)
+  → Returns { synced_ar: number, synced_ap: number, opening_balance_synced: boolean }
+
+PATCH /api/cashflow/[companyId]/xero-items
+  → Body: { item_id: string, sync_status?: string, overridden_week?: string, overridden_amount?: number }
+  → Updates a single Xero item's sync_status / override fields
+  → Returns updated row
+
+GET  /api/cashflow/[companyId]/forecast
+  → Extended: now fetches active cashflow_xero_items alongside manual items
+  → Passes xeroItems to buildForecastGrid()
+  → Returns ForecastGrid including Xero-sourced rows
+```
+
+### UI changes — `/cashflow/[companyId]`
+- **Sync with Xero** button in header (only shown when `has_xero = true`): triggers POST xero-sync → reloads grid
+- **XeroItemRow** rendering: Xero-sourced rows shown with Xero badge (`Z` icon), sync status chip (`synced`/`overridden`/`excluded`)
+- **Override modal**: click on a Xero row → modal to set overridden_week / overridden_amount / exclude → PATCH xero-items
+- Syncing spinner indicator while POST xero-sync is in progress
+
+### UI changes — `/cashflow/[companyId]/settings`
+- **Xero Integration card** (only shown when `has_xero = true`):
+  - Bank Account dropdown: fetched from GET xero-sync → lists all BANK accounts from Xero
+  - Selected account stored via PATCH `/api/cashflow/[companyId]/settings` with `{ bank_account_id }`
+  - "Sync opening balance from Xero" checkbox — when enabled, POST xero-sync also syncs opening balance
+  - "Sync now" button triggers POST xero-sync
+
+### Phase 4c — Agent Cash Flow Tools
+
+Six new tools added to the agent system:
+
+| Tool | Description |
+|------|-------------|
+| `read_cashflow` | Read the 13-week rolling cash flow forecast grid for a company; returns ForecastGrid summary |
+| `read_cashflow_items` | List all active recurring and one-off cash flow line items for a company |
+| `suggest_cashflow_item` | Create a new cash flow item with `pending_review=true` so it appears in the review modal |
+| `update_cashflow_item` | Accept (set `pending_review=false`), update, or deactivate an existing item |
+| `create_cashflow_snapshot` | Save a named point-in-time snapshot of the current forecast |
+| `summarise_cashflow` | Generate an AI executive summary with key risks and recommendations using Claude Haiku |
+
+#### `lib/agent-tools.ts` — new functions
+```typescript
+readCashflow(params: { company_id: string }, context: ToolContext): Promise<string>
+readCashflowItems(params: { company_id: string }, context: ToolContext): Promise<string>
+suggestCashflowItem(params: {
+  company_id: string; label: string; section: string; amount: number;
+  recurrence: string; start_date: string; end_date?: string;
+  day_of_week?: number; day_of_month?: number; reason?: string
+}, context: ToolContext): Promise<string>
+updateCashflowItem(params: {
+  item_id: string; pending_review?: boolean; label?: string;
+  amount?: number; is_active?: boolean
+}, context: ToolContext): Promise<string>
+createCashflowSnapshot(params: { company_id: string; name: string; notes?: string }, context: ToolContext): Promise<string>
+summariseCashflow(params: { company_id: string }, context: ToolContext): Promise<string>
+```
+
+`summariseCashflow` makes a secondary Anthropic API call (raw `fetch` to `https://api.anthropic.com/v1/messages`) using `claude-haiku-4-5-20251001` with a cash flow analyst system prompt.
+
+#### `lib/agent-runner.ts` changes
+- 6 new imports from `@/lib/agent-tools`
+- 6 new entries in `ALL_TOOL_DEFS` (full JSON schema input definitions)
+- 6 new `case` branches in `executeTool()` dispatcher
+
+#### Agent UI updates
+- `TOOL_LABELS` in `app/(dashboard)/agents/page.tsx` extended with 6 entries
+- `TOOL_OPTIONS` in `app/(dashboard)/agents/_form.tsx` extended with 6 entries (with emoji + descriptions)
+
+### components/cashflow/CashFlowReviewModal.tsx (new)
+
+Modal for reviewing agent-suggested cashflow items before they are accepted into the forecast.
+
+```typescript
+interface CashFlowReviewModalProps {
+  companyId:  string
+  items:      ReviewItem[]   // CashflowItem + agent_run_id
+  onClose:    () => void
+  onUpdated:  () => void
+}
+```
+
+**Per-item actions:**
+- **Accept**: PATCH `/api/cashflow/${companyId}/items/${id}` with `{ pending_review: false }`
+- **Reject**: PATCH with `{ is_active: false }` (soft-delete)
+- **Accept All** / **Reject All**: bulk iterate with sequential PATCH calls
+
+**Header**: shows pending count badge, links to agent run(s) if `agent_run_id` is set on items.
+
+**Item display**: label, section badge, amount, recurrence, start/end dates.
+
+### Multi-Company Group Cash Flow View — `/cashflow/group`
+
+Full implementation replacing the Phase 4a placeholder:
+
+**Data loading:**
+- `GET /api/companies` → active companies
+- `GET /api/cashflow/[id]/forecast` for each company via `Promise.allSettled` (graceful degradation per company)
+
+**Summary cards** (4 cards in a grid):
+- Total Opening Balance — sum of week 1 opening balance across all companies
+- Net 13-Week Cash Flow — sum of all net cash flow across 13 weeks
+- Lowest Group Balance — minimum closing balance week across the group (with week label)
+- Companies Tracked — count with "N with errors" sub-label if any companies failed
+
+**Grid**: companies × 13 weeks showing closing balance per company per week.
+- Color coding: `cellBg()` → red (negative), amber (0–$10k), green (≥$10k)
+- **GROUP TOTAL** row at bottom (only shown when >1 company has data)
+- Compact formatting: `formatCents(cents, compact=true)` uses k/M shorthand in cells
+- Company names link to `/cashflow/[companyId]`
+- Column header for the "lowest" week highlighted amber
+
+**Error handling:**
+- Companies with failed forecasts shown in amber warning banner, excluded from totals
+- Empty state if no active companies
+
+### AppShell nav update
+`CASHFLOW_CHILDREN` extended with Group View entry:
+```typescript
+const CASHFLOW_CHILDREN = [
+  { label: 'Overview',   href: '/cashflow'       },
+  { label: 'Group View', href: '/cashflow/group' },
+]
+```
+
+### CashflowXeroItem type extensions (lib/types.ts)
+```typescript
+export interface CashflowXeroItem {
+  // ... existing fields ...
+  xero_contact_name:  string | null
+  xero_due_date:      string | null
+  xero_amount_due:    number
+  invoice_type:       'ACCREC' | 'ACCPAY'
+  sync_status:        'pending' | 'synced' | 'overridden' | 'excluded'
+  overridden_week:    string | null
+  overridden_amount:  number | null
+  last_synced_at:     string | null
+}
+```
+
+ForecastRow extended with optional Xero metadata:
+```typescript
+interface ForecastRow {
+  // ... existing fields ...
+  xero_source?:     boolean
+  xero_contact?:    string
+  xero_invoice_id?: string
+  xero_sync_status?: string
+}
+```
+
+AgentTool union extended:
+```typescript
+| 'read_cashflow'
+| 'read_cashflow_items'
+| 'suggest_cashflow_item'
+| 'update_cashflow_item'
+| 'create_cashflow_snapshot'
+| 'summarise_cashflow'
+```
+
+CashflowSettings extended:
+```typescript
+export interface CashflowSettings {
+  // ... existing fields ...
+  bank_account_id: string | null
+}
+```
 
 ---
 

@@ -9,7 +9,7 @@ const resend = new Resend(process.env.RESEND_API_KEY)
 
 // ─── GET/POST /api/groups/[id]/invites ────────────────────────────────────────
 // POST sends an email:
-//   • New user  → Supabase magic-link invite (→ /auth/accept-invite)
+//   • New user  → Supabase magic-link invite (→ /accept-invite) + Resend notification
 //   • Existing  → Resend notification + immediately adds to group
 // Body: { email: string, role: string }
 
@@ -127,7 +127,7 @@ export async function POST(
   if (!existingUser) {
     // ── NEW user — send Supabase magic-link invite email ──────────────────────
     const redirectTo =
-      `${appUrl}/auth/accept-invite?group_id=${params.id}&role=${encodeURIComponent(role)}`
+      `${appUrl}/accept-invite?group_id=${params.id}&role=${encodeURIComponent(role)}`
 
     const { error: supabaseErr } = await admin.auth.admin.inviteUserByEmail(email, {
       redirectTo,
@@ -138,6 +138,26 @@ export async function POST(
       // Non-fatal — invite record saved; log error
       console.error('[invite] Supabase invite error:', supabaseErr.message)
     }
+
+    // Also send a Resend notification so the invitee knows which group they're joining
+    void resend.emails.send({
+      from:    `NavHub <invites@${fromDomain}>`,
+      to:      email,
+      subject: `You've been invited to join ${groupName} on NavHub`,
+      html: `
+        <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:32px">
+          <h2 style="margin:0 0 8px">You've been invited to <strong>${groupName}</strong></h2>
+          <p style="margin:0 0 16px;color:#555">
+            You've been invited to join <strong>${groupName}</strong> on NavHub as
+            <strong>${roleLabel}</strong>. Check your inbox for a separate email with a
+            link to set your password and activate your account.
+          </p>
+          <p style="margin-top:24px;font-size:12px;color:#aaa">
+            If you weren't expecting this, you can safely ignore this email.
+          </p>
+        </div>
+      `,
+    })
   } else {
     // ── EXISTING user — add immediately + send notification ───────────────────
 

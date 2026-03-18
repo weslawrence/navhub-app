@@ -795,6 +795,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent Run Inverted Layout + Template ID Fix | ✅ Complete | Run page: sticky toolbar, Output top (live streaming), Activity newest-at-top, Brief collapsed bottom; list_report_templates returns template_id key; readReportTemplate guard for undefined input |
 | Admin Portal Enhancements + Subscription Foundation | ✅ Complete | Migration 016 (subscription cols + audit log), SortableTable, GroupFormModal, UserFormModal, /admin/agents + /admin/audit pages, CRUD APIs for groups/users/agents, New User/Group buttons, token usage progress bars, platform token MTD card |
 | User Invites + Forgot Password | ✅ Complete | Invite emails (Supabase magic-link for new users, Resend notification for existing), /auth/accept-invite page, /api/groups/[id]/join route, forgot-password + reset-password pages, AppShell "Change password" link |
+| Invite Flow + First Login Fixes | ✅ Complete | Fixed redirectTo URL (/accept-invite not /auth/accept-invite), Resend notification for new users, cookie auto-repair in layout, /no-group page for groupless accounts |
 
 ---
 
@@ -1468,7 +1469,7 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 11. **Run migration `014_documents.sql`** in Supabase dashboard (Phase 7a — document_folders, documents, document_versions, document_sync tables)
 12. **Run migration `015_agent_cancel.sql`** in Supabase dashboard (Agent Kill Switch — cancellation_requested + cancelled_at on agent_runs)
 13. **Run migration `016_admin_enhancements.sql`** in Supabase dashboard (subscription_tier, token_usage_mtd, token_limit_mtd, owner_id, is_active on groups + admin_audit_log table)
-14. **Supabase Auth → URL Configuration** — add redirect URLs: `https://app.navhub.co/auth/accept-invite` and `https://app.navhub.co/reset-password` (required for invite + password reset flows)
+14. **Supabase Auth → URL Configuration** — add redirect URLs: `https://app.navhub.co/accept-invite` and `https://app.navhub.co/reset-password` (required for invite + password reset flows)
 15. Add `error.tsx` files for each route segment
 13. Add chart visualisations to financial report pages (trend lines, bar charts)
 14. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
@@ -2155,8 +2156,9 @@ POST now sends emails after recording the invite:
 
 **New user** (no Supabase Auth account exists):
 - Calls `admin.auth.admin.inviteUserByEmail(email, { redirectTo })` — Supabase sends a magic-link email
-- `redirectTo` = `{APP_URL}/auth/accept-invite?group_id={id}&role={role}`
+- `redirectTo` = `{APP_URL}/accept-invite?group_id={id}&role={role}`
 - Non-fatal: if Supabase invite API fails, invite record is still saved
+- Also sends a Resend notification email (non-blocking `void`) so the invitee knows which group they're joining
 
 **Existing user**:
 - Immediately adds them to `user_groups` (upsert, is_default = true if first group)
@@ -2165,11 +2167,11 @@ POST now sends emails after recording the invite:
 
 ### Accept Invite Flow (`app/(auth)/accept-invite/page.tsx` + `app/api/groups/[id]/join/route.ts`)
 
-**Page** (`/auth/accept-invite?group_id=...&role=...`):
+**Page** (`/accept-invite?group_id=...&role=...`):
 - Listens for Supabase `SIGNED_IN` / `USER_UPDATED` auth state change (magic link sets session via URL hash)
 - Shows "Set password" form (password + confirm, min 8 chars)
 - On submit: `supabase.auth.updateUser({ password })` → POST `/api/groups/{id}/join` → redirect to `/dashboard`
-- Added to `isPublic` in middleware
+- Added to `isPublic` in middleware as `pathname.startsWith('/accept-invite')`
 
 **Join API** (`POST /api/groups/[id]/join`):
 - Requires authenticated session (user clicked magic link)
@@ -2209,13 +2211,71 @@ Pre-fills the forgot-password form with the user's email so they can immediately
 
 ### Middleware public routes added
 ```typescript
-pathname === '/forgot-password'            ||
-pathname === '/reset-password'             ||
-pathname.startsWith('/auth/accept-invite') ||
+pathname === '/forgot-password'          ||
+pathname === '/reset-password'           ||
+pathname === '/no-group'                 ||
+pathname.startsWith('/accept-invite')    ||
 ```
 
 ### Manual steps required (Supabase Auth → URL Configuration)
 1. **Site URL**: `https://app.navhub.co`
 2. **Redirect URLs** — add:
-   - `https://app.navhub.co/auth/accept-invite`
+   - `https://app.navhub.co/accept-invite`
    - `https://app.navhub.co/reset-password`
+
+---
+
+## Invite Flow + First Login Fixes
+
+### Fix 1 — Corrected invite redirect URL (`app/api/groups/[id]/invites/route.ts`)
+
+The `redirectTo` URL passed to `admin.auth.admin.inviteUserByEmail()` was using `/auth/accept-invite`. Since `(auth)` is a Next.js route group (file-system only, not URL-visible), the correct URL is `/accept-invite`:
+```typescript
+// Before (wrong):
+const redirectTo = `${appUrl}/auth/accept-invite?group_id=${params.id}&role=${encodeURIComponent(role)}`
+
+// After (correct):
+const redirectTo = `${appUrl}/accept-invite?group_id=${params.id}&role=${encodeURIComponent(role)}`
+```
+
+Also added a second Resend notification email for **new users** (after the Supabase magic-link call) so they know which group they're joining. The Supabase email carries the magic link; the Resend email provides context (group name, role).
+
+### Fix 2 — join/route.ts (already correct)
+
+The `app/api/groups/[id]/join/route.ts` route was already correctly:
+- Counting existing memberships before upsert to determine `is_default`
+- Setting `active_group_id` cookie on the response (`httpOnly: false`)
+No changes required.
+
+### Fix 3 — actions.ts login (already correct)
+
+The `signIn()` server action in `app/(auth)/actions.ts` was already setting `active_group_id` cookie after successful login (queries `user_groups` for `is_default=true`, falls back to first group). No changes required.
+
+### Fix 4 — Dashboard layout cookie auto-repair + no-group redirect (`app/(dashboard)/layout.tsx`)
+
+Two improvements:
+1. **Redirect to `/no-group`** instead of `/login` when the user is authenticated but has no group memberships — provides a friendlier message
+2. **Cookie auto-repair**: if `active_group_id` cookie is missing or points to a group the user doesn't belong to, the layout now sets it correctly via `cookieStore.set()` (wrapped in try-catch)
+
+```typescript
+// No groups → friendly page instead of confusing login redirect
+if (!userGroups || userGroups.length === 0) {
+  redirect('/no-group')
+}
+
+// Repair missing/wrong cookie
+if (activeGroupId !== activeUserGroup.group_id) {
+  try {
+    cookieStore.set('active_group_id', activeUserGroup.group_id, {
+      httpOnly: false, path: '/', maxAge: 60 * 60 * 24 * 365,
+    })
+  } catch { /* silently continue */ }
+}
+```
+
+### Fix 5 — `/no-group` page (`app/no-group/page.tsx`)
+
+- Placed **outside** the `(dashboard)` route group to avoid an infinite redirect loop (the dashboard layout redirects to `/no-group`, which must not trigger the dashboard layout again)
+- Shows "Your account isn't linked to a group yet. Contact your administrator." message
+- Sign out button (calls `signOut()` server action)
+- Added `pathname === '/no-group'` to `isPublic` in `middleware.ts`

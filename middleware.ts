@@ -37,7 +37,8 @@ export async function middleware(request: NextRequest) {
     pathname === '/login'                       ||
     pathname === '/forgot-password'             ||
     pathname === '/reset-password'              ||
-    pathname.startsWith('/accept-invite')  ||
+    pathname === '/no-group'                    ||
+    pathname.startsWith('/accept-invite')       ||
     pathname.startsWith('/api/cron/')           ||
     pathname.startsWith('/api/auth')            ||
     pathname.startsWith('/_next')              ||

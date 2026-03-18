@@ -36,8 +36,8 @@ export default async function DashboardLayout({
     .order('is_default', { ascending: false })
 
   if (!userGroups || userGroups.length === 0) {
-    // No groups assigned — redirect to login with message
-    redirect('/login')
+    // Logged in but no group memberships — show friendly message
+    redirect('/no-group')
   }
 
   // Determine active group from cookie
@@ -48,6 +48,19 @@ export default async function DashboardLayout({
     userGroups.find((ug) => ug.group_id === activeGroupId) ??
     userGroups.find((ug) => ug.is_default) ??
     userGroups[0]
+
+  // If the cookie was missing or pointed to a group we don't belong to, repair it
+  if (activeGroupId !== activeUserGroup.group_id) {
+    try {
+      cookieStore.set('active_group_id', activeUserGroup.group_id, {
+        httpOnly: false,
+        path:     '/',
+        maxAge:   60 * 60 * 24 * 365,
+      })
+    } catch {
+      // Can't set cookies in all rendering contexts — silently continue
+    }
+  }
 
   let activeGroup = activeUserGroup.group as Group
 

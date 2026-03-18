@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { useParams, useRouter } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, XCircle } from 'lucide-react'
+import { useParams } from 'next/navigation'
+import { ArrowLeft } from 'lucide-react'
 
 interface AgentDetail {
   id:           string
@@ -55,7 +55,6 @@ function fmtDate(s: string | null) {
 
 export default function AdminAgentDetailPage() {
   const { id }   = useParams<{ id: string }>()
-  const router   = useRouter()
 
   const [agent,   setAgent]   = useState<AgentDetail | null>(null)
   const [group,   setGroup]   = useState<GroupInfo | null>(null)

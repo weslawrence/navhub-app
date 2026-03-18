@@ -93,6 +93,7 @@ export default function GroupDetailPage() {
   }
 
   // Load overview on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadOverview() }, [id])
 
   // Lazy-load users + activity on tab switch

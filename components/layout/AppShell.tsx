@@ -21,6 +21,7 @@ import {
   Plus,
   Banknote,
   FileText,
+  KeyRound,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -550,6 +551,14 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
                   <DropdownMenuSeparator />
                 </>
               )}
+
+              <DropdownMenuItem asChild className="cursor-pointer text-foreground">
+                <Link href={`/forgot-password?email=${encodeURIComponent(user.email)}`}>
+                  <KeyRound className="mr-2 h-4 w-4" />
+                  Change password
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
 
               <DropdownMenuItem
                 onSelect={async () => { await signOut() }}

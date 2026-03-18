@@ -794,6 +794,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Assistant Data + UX Enhancements | ✅ Complete | Server-side context (runs/companies/docs/reports/folders), localStorage history, draggable + resizable panel, pointer-pass-through backdrop |
 | Agent Run Inverted Layout + Template ID Fix | ✅ Complete | Run page: sticky toolbar, Output top (live streaming), Activity newest-at-top, Brief collapsed bottom; list_report_templates returns template_id key; readReportTemplate guard for undefined input |
 | Admin Portal Enhancements + Subscription Foundation | ✅ Complete | Migration 016 (subscription cols + audit log), SortableTable, GroupFormModal, UserFormModal, /admin/agents + /admin/audit pages, CRUD APIs for groups/users/agents, New User/Group buttons, token usage progress bars, platform token MTD card |
+| User Invites + Forgot Password | ✅ Complete | Invite emails (Supabase magic-link for new users, Resend notification for existing), /auth/accept-invite page, /api/groups/[id]/join route, forgot-password + reset-password pages, AppShell "Change password" link |
 
 ---
 
@@ -1467,7 +1468,8 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 11. **Run migration `014_documents.sql`** in Supabase dashboard (Phase 7a — document_folders, documents, document_versions, document_sync tables)
 12. **Run migration `015_agent_cancel.sql`** in Supabase dashboard (Agent Kill Switch — cancellation_requested + cancelled_at on agent_runs)
 13. **Run migration `016_admin_enhancements.sql`** in Supabase dashboard (subscription_tier, token_usage_mtd, token_limit_mtd, owner_id, is_active on groups + admin_audit_log table)
-14. Add `error.tsx` files for each route segment
+14. **Supabase Auth → URL Configuration** — add redirect URLs: `https://app.navhub.co/auth/accept-invite` and `https://app.navhub.co/reset-password` (required for invite + password reset flows)
+15. Add `error.tsx` files for each route segment
 13. Add chart visualisations to financial report pages (trend lines, bar charts)
 14. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
 15. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
@@ -2142,3 +2144,78 @@ GET  /api/admin/audit               → paginated (?page=&limit=50&action=&entit
 
 ### Audit log action values
 `create_group`, `update_group`, `deactivate_group`, `create_user`, `update_user`, `deactivate_user`, `update_agent`, `disable_agent`, `deactivate_agent`
+
+---
+
+## User Invites + Forgot Password
+
+### Fix 1 — Invite Emails (`app/api/groups/[id]/invites/route.ts`)
+
+POST now sends emails after recording the invite:
+
+**New user** (no Supabase Auth account exists):
+- Calls `admin.auth.admin.inviteUserByEmail(email, { redirectTo })` — Supabase sends a magic-link email
+- `redirectTo` = `{APP_URL}/auth/accept-invite?group_id={id}&role={role}`
+- Non-fatal: if Supabase invite API fails, invite record is still saved
+
+**Existing user**:
+- Immediately adds them to `user_groups` (upsert, is_default = true if first group)
+- Marks invite `accepted_at = now()`
+- Sends a notification email via Resend: `invites@{RESEND_FROM_DOMAIN}`
+
+### Accept Invite Flow (`app/(auth)/accept-invite/page.tsx` + `app/api/groups/[id]/join/route.ts`)
+
+**Page** (`/auth/accept-invite?group_id=...&role=...`):
+- Listens for Supabase `SIGNED_IN` / `USER_UPDATED` auth state change (magic link sets session via URL hash)
+- Shows "Set password" form (password + confirm, min 8 chars)
+- On submit: `supabase.auth.updateUser({ password })` → POST `/api/groups/{id}/join` → redirect to `/dashboard`
+- Added to `isPublic` in middleware
+
+**Join API** (`POST /api/groups/[id]/join`):
+- Requires authenticated session (user clicked magic link)
+- Verifies a pending `group_invites` record exists for the user's email
+- Uses the role from the invite record (not the query param) for security
+- Upserts `user_groups`; sets `is_default=true` if first group
+- Sets `active_group_id` cookie in response
+- Marks invite `accepted_at = now()`
+
+### Fix 2 — Forgot Password Flow
+
+**`/forgot-password`** (`app/(auth)/forgot-password/page.tsx`):
+- Email input pre-filled from `?email=` query param (used by AppShell "Change password")
+- Calls `supabase.auth.resetPasswordForEmail(email, { redirectTo: APP_URL/reset-password })`
+- Shows the same success message regardless of whether email exists (security)
+- "Back to login" link
+
+**`/reset-password`** (`app/(auth)/reset-password/page.tsx`):
+- Listens for `PASSWORD_RECOVERY` auth state change (recovery link sets session via hash)
+- New password + confirm password form (min 8 chars)
+- Calls `supabase.auth.updateUser({ password })` → redirect to `/dashboard`
+
+Both pages added to `isPublic` in middleware.
+
+### Fix 3 — AppShell "Change password" link
+
+User dropdown now includes "Change password" between the Create Group section and Sign out:
+```tsx
+<DropdownMenuItem asChild>
+  <Link href={`/forgot-password?email=${encodeURIComponent(user.email)}`}>
+    <KeyRound className="mr-2 h-4 w-4" />
+    Change password
+  </Link>
+</DropdownMenuItem>
+```
+Pre-fills the forgot-password form with the user's email so they can immediately send a reset link.
+
+### Middleware public routes added
+```typescript
+pathname === '/forgot-password'            ||
+pathname === '/reset-password'             ||
+pathname.startsWith('/auth/accept-invite') ||
+```
+
+### Manual steps required (Supabase Auth → URL Configuration)
+1. **Site URL**: `https://app.navhub.co`
+2. **Redirect URLs** — add:
+   - `https://app.navhub.co/auth/accept-invite`
+   - `https://app.navhub.co/reset-password`

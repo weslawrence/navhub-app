@@ -35,6 +35,9 @@ export async function middleware(request: NextRequest) {
   // Public routes — no auth required
   const isPublic =
     pathname === '/login'                       ||
+    pathname === '/forgot-password'             ||
+    pathname === '/reset-password'              ||
+    pathname.startsWith('/auth/accept-invite')  ||
     pathname.startsWith('/api/cron/')           ||
     pathname.startsWith('/api/auth')            ||
     pathname.startsWith('/_next')              ||

@@ -54,7 +54,7 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
       const iJson = await iRes.json()
       if (mJson.data) setMembers(mJson.data)
       if (iJson.data) setInvites(iJson.data)
-    } catch { /* silent */ } finally {
+    } catch (err) { console.error('Members load error:', err) } finally {
       setLoading(false)
     }
   }, [groupId])

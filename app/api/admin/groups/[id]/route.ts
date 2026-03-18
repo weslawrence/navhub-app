@@ -27,7 +27,7 @@ export async function GET(
 
   const { data: group } = await admin
     .from('groups')
-    .select('id, name, slug, palette_id, created_at')
+    .select('id, name, slug, palette_id, created_at, subscription_tier, token_usage_mtd, token_limit_mtd, is_active, owner_id')
     .eq('id', groupId)
     .single()
 
@@ -92,4 +92,97 @@ export async function GET(
       storage_files: storageFiles,
     },
   })
+}
+
+// ─── PATCH /api/admin/groups/[id] ─────────────────────────────────────────────
+// Updates group fields (name, slug, subscription_tier, token_limit_mtd, is_active, owner_id).
+export async function PATCH(
+  req: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  if (!await verifySuperAdmin(session.user.id)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const admin   = createAdminClient()
+  const groupId = params.id
+
+  const body = await req.json() as {
+    name?: string; slug?: string; subscription_tier?: string
+    token_limit_mtd?: number; is_active?: boolean; owner_id?: string
+  }
+
+  const updates: Record<string, unknown> = {}
+  if (body.name !== undefined)             updates.name              = body.name.trim()
+  if (body.slug !== undefined)             updates.slug              = body.slug.trim() || null
+  if (body.subscription_tier !== undefined) {
+    const valid = ['starter', 'pro', 'enterprise']
+    if (!valid.includes(body.subscription_tier)) {
+      return NextResponse.json({ error: 'Invalid subscription_tier.' }, { status: 400 })
+    }
+    updates.subscription_tier = body.subscription_tier
+  }
+  if (body.token_limit_mtd !== undefined)  updates.token_limit_mtd  = body.token_limit_mtd
+  if (body.is_active !== undefined)        updates.is_active         = body.is_active
+  if (body.owner_id !== undefined)         updates.owner_id          = body.owner_id || null
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: 'Nothing to update.' }, { status: 400 })
+  }
+
+  const { error } = await admin.from('groups').update(updates).eq('id', groupId)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  void admin.from('admin_audit_log').insert({
+    actor_id:    session.user.id,
+    action:      'update_group',
+    entity_type: 'group',
+    entity_id:   groupId,
+    metadata:    updates,
+  })
+
+  return NextResponse.json({ success: true })
+}
+
+// ─── DELETE /api/admin/groups/[id] ────────────────────────────────────────────
+// Soft-deletes a group (is_active = false). Blocked if the group has active companies.
+export async function DELETE(
+  _req: Request,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  if (!await verifySuperAdmin(session.user.id)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const admin   = createAdminClient()
+  const groupId = params.id
+
+  // Safety check: must have no active companies
+  const { count } = await admin
+    .from('companies')
+    .select('id', { count: 'exact', head: true })
+    .eq('group_id', groupId)
+    .eq('is_active', true)
+
+  if ((count ?? 0) > 0) {
+    return NextResponse.json(
+      { error: 'Cannot deactivate a group with active companies. Deactivate companies first.' },
+      { status: 409 }
+    )
+  }
+
+  const { error } = await admin.from('groups').update({ is_active: false }).eq('id', groupId)
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  void admin.from('admin_audit_log').insert({
+    actor_id:    session.user.id,
+    action:      'deactivate_group',
+    entity_type: 'group',
+    entity_id:   groupId,
+    metadata:    null,
+  })
+
+  return NextResponse.json({ success: true })
 }

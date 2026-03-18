@@ -793,6 +793,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Tailwind + AssistantButton Fix | ✅ Complete | Full shadcn color palette wired in tailwind.config.ts; agent.tools null safety on run page |
 | Assistant Data + UX Enhancements | ✅ Complete | Server-side context (runs/companies/docs/reports/folders), localStorage history, draggable + resizable panel, pointer-pass-through backdrop |
 | Agent Run Inverted Layout + Template ID Fix | ✅ Complete | Run page: sticky toolbar, Output top (live streaming), Activity newest-at-top, Brief collapsed bottom; list_report_templates returns template_id key; readReportTemplate guard for undefined input |
+| Admin Portal Enhancements + Subscription Foundation | ✅ Complete | Migration 016 (subscription cols + audit log), SortableTable, GroupFormModal, UserFormModal, /admin/agents + /admin/audit pages, CRUD APIs for groups/users/agents, New User/Group buttons, token usage progress bars, platform token MTD card |
 
 ---
 
@@ -1465,7 +1466,8 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 10. **Run migration `012_report_sharing.sql`** in Supabase dashboard (is_shareable, share_token, share_token_created_at on custom_reports)
 11. **Run migration `014_documents.sql`** in Supabase dashboard (Phase 7a — document_folders, documents, document_versions, document_sync tables)
 12. **Run migration `015_agent_cancel.sql`** in Supabase dashboard (Agent Kill Switch — cancellation_requested + cancelled_at on agent_runs)
-13. Add `error.tsx` files for each route segment
+13. **Run migration `016_admin_enhancements.sql`** in Supabase dashboard (subscription_tier, token_usage_mtd, token_limit_mtd, owner_id, is_active on groups + admin_audit_log table)
+14. Add `error.tsx` files for each route segment
 13. Add chart visualisations to financial report pages (trend lines, bar charts)
 14. Phase 4b: Pull Xero AR/AP into cashflow (cashflow_xero_items), group summary page
 15. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
@@ -2083,3 +2085,60 @@ All admin API routes require super_admin verification (admin client check on `us
 - Sidebar `top` is `56 + topOffset` px (56 = h-14)
 - Body `paddingTop` is `56 + topOffset` px
 Used by dashboard layout to push AppShell down when impersonation banner is active (36px = h-9).
+
+---
+
+## Admin Portal Enhancements + Subscription Foundation
+
+### Database (migration 016)
+Adds subscription columns to `groups` and creates `admin_audit_log`:
+- `groups.subscription_tier` — text, default `'starter'`
+- `groups.token_usage_mtd` — bigint cents, default `0`
+- `groups.token_limit_mtd` — bigint cents, default `1_000_000`
+- `groups.owner_id` — uuid FK → `auth.users`
+- `groups.is_active` — boolean, default `true`
+- `admin_audit_log` — `id, actor_id, actor_email, action, entity_type, entity_id, metadata, created_at`; indexes on `action`, `entity_type`, `entity_id`, `actor_id`, `created_at`
+
+### Subscription tiers
+Starter = 1M tokens/month · Pro = 5M · Enterprise = 20M
+
+### Token usage progress bars
+Green < 70% · Amber 70–90% · Red ≥ 90%
+
+### New components
+- **`components/admin/SortableTable.tsx`** — generic sortable/searchable/filterable table (zinc admin theme)
+- **`components/admin/GroupFormModal.tsx`** — create/edit group: name, owner_email (create), subscription_tier, token_limit; POST/PATCH
+- **`components/admin/UserFormModal.tsx`** — create/edit user: email + password (create), group selector, role; POST/PATCH
+
+### New/updated API routes
+```
+GET  /api/admin/groups              → enriched with subscription_tier, token_usage_mtd, token_limit_mtd, is_active
+POST /api/admin/groups              → create group + owner user (find or create) + audit log
+PATCH  /api/admin/groups/[id]       → update name/slug/tier/limit/is_active/owner_id + audit log
+DELETE /api/admin/groups/[id]       → soft delete (is_active=false); 409 if active companies; audit log
+POST /api/admin/users               → create auth user + add to group + audit log
+PATCH  /api/admin/users/[id]        → update user_groups membership (role, group_id); upsert if no existing row
+DELETE /api/admin/users/[id]        → ban via auth.admin.updateUserById(id, { ban_duration: '876600h' }) + audit log
+GET  /api/admin/agents              → all agents across groups with run stats (total_runs, last_run_at, token_usage)
+GET  /api/admin/agents/[id]         → agent + group info
+PATCH  /api/admin/agents/[id]       → update name/persona/instructions/model/tools/is_active + audit log
+DELETE /api/admin/agents/[id]       → soft delete (is_active=false) + audit log
+GET  /api/admin/audit               → paginated (?page=&limit=50&action=&entity_type=); actor emails enriched at read time
+```
+
+### New admin pages
+- **`/admin/agents`** — all agents across groups; status/name filter; View link → detail
+- **`/admin/agents/[id]`** — agent metadata, tools, persona/instructions, recent runs, Enable/Disable toggle with inline confirm
+- **`/admin/audit`** — paginated audit log; filter by entity_type + action; Timestamp/Actor/Action badge/Entity/Details columns
+
+### Updated admin pages
+- **`/admin/groups`** — tier badge, token bar, "+ New Group" button, Edit/Deactivate per row
+- **`/admin/groups/[id]`** — tier badge, token bar, "Edit Group" → GroupFormModal, 8-field metadata grid
+- **`/admin/users`** — "+ New User" button, "Edit" per row → UserFormModal (pre-fills first group membership)
+- **`/admin` dashboard** — Platform Token Usage MTD card (total bar + per-group mini breakdown)
+
+### Admin nav (updated)
+`Dashboard · Groups · Users · Agents · Agent Runs · Audit · System`
+
+### Audit log action values
+`create_group`, `update_group`, `deactivate_group`, `create_user`, `update_user`, `deactivate_user`, `update_agent`, `disable_agent`, `deactivate_agent`

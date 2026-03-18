@@ -7,7 +7,9 @@ const NAV_LINKS = [
   { label: 'Dashboard',  href: '/admin' },
   { label: 'Groups',     href: '/admin/groups' },
   { label: 'Users',      href: '/admin/users' },
+  { label: 'Agents',     href: '/admin/agents' },
   { label: 'Agent Runs', href: '/admin/agent-runs' },
+  { label: 'Audit',      href: '/admin/audit' },
   { label: 'System',     href: '/admin/system' },
 ]
 

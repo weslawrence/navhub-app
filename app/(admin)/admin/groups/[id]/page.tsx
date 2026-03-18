@@ -5,11 +5,14 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { ArrowLeft, CheckCircle2, XCircle } from 'lucide-react'
 import ImpersonateButton from '@/components/admin/ImpersonateButton'
+import GroupFormModal from '@/components/admin/GroupFormModal'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface GroupDetail {
   id: string; name: string; slug: string | null; palette_id: string | null; created_at: string
+  subscription_tier: string; token_usage_mtd: number; token_limit_mtd: number
+  is_active: boolean; owner_id: string | null
 }
 interface CompanyRow {
   id: string; name: string; is_active: boolean
@@ -41,6 +44,27 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: 'bg-amber-900 text-amber-300',
 }
 
+const TIER_BADGE: Record<string, string> = {
+  starter:    'bg-zinc-700 text-zinc-300',
+  pro:        'bg-blue-900/60 text-blue-300',
+  enterprise: 'bg-amber-900/60 text-amber-300',
+}
+
+function TokenBar({ used, limit }: { used: number; limit: number }) {
+  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0
+  const colour = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-green-500'
+  return (
+    <div className="flex items-center gap-2 flex-1">
+      <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${colour}`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className={`text-xs font-mono shrink-0 ${pct >= 90 ? 'text-red-400' : pct >= 70 ? 'text-amber-400' : 'text-zinc-400'}`}>
+        {(used / 1000).toFixed(0)}k / {(limit / 1000000).toFixed(1)}M ({pct.toFixed(0)}%)
+      </span>
+    </div>
+  )
+}
+
 function fmtDate(s: string | null) {
   if (!s) return '—'
   return new Date(s).toLocaleString('en-AU', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -58,14 +82,18 @@ export default function GroupDetailPage() {
   const [loadingOv,  setLoadingOv]  = useState(true)
   const [loadingMem, setLoadingMem] = useState(false)
   const [loadingAct, setLoadingAct] = useState(false)
+  const [showEdit,   setShowEdit]   = useState(false)
 
-  // Load overview on mount
-  useEffect(() => {
+  function loadOverview() {
+    setLoadingOv(true)
     fetch(`/api/admin/groups/${id}`)
       .then(r => r.json())
       .then(json => setOverview(json.data as GroupDetailData))
       .finally(() => setLoadingOv(false))
-  }, [id])
+  }
+
+  // Load overview on mount
+  useEffect(() => { loadOverview() }, [id])
 
   // Lazy-load users + activity on tab switch
   useEffect(() => {
@@ -97,12 +125,40 @@ export default function GroupDetailPage() {
             <ArrowLeft className="h-4 w-4" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-white">{group?.name ?? '…'}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-bold text-white">{group?.name ?? '…'}</h1>
+              {group && (
+                <span className={`text-[11px] px-2 py-0.5 rounded-full capitalize ${TIER_BADGE[group.subscription_tier] ?? TIER_BADGE.starter}`}>
+                  {group.subscription_tier}
+                </span>
+              )}
+              {group && !group.is_active && (
+                <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-400">Inactive</span>
+              )}
+            </div>
             <p className="text-zinc-400 text-sm mt-0.5 font-mono">{id}</p>
           </div>
         </div>
-        {group && <ImpersonateButton groupId={group.id} groupName={group.name} />}
+        <div className="flex items-center gap-2">
+          {group && (
+            <button
+              onClick={() => setShowEdit(true)}
+              className="text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1.5 rounded transition-colors"
+            >
+              Edit Group
+            </button>
+          )}
+          {group && <ImpersonateButton groupId={group.id} groupName={group.name} />}
+        </div>
       </div>
+
+      {/* Token usage bar */}
+      {group && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg px-5 py-3 flex items-center gap-4">
+          <span className="text-xs text-zinc-500 uppercase tracking-wide shrink-0">Token Usage MTD</span>
+          <TokenBar used={group.token_usage_mtd} limit={group.token_limit_mtd} />
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-zinc-800">
@@ -129,14 +185,18 @@ export default function GroupDetailPage() {
           {group && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {[
-                ['Name',     group.name],
-                ['Slug',     group.slug ?? '—'],
-                ['Palette',  group.palette_id ?? '—'],
-                ['Created',  fmtDate(group.created_at)],
+                ['Name',         group.name],
+                ['Slug',         group.slug ?? '—'],
+                ['Palette',      group.palette_id ?? '—'],
+                ['Created',      fmtDate(group.created_at)],
+                ['Tier',         group.subscription_tier],
+                ['Token Limit',  `${(group.token_limit_mtd / 1000000).toFixed(1)}M / mo`],
+                ['Status',       group.is_active ? 'Active' : 'Inactive'],
+                ['Owner ID',     group.owner_id ? group.owner_id.slice(0, 8) + '…' : '—'],
               ].map(([label, value]) => (
                 <div key={label} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
                   <p className="text-xs text-zinc-500 uppercase tracking-wide">{label}</p>
-                  <p className="text-sm text-white mt-1 font-mono">{value}</p>
+                  <p className="text-sm text-white mt-1 font-mono truncate">{value}</p>
                 </div>
               ))}
             </div>
@@ -328,6 +388,15 @@ export default function GroupDetailPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit modal */}
+      {showEdit && group && (
+        <GroupFormModal
+          group={group}
+          onClose={() => setShowEdit(false)}
+          onSaved={() => { setShowEdit(false); loadOverview() }}
+        />
       )}
     </div>
   )

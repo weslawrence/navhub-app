@@ -800,6 +800,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Invite Flow + First Login Fixes | ✅ Complete | Fixed redirectTo URL (/accept-invite not /auth/accept-invite), Resend notification for new users, cookie auto-repair in layout, /no-group page for groupless accounts |
 | Agent Interactive Responses | ✅ Complete | ask_user tool, pause/resume agentic loop, agent_run_interactions table, awaiting_input status, reply card on run stream page + RunModal |
 | Marketing Site + Keystatic CMS | ✅ Complete | app/(marketing)/ route group, dark SaaS homepage, demo + contact pages, 019_marketing.sql (5 tables), Keystatic CMS (GitHub storage), super_admin auth guard, PAT injection in middleware |
+| Members API Fix + Support/Feedback + Agent Polish | ✅ Complete | Migration 020 (support_requests, feature_suggestions, agent personality/scheduling cols), HelpMenu in sidebar, SupportModal, FeatureSuggestionModal, /api/support + /api/feature-suggestions, admin system page updates, agents/[id]/page.tsx (Schedule + Personality + API Keys tabs), BYO Anthropic key per-agent, buildSystemPrompt communication_style + response_length |
 
 ---
 
@@ -1475,7 +1476,9 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 13. **Run migration `016_admin_enhancements.sql`** in Supabase dashboard (subscription_tier, token_usage_mtd, token_limit_mtd, owner_id, is_active on groups + admin_audit_log table)
 14. **Supabase Auth → URL Configuration** — add redirect URLs: `https://app.navhub.co/accept-invite` and `https://app.navhub.co/reset-password` (required for invite + password reset flows)
 15. **Run migration `018_agent_interactions.sql`** in Supabase dashboard (Agent Interactive Responses — awaiting_input_question/at on agent_runs + agent_run_interactions table)
-16. Add `error.tsx` files for each route segment
+16. **Run migration `020_support_and_agent_polish.sql`** in Supabase dashboard (support_requests, feature_suggestions tables + agent personality/scheduling columns)
+17. Add `SUPPORT_EMAIL` environment variable to Vercel (used by support + feature suggestion notification emails)
+18. Add `error.tsx` files for each route segment
 17. Add chart visualisations to financial report pages (trend lines, bar charts)
 18. **Run migration `017_cashflow_xero.sql`** in Supabase dashboard (Phase 4b — bank_account_id on cashflow_settings, extended cashflow_xero_items columns)
 19. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
@@ -2839,4 +2842,107 @@ KEYSTATIC_GITHUB_TOKEN=           # GitHub PAT with repo read/write access
 |-------------|--------|-------|
 | `@keystatic/next/route-handler` | `makeRouteHandler({ config })` | API route GET/POST handlers |
 | `@keystatic/next/ui/app` | `makePage(config)` | App Router page component |
+
+---
+
+## Members API Fix + Support/Feedback + Agent Polish
+
+### WS1 — Members API 500 Fix
+`app/api/groups/[id]/members/route.ts` already had all required fixes applied in a prior session:
+- Single `admin.auth.admin.listUsers({ perPage: 1000 })` call (not N individual getUserById calls)
+- Entire handler wrapped in try/catch
+- `isSuperAdmin` guard: super_admins can query any group's members
+
+### WS2 — Support + Feature Suggestion Buttons
+
+#### Database (migration 020)
+- **`support_requests`** — `group_id`, `user_id`, `email`, `message`, `status` ('open'); RLS: insert for authenticated users, select for super_admins
+- **`feature_suggestions`** — `group_id`, `user_id`, `email`, `suggestion`, `status` ('new'); same RLS pattern
+- **`agents` columns added**: `schedule_config jsonb`, `schedule_enabled boolean DEFAULT false`, `last_scheduled_run_at timestamptz`, `communication_style text DEFAULT 'balanced'`, `response_length text DEFAULT 'balanced'`
+
+#### Components
+- **`components/layout/HelpMenu.tsx`** — `?` (Help) button at the bottom of the sidebar nav (shown when not collapsed). Clicking opens a small popover with "Get Support" and "Suggest a Feature" buttons. Accepts `userEmail` prop (pre-fills modals).
+- **`components/layout/SupportModal.tsx`** — Modal with pre-filled email + message textarea → POST `/api/support`. Shows success confirmation.
+- **`components/layout/FeatureSuggestionModal.tsx`** — Modal with pre-filled email + suggestion textarea → POST `/api/feature-suggestions`. Shows success confirmation.
+
+#### API routes
+```
+POST /api/support
+  → Auth required; inserts into support_requests; sends Resend notification to SUPPORT_EMAIL (non-blocking)
+
+POST /api/feature-suggestions
+  → Auth required; inserts into feature_suggestions; sends Resend notification to SUPPORT_EMAIL (non-blocking)
+```
+
+#### AppShell changes
+- Import `HelpMenu` from `@/components/layout/HelpMenu`
+- Added after BOTTOM_NAV inside `<nav>`, wrapped in `{(!collapsed || mobile) && <HelpMenu userEmail={user.email} />}`
+
+#### Admin System page updates
+- `SUPPORT_EMAIL` added to ENV_VARS check list
+- `support_requests` and `feature_suggestions` added to DB_TABLES count list
+- Two new sections at bottom: "Support Requests" + "Feature Suggestions" — show last 10 records with email, status badge, date, truncated message/suggestion
+
+#### New environment variable
+```bash
+SUPPORT_EMAIL=   # email address that receives support + feature suggestion notifications
+```
+
+### WS3 — Agent Personality + Scheduling UI
+
+#### `app/(dashboard)/agents/[id]/page.tsx` (NEW)
+Agent detail page with 3 tabs. Shows agent name, avatar, description in header with links to Edit + Run History.
+
+**Schedule tab**
+- Toggle "Run on a schedule" (optimistic UI → PATCH `/api/agents/[id]` with `schedule_enabled + schedule_config`)
+- Frequency: Daily | Weekly | Monthly
+- Time input (HH:MM)
+- Weekly: day-of-week selector (Sun–Sat)
+- Monthly: day-of-month input (1–28 max to avoid month-end issues)
+- Next run preview: human-readable sentence computed client-side
+
+**Personality tab**
+- Communication Style: Formal | Balanced | Casual (card selector with description)
+- Response Length: Concise | Balanced | Detailed (card selector with description)
+- Live style preview: shows a sample finance sentence rendered in the selected style × length combination
+- Save → PATCH `/api/agents/[id]` with `{ communication_style, response_length }`
+
+**API Keys tab** (WS4 — see below)
+
+#### `lib/agent-runner.ts` — buildSystemPrompt changes
+Two optional style directives added to system prompt:
+```
+Style: Communicate in a formal, professional tone...    ← only if communication_style = 'formal' or 'casual'
+Depth: Keep responses concise and to the point...       ← only if response_length ≠ 'balanced'
+```
+`balanced` for either field emits no extra instruction (no noise in prompt).
+
+#### lib/types.ts — Agent interface additions
+```typescript
+communication_style:   'formal' | 'balanced' | 'casual'
+response_length:       'concise' | 'balanced' | 'detailed'
+schedule_enabled:      boolean
+schedule_config:       Record<string, unknown> | null
+last_scheduled_run_at: string | null
+```
+
+### WS4 — BYO API Key UI
+
+#### `app/(dashboard)/agents/[id]/page.tsx` — API Keys tab
+- Status badge: green "Using your Anthropic key" vs muted "Using NavHub shared allocation"
+- Masked key input (eye toggle to reveal)
+- Connect / Update button → POST or PATCH `/api/agents/[id]/credentials` with `key: 'anthropic_api_key'`
+- Remove button → DELETE credential (reverts to NavHub shared allocation)
+- Lists other credentials below with link to Edit page for full management
+
+#### `lib/agent-runner.ts` — callClaude changes
+`callClaude()` now accepts optional `credentials?: Record<string, string>` parameter.
+```typescript
+// BYO key takes priority over env var:
+const apiKey = credentials?.['anthropic_api_key'] ?? process.env.ANTHROPIC_API_KEY
+```
+The credentials are already loaded via `loadCredentials()` before the agent loop. The call site passes credentials through:
+```typescript
+result = await callClaude(agent.model, messages, toolDefs, systemPrompt, onChunkFn, credentials)
+```
 

@@ -44,6 +44,7 @@ import { cn } from '@/lib/utils'
 import { getPalette } from '@/lib/themes'
 import type { Group, UserGroup } from '@/lib/types'
 import CreateGroupModal from '@/components/groups/CreateGroupModal'
+import HelpMenu        from '@/components/layout/HelpMenu'
 
 // ============================================================
 // Nav structure
@@ -454,6 +455,10 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
             {BOTTOM_NAV.map(item => (
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}
+            {/* Help menu — shown when expanded or mobile */}
+            {(!collapsed || mobile) && (
+              <HelpMenu userEmail={user.email} />
+            )}
           </nav>
 
           {!mobile && mounted && (

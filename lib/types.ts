@@ -290,24 +290,30 @@ export type RunStatus =
   | 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'awaiting_input'
 
 export interface Agent {
-  id:                 string
-  group_id:           string
-  name:               string
-  description:        string | null
-  avatar_color:       string
-  model:              AgentModel
-  persona_preset:     PersonaPreset
-  persona:            string | null
-  instructions:       string | null
-  tools:              AgentTool[]
-  company_scope:      string[] | null
-  email_address:      string | null
-  email_display_name: string | null
-  email_recipients:   string[] | null
-  slack_channel:      string | null
-  is_active:          boolean
-  created_at:         string
-  updated_at:         string
+  id:                    string
+  group_id:              string
+  name:                  string
+  description:           string | null
+  avatar_color:          string
+  model:                 AgentModel
+  persona_preset:        PersonaPreset
+  persona:               string | null
+  instructions:          string | null
+  tools:                 AgentTool[]
+  company_scope:         string[] | null
+  email_address:         string | null
+  email_display_name:    string | null
+  email_recipients:      string[] | null
+  slack_channel:         string | null
+  is_active:             boolean
+  // Phase WS3 — personality + scheduling
+  communication_style:   'formal' | 'balanced' | 'casual'
+  response_length:       'concise' | 'balanced' | 'detailed'
+  schedule_enabled:      boolean
+  schedule_config:       Record<string, unknown> | null
+  last_scheduled_run_at: string | null
+  created_at:            string
+  updated_at:            string
 }
 
 export interface AgentCredential {

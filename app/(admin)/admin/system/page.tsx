@@ -13,6 +13,7 @@ const ENV_VARS: { key: string; label: string; required: boolean }[] = [
   { key: 'XERO_CLIENT_SECRET',             label: 'Xero Client Secret',       required: false },
   { key: 'RESEND_API_KEY',                 label: 'Resend API Key',           required: false },
   { key: 'RESEND_FROM_DOMAIN',             label: 'Resend From Domain',       required: false },
+  { key: 'SUPPORT_EMAIL',                  label: 'Support Email',            required: false },
   { key: 'CRON_SECRET',                    label: 'Cron Secret',              required: false },
   { key: 'NEXT_PUBLIC_APP_URL',            label: 'App URL',                  required: true  },
 ]
@@ -26,6 +27,7 @@ const DB_TABLES = [
   'documents', 'document_folders',
   'cashflow_items', 'cashflow_snapshots',
   'forecast_streams',
+  'support_requests', 'feature_suggestions',
 ]
 
 function StatusDot({ ok }: { ok: boolean }) {
@@ -60,6 +62,18 @@ export default async function AdminSystemPage() {
     const r = countResults[i]
     tableCounts[table] = r.status === 'fulfilled' ? (r.value.count ?? null) : null
   })
+
+  // ── Support requests + feature suggestions ──────────────────────────────────
+  const [{ data: supportRequests }, { data: featureSuggestions }] = await Promise.all([
+    admin.from('support_requests')
+      .select('id, email, message, status, created_at, group_id')
+      .order('created_at', { ascending: false })
+      .limit(10),
+    admin.from('feature_suggestions')
+      .select('id, email, suggestion, status, created_at, group_id')
+      .order('created_at', { ascending: false })
+      .limit(10),
+  ])
 
   // ── Recent errors ────────────────────────────────────────────────────────────
   const { data: errorRuns } = await admin
@@ -216,6 +230,75 @@ export default async function AdminSystemPage() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Support Requests + Feature Suggestions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        {/* Support Requests */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">Support Requests</h2>
+            <span className="text-xs text-zinc-500">{(supportRequests ?? []).length} recent</span>
+          </div>
+          {(supportRequests ?? []).length === 0 ? (
+            <p className="px-5 py-4 text-sm text-zinc-500">No support requests yet.</p>
+          ) : (
+            <div className="divide-y divide-zinc-800">
+              {(supportRequests ?? []).map((r: {
+                id: string; email: string; message: string; status: string; created_at: string
+              }) => (
+                <div key={r.id} className="px-5 py-3">
+                  <div className="flex items-center justify-between gap-4 mb-1">
+                    <p className="text-sm text-white font-medium truncate">{r.email}</p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        r.status === 'open'
+                          ? 'bg-amber-900 text-amber-300'
+                          : 'bg-zinc-800 text-zinc-400'
+                      }`}>{r.status}</span>
+                      <span className="text-xs text-zinc-500">{fmtDate(r.created_at)}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-zinc-400 line-clamp-2">{r.message}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Feature Suggestions */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-4 border-b border-zinc-800 flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-white">Feature Suggestions</h2>
+            <span className="text-xs text-zinc-500">{(featureSuggestions ?? []).length} recent</span>
+          </div>
+          {(featureSuggestions ?? []).length === 0 ? (
+            <p className="px-5 py-4 text-sm text-zinc-500">No feature suggestions yet.</p>
+          ) : (
+            <div className="divide-y divide-zinc-800">
+              {(featureSuggestions ?? []).map((s: {
+                id: string; email: string; suggestion: string; status: string; created_at: string
+              }) => (
+                <div key={s.id} className="px-5 py-3">
+                  <div className="flex items-center justify-between gap-4 mb-1">
+                    <p className="text-sm text-white font-medium truncate">{s.email}</p>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        s.status === 'new'
+                          ? 'bg-blue-900 text-blue-300'
+                          : 'bg-zinc-800 text-zinc-400'
+                      }`}>{s.status}</span>
+                      <span className="text-xs text-zinc-500">{fmtDate(s.created_at)}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-zinc-400 line-clamp-2">{s.suggestion}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
       </div>
     </div>
   )

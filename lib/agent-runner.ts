@@ -425,9 +425,27 @@ async function buildSystemPrompt(
     ? PRESETS[agent.persona_preset as keyof typeof PRESETS]
     : (agent.persona ?? '')
 
+  // Communication style guidance
+  const commStyle = (agent.communication_style as string | undefined) ?? 'balanced'
+  const styleText = commStyle === 'formal'
+    ? 'Communicate in a formal, professional tone. Use precise language suitable for executive audiences.'
+    : commStyle === 'casual'
+    ? 'Use a friendly, conversational tone. Keep language approachable and avoid unnecessary jargon.'
+    : '' // balanced = no special instruction
+
+  // Response length guidance
+  const respLength = (agent.response_length as string | undefined) ?? 'balanced'
+  const lengthText = respLength === 'concise'
+    ? 'Keep responses concise and to the point. Include only the key facts and recommendations.'
+    : respLength === 'detailed'
+    ? 'Provide thorough, detailed responses with full context, reasoning, and explanation.'
+    : '' // balanced = no special instruction
+
   return [
     `You are ${agent.name}, an AI agent for ${groupName}.`,
     personaText ? `\n${personaText}` : '',
+    styleText   ? `\nStyle: ${styleText}` : '',
+    lengthText  ? `\nDepth: ${lengthText}` : '',
     agent.instructions ? `\nYour task: ${agent.instructions}` : '',
     '\nContext:',
     `* Current date: ${today}`,
@@ -583,13 +601,15 @@ interface ModelResponse {
 }
 
 async function callClaude(
-  model:      AgentModel,
-  messages:   AnthropicMessage[],
-  tools:      object[],
+  model:        AgentModel,
+  messages:     AnthropicMessage[],
+  tools:        object[],
   systemPrompt: string,
-  onChunk:    (chunk: string) => void
+  onChunk:      (chunk: string) => void,
+  credentials?: Record<string, string>
 ): Promise<ModelResponse> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
+  // Use BYO key from agent credentials if available, fall back to env var
+  const apiKey = credentials?.['anthropic_api_key'] ?? process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY environment variable not set')
 
   const body: Record<string, unknown> = {
@@ -982,7 +1002,7 @@ export async function executeAgentRun(
         result = await callClaude(agent.model, messages, toolDefs, systemPrompt, (chunk) => {
           onChunk({ type: 'text', content: chunk })
           fullOutput += chunk
-        })
+        }, credentials)
       }
 
       totalTokens += result.tokens

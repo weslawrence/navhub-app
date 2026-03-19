@@ -803,6 +803,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Keystatic CMS | ❌ Removed | GitHub OAuth not configured; removed to unblock Vercel build. To revisit when OAuth app is set up. |
 | Members API Fix + Support/Feedback + Agent Polish | ✅ Complete | Migration 020 (support_requests, feature_suggestions, agent personality/scheduling cols), HelpMenu in sidebar, SupportModal, FeatureSuggestionModal, /api/support + /api/feature-suggestions, admin system page updates, agents/[id]/page.tsx (Schedule + Personality + API Keys tabs), BYO Anthropic key per-agent, buildSystemPrompt communication_style + response_length |
 | Agent Tool Fixes | ✅ Complete | renderReport/generateReport parameter validation (template_id, report_name, slot_data guards); safeName null-safety; stronger CRITICAL TOOL SEQUENCING RULES in buildSystemPrompt; explicit render_report tool description requiring list → read → render sequence |
+| Phase 7c+7d — Document Exports + Share Token | ✅ Complete | Install docx + pptxgenjs; lib/document-export.ts (parseMarkdown, exportToDocx, exportToPptx, exportToPdfHtml); GET /api/documents/[id]/export?format=docx|pptx|pdf; Export dropdown on document page; migration 021 no-op (share columns already in 014) |
 
 ---
 
@@ -2947,4 +2948,118 @@ The credentials are already loaded via `loadCredentials()` before the agent loop
 ```typescript
 result = await callClaude(agent.model, messages, toolDefs, systemPrompt, onChunkFn, credentials)
 ```
+
+---
+
+## Phase 7c+7d — Document Exports + Share Token
+
+### WS1 — Document Exports
+
+#### Packages installed
+- `docx` — DOCX generation server-side (A4, headers, footers, tables, bullet lists, numbering)
+- `pptxgenjs` — PPTX generation (dark theme slides, cover + section + closing)
+
+#### `lib/document-export.ts` (new)
+
+```typescript
+interface DocBlock {
+  type:    'h1' | 'h2' | 'h3' | 'paragraph' | 'bullet' | 'numbered' | 'table' | 'divider' | 'blank'
+  content: string
+  cells?:  string[][]
+  level?:  number
+}
+
+export function parseMarkdown(markdown: string): DocBlock[]
+// Splits markdown into typed DocBlock structs:
+// # → h1, ## → h2, ### → h3, - bullet, 1. numbered, --- divider, | table |, else paragraph
+
+export async function exportToDocx(doc: Document, groupName: string): Promise<Buffer>
+// A4 (11906×16838 DXA), 1440 DXA margins, Arial 12pt
+// Header: group name + tab + doc title (tab-stop right aligned)
+// Footer: NavHub · group name · title with CENTER+RIGHT tab stops
+// Title block: title 28pt bold, type+audience 14pt, date, HR rule
+// Bullet lists via LevelFormat.BULLET with 720/360 DXA indent
+// Numbered lists via LevelFormat.DECIMAL
+
+export async function exportToPptx(doc: Document, groupName: string): Promise<Buffer>
+// Dark theme (bg #0F1117, text white)
+// Cover slide: title + type + "Prepared by NavHub" + group + date
+// H2 sections → individual content slides
+// Closing slide: "Thank you" + group name
+// pptx.write({ outputType: 'nodebuffer' }) cast to Buffer
+
+export function exportToPdfHtml(doc: Document, groupName: string): string
+// Returns print-optimised HTML with @media print + @page A4 rules
+// User opens in new browser tab → File → Print → Save as PDF
+// wrapLists() uses line-by-line approach (no dotAll /s regex flag)
+```
+
+**`wrapLists` pattern** (avoids `s` dotAll flag incompatible with tsconfig target):
+```typescript
+function wrapLists(html: string): string {
+  const lines = html.split('\n')
+  const result: string[] = []
+  let inBullet = false, inNumbered = false
+  for (const line of lines) {
+    if (line.startsWith('<li class="bullet">')) {
+      if (!inBullet) { result.push('<ul>'); inBullet = true }
+      result.push(line.replace(' class="bullet"', ''))
+    } else if (line.startsWith('<li class="numbered">')) {
+      if (!inNumbered) { result.push('<ol>'); inNumbered = true }
+      result.push(line.replace(' class="numbered"', ''))
+    } else {
+      if (inBullet)   { result.push('</ul>'); inBullet   = false }
+      if (inNumbered) { result.push('</ol>'); inNumbered = false }
+      result.push(line)
+    }
+  }
+  if (inBullet)   result.push('</ul>')
+  if (inNumbered) result.push('</ol>')
+  return result.join('\n')
+}
+```
+
+#### `app/api/documents/[id]/export/route.ts` (new)
+```
+GET /api/documents/[id]/export?format=docx|pptx|pdf
+  → Auth check + group membership (RLS)
+  → Fetch group name via admin client
+  → docx: exportToDocx → new NextResponse(new Uint8Array(buffer), { Content-Disposition: attachment })
+  → pptx: exportToPptx → new NextResponse(new Uint8Array(buffer), { Content-Disposition: attachment })
+  → pdf:  exportToPdfHtml → new NextResponse(html, { Content-Type: text/html; charset=utf-8 })
+```
+Content-Type headers:
+- DOCX: `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- PPTX: `application/vnd.openxmlformats-officedocument.presentationml.presentation`
+- PDF: `text/html; charset=utf-8` (print-to-PDF via browser)
+
+#### `app/(dashboard)/documents/[id]/page.tsx` — Export dropdown
+Added `handleExport(format)` function:
+- `pdf`: `window.open('/api/documents/${docId}/export?format=pdf', '_blank')` — opens print-ready HTML in new tab
+- `docx`/`pptx`: `fetch` → `res.blob()` → `URL.createObjectURL` → `<a download>` click pattern
+
+Export dropdown button (between History and Share in toolbar, view mode only):
+```tsx
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="outline" size="sm"><Download /> Export</Button>
+  </DropdownMenuTrigger>
+  <DropdownMenuContent align="end">
+    <DropdownMenuItem onClick={() => void handleExport('docx')}>Word Document (.docx)</DropdownMenuItem>
+    <DropdownMenuItem onClick={() => void handleExport('pptx')}>PowerPoint (.pptx)</DropdownMenuItem>
+    <DropdownMenuItem onClick={() => void handleExport('pdf')}>PDF (via browser print)</DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>
+```
+
+### WS2 — Document Share Token (already complete in Phase 7a)
+
+The following were already fully implemented as part of Phase 7a (migration 014):
+- `documents.share_token`, `is_shareable`, `share_token_created_at` columns
+- `app/api/documents/[id]/share/route.ts` — GET / POST / DELETE
+- `app/(dashboard)/documents/[id]/page.tsx` — `SharePopover` component
+- `app/view/document/[id]/page.tsx` — token-based access (Path 1 session, Path 2 token)
+- `app/(dashboard)/documents/page.tsx` — emerald "Shared" badge on cards
+
+`supabase/migrations/021_document_sharing.sql` is a no-op placeholder confirming these columns exist.
 

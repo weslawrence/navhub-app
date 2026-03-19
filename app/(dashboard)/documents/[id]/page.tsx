@@ -7,9 +7,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
-  History, RotateCcw, Share2,
+  History, RotateCcw, Share2, Download,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { cn }     from '@/lib/utils'
 import {
   DOCUMENT_TYPE_LABELS, DOCUMENT_AUDIENCE_LABELS,
@@ -263,6 +269,22 @@ export default function DocumentPage() {
     setEditing(false)
   }
 
+  async function handleExport(format: 'docx' | 'pptx' | 'pdf') {
+    if (format === 'pdf') {
+      window.open(`/api/documents/${docId}/export?format=pdf`, '_blank')
+      return
+    }
+    const res  = await fetch(`/api/documents/${docId}/export?format=${format}`)
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url  = URL.createObjectURL(blob)
+    const a    = window.document.createElement('a')
+    a.href     = url
+    a.download = `${doc?.title ?? 'document'}.${format}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   async function handleRestore(version: DocumentVersion) {
     if (!confirm(`Restore version ${version.version}? The current content will be saved as a new version.`)) return
     await fetch(`/api/documents/${docId}`, {
@@ -342,6 +364,24 @@ export default function DocumentPage() {
               >
                 <History className="h-3.5 w-3.5" /> History
               </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <Download className="h-3.5 w-3.5" /> Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => void handleExport('docx')}>
+                    Word Document (.docx)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleExport('pptx')}>
+                    PowerPoint (.pptx)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => void handleExport('pdf')}>
+                    PDF (via browser print)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 size="sm" variant="outline"
                 onClick={() => setShowShare(s => !s)}

@@ -52,32 +52,12 @@ export async function middleware(request: NextRequest) {
     pathname === '/'                            ||
     pathname === '/demo'                        ||
     pathname === '/contact'                     ||
-    pathname.startsWith('/api/marketing/')      ||
-    // Keystatic CMS — auth guarded by app/keystatic/layout.tsx
-    pathname.startsWith('/api/keystatic/')      ||
-    pathname.startsWith('/keystatic')
+    pathname.startsWith('/api/marketing/')
 
   if (isPublic) {
     // Redirect authenticated users away from login
     if (pathname === '/login' && session) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
-    }
-
-    // ── Keystatic GitHub PAT injection ──────────────────────────────────────
-    // Inject the GitHub access token as a cookie when an authenticated user
-    // accesses Keystatic routes. The Keystatic layout then guards super_admin
-    // access. Keystatic reads this cookie internally for GitHub API calls.
-    if (
-      session &&
-      process.env.KEYSTATIC_GITHUB_TOKEN &&
-      (pathname.startsWith('/keystatic') || pathname.startsWith('/api/keystatic/'))
-    ) {
-      response.cookies.set('keystatic-gh-access-token', process.env.KEYSTATIC_GITHUB_TOKEN, {
-        httpOnly: true,
-        path:     '/',
-        maxAge:   3600,
-        sameSite: 'lax',
-      })
     }
 
     return response

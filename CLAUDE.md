@@ -45,8 +45,8 @@ Group        ← top-level tenant (e.g. "Navigate Group")
 | clsx + tailwind-merge | latest   | cn() utility for conditional classes      |
 | @radix-ui/react-switch | latest  | Toggle switch primitive (Phase 2a)         |
 | @radix-ui/react-alert-dialog | latest | Confirm dialog primitive (Phase 2a)  |
-| @keystatic/core              | ^0.5.48 | Keystatic CMS core primitives        |
-| @keystatic/next              | ^5.0.4  | Keystatic Next.js App Router integration |
+| ~~@keystatic/core~~          | removed | Keystatic CMS — removed (GitHub OAuth not configured; to revisit) |
+| ~~@keystatic/next~~          | removed | Keystatic Next.js integration — removed alongside core |
 
 **Critical constraints**:
 - ONLY `@supabase/ssr` — do NOT install `auth-helpers-nextjs` or `@supabase/auth-helpers-nextjs`
@@ -799,7 +799,8 @@ Three tabs: **Display** | **Group** | **Members**
 | User Invites + Forgot Password | ✅ Complete | Invite emails (Supabase magic-link for new users, Resend notification for existing), /auth/accept-invite page, /api/groups/[id]/join route, forgot-password + reset-password pages, AppShell "Change password" link |
 | Invite Flow + First Login Fixes | ✅ Complete | Fixed redirectTo URL (/accept-invite not /auth/accept-invite), Resend notification for new users, cookie auto-repair in layout, /no-group page for groupless accounts |
 | Agent Interactive Responses | ✅ Complete | ask_user tool, pause/resume agentic loop, agent_run_interactions table, awaiting_input status, reply card on run stream page + RunModal |
-| Marketing Site + Keystatic CMS | ✅ Complete | app/(marketing)/ route group, dark SaaS homepage, demo + contact pages, 019_marketing.sql (5 tables), Keystatic CMS (GitHub storage), super_admin auth guard, PAT injection in middleware |
+| Marketing Site | ✅ Complete | app/(marketing)/ route group, dark SaaS homepage, demo + contact pages, 019_marketing.sql (5 tables) |
+| Keystatic CMS | ❌ Removed | GitHub OAuth not configured; removed to unblock Vercel build. To revisit when OAuth app is set up. |
 | Members API Fix + Support/Feedback + Agent Polish | ✅ Complete | Migration 020 (support_requests, feature_suggestions, agent personality/scheduling cols), HelpMenu in sidebar, SupportModal, FeatureSuggestionModal, /api/support + /api/feature-suggestions, admin system page updates, agents/[id]/page.tsx (Schedule + Personality + API Keys tabs), BYO Anthropic key per-agent, buildSystemPrompt communication_style + response_length |
 
 ---
@@ -1484,8 +1485,8 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 19. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
 20. Phase 7c: Document sync connections (Xero AR/AP pull into documents, external sync)
 21. **Run migration `019_marketing.sql`** in Supabase dashboard (Marketing Site — waitlist_signups, demo_requests, contact_submissions, support_requests, feature_suggestions tables)
-22. **Add Keystatic env vars** to Vercel: `KEYSTATIC_GITHUB_CLIENT_ID`, `KEYSTATIC_GITHUB_CLIENT_SECRET`, `KEYSTATIC_SECRET`, `KEYSTATIC_GITHUB_TOKEN`, `DEMO_NOTIFICATION_EMAIL`
-23. **Create GitHub OAuth App** for Keystatic — callback URL: `https://app.navhub.co/api/keystatic/github/oauth/callback`
+22. Add `DEMO_NOTIFICATION_EMAIL` to Vercel env vars (used by demo + contact notification emails)
+23. ~~Keystatic CMS~~ — removed; re-add when GitHub OAuth app is configured (`KEYSTATIC_GITHUB_CLIENT_ID`, `KEYSTATIC_GITHUB_CLIENT_SECRET`, `KEYSTATIC_SECRET`, `KEYSTATIC_GITHUB_TOKEN`)
 
 ---
 

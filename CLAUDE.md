@@ -45,6 +45,8 @@ Group        ← top-level tenant (e.g. "Navigate Group")
 | clsx + tailwind-merge | latest   | cn() utility for conditional classes      |
 | @radix-ui/react-switch | latest  | Toggle switch primitive (Phase 2a)         |
 | @radix-ui/react-alert-dialog | latest | Confirm dialog primitive (Phase 2a)  |
+| @keystatic/core              | ^0.5.48 | Keystatic CMS core primitives        |
+| @keystatic/next              | ^5.0.4  | Keystatic Next.js App Router integration |
 
 **Critical constraints**:
 - ONLY `@supabase/ssr` — do NOT install `auth-helpers-nextjs` or `@supabase/auth-helpers-nextjs`
@@ -797,6 +799,7 @@ Three tabs: **Display** | **Group** | **Members**
 | User Invites + Forgot Password | ✅ Complete | Invite emails (Supabase magic-link for new users, Resend notification for existing), /auth/accept-invite page, /api/groups/[id]/join route, forgot-password + reset-password pages, AppShell "Change password" link |
 | Invite Flow + First Login Fixes | ✅ Complete | Fixed redirectTo URL (/accept-invite not /auth/accept-invite), Resend notification for new users, cookie auto-repair in layout, /no-group page for groupless accounts |
 | Agent Interactive Responses | ✅ Complete | ask_user tool, pause/resume agentic loop, agent_run_interactions table, awaiting_input status, reply card on run stream page + RunModal |
+| Marketing Site + Keystatic CMS | ✅ Complete | app/(marketing)/ route group, dark SaaS homepage, demo + contact pages, 019_marketing.sql (5 tables), Keystatic CMS (GitHub storage), super_admin auth guard, PAT injection in middleware |
 
 ---
 
@@ -1477,6 +1480,9 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 18. **Run migration `017_cashflow_xero.sql`** in Supabase dashboard (Phase 4b — bank_account_id on cashflow_settings, extended cashflow_xero_items columns)
 19. Phase 5e: Agent-scheduled template generation (cron triggers), template sharing/export
 20. Phase 7c: Document sync connections (Xero AR/AP pull into documents, external sync)
+21. **Run migration `019_marketing.sql`** in Supabase dashboard (Marketing Site — waitlist_signups, demo_requests, contact_submissions, support_requests, feature_suggestions tables)
+22. **Add Keystatic env vars** to Vercel: `KEYSTATIC_GITHUB_CLIENT_ID`, `KEYSTATIC_GITHUB_CLIENT_SECRET`, `KEYSTATIC_SECRET`, `KEYSTATIC_GITHUB_TOKEN`, `DEMO_NOTIFICATION_EMAIL`
+23. **Create GitHub OAuth App** for Keystatic — callback URL: `https://app.navhub.co/api/keystatic/github/oauth/callback`
 
 ---
 
@@ -2663,3 +2669,174 @@ After a successful POST, the modal polls `GET /api/agents/runs/${runId}/info` ev
 
 **Normal flow (no awaiting_input):**
 If polling times out without detecting `awaiting_input` → `onClose()` + navigate to stream page (unchanged from before).
+
+---
+
+## Marketing Site + Keystatic CMS
+
+### Overview
+Two independent workstreams:
+1. **Marketing Website** — public `app/(marketing)/` route group with homepage, demo, and contact pages
+2. **Keystatic CMS** — content management at `/keystatic`, restricted to `super_admin`, backed by GitHub storage
+
+---
+
+### WS1 — Marketing Website
+
+#### Database (migration 019)
+Five tables (no RLS, public marketing data):
+- **`waitlist_signups`** — `id`, `email`, `created_at`
+- **`demo_requests`** — `id`, `name`, `email`, `company`, `message`, `contacted` (default `false`), `created_at`
+- **`contact_submissions`** — `id`, `name`, `email`, `message`, `created_at`
+- **`support_requests`** — `id`, `name`, `email`, `message`, `status` (default `'open'`), `created_at`
+- **`feature_suggestions`** — `id`, `email`, `suggestion`, `status` (default `'new'`), `created_at`
+
+#### Route group
+`app/(marketing)/` — separate Next.js route group, no AppShell/sidebar.
+
+#### Layout (`app/(marketing)/layout.tsx`)
+- Imports **DM Sans** (weights 400/500/600/700) and **DM Mono** (weights 400/500) via `next/font/google`
+- CSS variables: `--font-dm-sans`, `--font-dm-mono`
+- Dark background: `#080c14`
+- Wraps children with `<MarketingNav />` and `<MarketingFooter />`
+
+#### Components
+**`components/marketing/MarketingNav.tsx`** (`'use client'`)
+- Sticky dark nav: `fixed top-0 left-0 right-0 z-50 bg-[#080c14]/90 backdrop-blur-md border-b border-white/[0.06]`
+- Wordmark: `nav` in `text-sky-400`, `hub` in `text-white/50`
+- Desktop: Features / Demo / Contact links, "Sign in" + "Request a Demo" CTA button
+- Mobile: hamburger (Menu/X icon) with dropdown panel
+
+**`components/marketing/MarketingFooter.tsx`** (server)
+- Links: Demo → `/demo`, Contact → `/contact`, Sign in → `https://app.navhub.co`, Privacy → `/privacy`
+- Copyright line
+
+#### Pages
+
+| Page | Path | Description |
+|------|------|-------------|
+| Homepage | `app/(marketing)/page.tsx` | Server component; animated dark mesh gradient hero; 6 sections |
+| Demo Request | `app/(marketing)/demo/page.tsx` | Client form; Name*, Email*, Company, Message → POST `/api/marketing/demo` |
+| Contact | `app/(marketing)/contact/page.tsx` | Client form; Name*, Email*, Message* → POST `/api/marketing/contact` |
+
+**Homepage sections:**
+1. Hero — animated gradient orbs (`@keyframes mesh-drift-1/2/3` via `<style>` JSX), headline, two CTA buttons
+2. The Problem — bold statement
+3. Core Capabilities — 4 cards with lucide-react icons
+4. How It Works — step-by-step HR Agent example story
+5. Trust & Control — 6 trust points grid
+6. Final CTA
+
+**Success state** on form pages: `CheckCircle2` icon + confirmation message (email displayed).
+
+#### API routes
+```
+POST /api/marketing/demo      → insert demo_requests + Resend notification to DEMO_NOTIFICATION_EMAIL
+POST /api/marketing/contact   → insert contact_submissions + Resend notification to DEMO_NOTIFICATION_EMAIL
+```
+Both use `createAdminClient()` (no auth required — public routes). Resend notification is non-fatal (void fire-and-forget).
+
+#### Middleware changes
+Added to `isPublic`:
+```typescript
+pathname === '/'                       ||
+pathname === '/demo'                   ||
+pathname === '/contact'                ||
+pathname.startsWith('/api/marketing/') ||
+pathname.startsWith('/api/keystatic/') ||
+pathname.startsWith('/keystatic')
+```
+
+#### New environment variable
+```bash
+DEMO_NOTIFICATION_EMAIL=   # email address to receive demo + contact notifications
+```
+
+---
+
+### WS2 — Keystatic CMS
+
+#### Packages installed
+- `@keystatic/core` `^0.5.48` — core CMS primitives
+- `@keystatic/next` `^5.0.4` — Next.js App Router integration
+
+#### `keystatic.config.ts` (root)
+```typescript
+import { config, collection, singleton, fields } from '@keystatic/core'
+export default config({
+  storage: { kind: 'github', repo: { owner: 'weslawrence', name: 'navhub-app' } },
+  singletons: {
+    marketing: singleton({
+      label: 'Marketing Homepage',
+      path: 'content/marketing/',
+      schema: { heroHeadline, heroSubheadline, ctaPrimary, ctaSecondary, problemStatement },
+    }),
+  },
+  collections: {
+    posts: collection({
+      label: 'Blog Posts',
+      slugField: 'title',
+      path: 'content/posts/**',
+      format: { contentField: 'content' },
+      schema: { title (slug), publishedAt, summary, content (markdoc) },
+    }),
+  },
+})
+```
+
+#### API route — `app/api/keystatic/[...params]/route.ts`
+```typescript
+import { makeRouteHandler } from '@keystatic/next/route-handler'
+import config from '../../../../keystatic.config'
+export const { GET, POST } = makeRouteHandler({ config })
+```
+
+#### Page — `app/keystatic/[[...params]]/page.tsx`
+```typescript
+'use client'
+import { makePage } from '@keystatic/next/ui/app'
+import config from '../../../keystatic.config'
+export default makePage(config)
+```
+
+#### Auth guard — `app/keystatic/layout.tsx`
+Server Component — verifies session + `super_admin` role via `user_groups` table. Redirects:
+- No session → `/login`
+- Not super_admin → `/dashboard`
+
+#### Middleware — PAT injection
+Inside the `isPublic` block, for keystatic paths with an authenticated session:
+```typescript
+if (
+  session &&
+  process.env.KEYSTATIC_GITHUB_TOKEN &&
+  (pathname.startsWith('/keystatic') || pathname.startsWith('/api/keystatic/'))
+) {
+  response.cookies.set('keystatic-gh-access-token', process.env.KEYSTATIC_GITHUB_TOKEN, {
+    httpOnly: true, path: '/', maxAge: 3600, sameSite: 'lax',
+  })
+}
+```
+Keystatic reads `keystatic-gh-access-token` cookie internally for GitHub API calls.
+
+#### Admin nav link (`app/(admin)/layout.tsx`)
+Added "CMS ↗" link that opens `/keystatic` in a new tab (`target="_blank"`), rendered after the regular NAV_LINKS.
+
+#### Seed content
+- `content/marketing/index.json` — default values for marketing singleton
+- `content/posts/welcome.mdoc` — welcome blog post in Markdoc format
+
+#### New environment variables
+```bash
+KEYSTATIC_GITHUB_CLIENT_ID=       # GitHub OAuth App client ID (for Keystatic auth)
+KEYSTATIC_GITHUB_CLIENT_SECRET=   # GitHub OAuth App client secret
+KEYSTATIC_SECRET=                 # Random secret for Keystatic session signing
+KEYSTATIC_GITHUB_TOKEN=           # GitHub PAT with repo read/write access
+```
+
+#### Keystatic API modules
+| Import path | Export | Usage |
+|-------------|--------|-------|
+| `@keystatic/next/route-handler` | `makeRouteHandler({ config })` | API route GET/POST handlers |
+| `@keystatic/next/ui/app` | `makePage(config)` | App Router page component |
+

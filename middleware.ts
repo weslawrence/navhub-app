@@ -47,13 +47,39 @@ export async function middleware(request: NextRequest) {
     // Standalone document viewer — allows token-based unauthenticated access
     pathname.startsWith('/view/document/')      ||
     // Public file endpoint — serves shared reports via token
-    pathname.startsWith('/api/reports/public/')
+    pathname.startsWith('/api/reports/public/') ||
+    // Marketing site — public pages and API routes
+    pathname === '/'                            ||
+    pathname === '/demo'                        ||
+    pathname === '/contact'                     ||
+    pathname.startsWith('/api/marketing/')      ||
+    // Keystatic CMS — auth guarded by app/keystatic/layout.tsx
+    pathname.startsWith('/api/keystatic/')      ||
+    pathname.startsWith('/keystatic')
 
   if (isPublic) {
     // Redirect authenticated users away from login
     if (pathname === '/login' && session) {
       return NextResponse.redirect(new URL('/dashboard', request.url))
     }
+
+    // ── Keystatic GitHub PAT injection ──────────────────────────────────────
+    // Inject the GitHub access token as a cookie when an authenticated user
+    // accesses Keystatic routes. The Keystatic layout then guards super_admin
+    // access. Keystatic reads this cookie internally for GitHub API calls.
+    if (
+      session &&
+      process.env.KEYSTATIC_GITHUB_TOKEN &&
+      (pathname.startsWith('/keystatic') || pathname.startsWith('/api/keystatic/'))
+    ) {
+      response.cookies.set('keystatic-gh-access-token', process.env.KEYSTATIC_GITHUB_TOKEN, {
+        httpOnly: true,
+        path:     '/',
+        maxAge:   3600,
+        sameSite: 'lax',
+      })
+    }
+
     return response
   }
 

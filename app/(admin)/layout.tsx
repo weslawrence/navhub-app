@@ -13,6 +13,9 @@ const NAV_LINKS = [
   { label: 'System',     href: '/admin/system' },
 ]
 
+// CMS link opens in new tab (Keystatic)
+const CMS_HREF = '/keystatic'
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
   const { data: { session } } = await supabase.auth.getSession()
@@ -56,6 +59,15 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               {label}
             </Link>
           ))}
+          {/* CMS — opens Keystatic in a new tab */}
+          <a
+            href={CMS_HREF}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="px-3 py-1.5 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors whitespace-nowrap"
+          >
+            CMS ↗
+          </a>
         </div>
 
         {/* Exit Admin */}

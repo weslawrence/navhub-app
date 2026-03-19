@@ -802,6 +802,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Marketing Site | ✅ Complete | app/(marketing)/ route group, dark SaaS homepage, demo + contact pages, 019_marketing.sql (5 tables) |
 | Keystatic CMS | ❌ Removed | GitHub OAuth not configured; removed to unblock Vercel build. To revisit when OAuth app is set up. |
 | Members API Fix + Support/Feedback + Agent Polish | ✅ Complete | Migration 020 (support_requests, feature_suggestions, agent personality/scheduling cols), HelpMenu in sidebar, SupportModal, FeatureSuggestionModal, /api/support + /api/feature-suggestions, admin system page updates, agents/[id]/page.tsx (Schedule + Personality + API Keys tabs), BYO Anthropic key per-agent, buildSystemPrompt communication_style + response_length |
+| Agent Tool Fixes | ✅ Complete | renderReport/generateReport parameter validation (template_id, report_name, slot_data guards); safeName null-safety; stronger CRITICAL TOOL SEQUENCING RULES in buildSystemPrompt; explicit render_report tool description requiring list → read → render sequence |
 
 ---
 

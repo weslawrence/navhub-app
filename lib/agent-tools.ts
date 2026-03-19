@@ -244,6 +244,14 @@ export async function generateReport(
 ): Promise<string> {
   const admin = createAdminClient()
 
+  // Parameter validation
+  if (!params.title || typeof params.title !== 'string') {
+    return JSON.stringify({
+      success: false,
+      error: 'report_name (title) is required.',
+    })
+  }
+
   let html: string
 
   // If template_id + slot_data provided, render via template system
@@ -270,7 +278,7 @@ export async function generateReport(
 
   // Save to Supabase Storage
   const timestamp   = Date.now()
-  const safeName    = params.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)
+  const safeName    = (params.title ?? 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)
   const storagePath = `${context.groupId}/reports/${timestamp}_${safeName}.html`
 
   const { error: uploadErr } = await admin.storage
@@ -760,11 +768,26 @@ export async function renderReport(
 ): Promise<string> {
   const admin = createAdminClient()
 
-  console.log('renderReport debug:', { 
-    template_id: params.template_id, 
-    groupId: context.groupId 
-  })
-  
+  // Parameter validation
+  if (!params.template_id || params.template_id === 'undefined') {
+    return JSON.stringify({
+      success: false,
+      error: 'template_id is required. Call list_report_templates first to get the template_id, then pass it here.',
+    })
+  }
+  if (!params.report_name || typeof params.report_name !== 'string' || params.report_name.trim() === '') {
+    return JSON.stringify({
+      success: false,
+      error: 'report_name is required and must be a non-empty string.',
+    })
+  }
+  if (!params.slot_data || typeof params.slot_data !== 'object') {
+    return JSON.stringify({
+      success: false,
+      error: 'slot_data is required and must be an object mapping slot names to values.',
+    })
+  }
+
   // Fetch template
   const { data: tmpl } = await admin
     .from('report_templates')
@@ -787,7 +810,7 @@ export async function renderReport(
 
   // Save to Storage
   const timestamp   = Date.now()
-  const safeName    = params.report_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)
+  const safeName    = (params.report_name ?? 'report').toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60)
   const storagePath = `${context.groupId}/reports/${timestamp}_${safeName}.html`
 
   const { error: uploadErr } = await admin.storage

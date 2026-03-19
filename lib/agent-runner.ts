@@ -186,7 +186,7 @@ const ALL_TOOL_DEFS: Record<string, object> = {
   },
   render_report: {
     name:        'render_report',
-    description: 'Render a template with slot data and save to the Custom Reports Library.',
+    description: 'Fill a template with slot data and save to the Reports Library. REQUIRED SEQUENCE: (1) Call list_report_templates to get the template_id — never guess or assume an ID. (2) Call read_report_template with that template_id to see the slot definitions. (3) Call render_report with the template_id, slot_data matching the slot definitions, and a report_name. The template_id must be a UUID obtained from list_report_templates.',
     input_schema: {
       type: 'object',
       properties: {
@@ -456,11 +456,12 @@ async function buildSystemPrompt(
     '\nAvailable data:',
     `* Financial periods available: ${periodList}`,
     context.extra_instructions ? `\nAdditional instructions: ${context.extra_instructions}` : '',
-    '\nTool sequencing rules:',
-    '* NEVER call read_report_template without first calling list_report_templates to get the template_id',
-    '* NEVER assume or guess a template_id — always look it up first via list_report_templates',
-    '* NEVER call render_report without first calling read_report_template to verify the slots',
-    '* list_report_templates returns a template_id field — use that exact value in subsequent calls',
+    '\nCRITICAL TOOL SEQUENCING RULES:',
+    '* NEVER call read_report_template without first calling list_report_templates to obtain the template_id',
+    '* NEVER call render_report without first calling list_report_templates AND read_report_template',
+    '* NEVER assume, guess, or hardcode a template_id — always look it up via list_report_templates first',
+    '* list_report_templates returns template_id fields — copy the exact UUID value into subsequent calls',
+    '* If you think you know the template_id, you are wrong — always call list_report_templates first',
     '* Use ask_user when you need specific information from the user (e.g. which company, which period, preferred format). Ask one concise question at a time. The user will reply and the run will continue automatically.',
   ].filter(Boolean).join('\n')
 }

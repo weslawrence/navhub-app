@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   FileText, Upload, Plus, X, Check, Loader2, BookOpen, Share2,
   Search, LayoutGrid, List, ChevronDown, Sparkles, Tag,
-  ArrowUpDown, MoreHorizontal, Pencil,
+  ArrowUpDown, MoreHorizontal,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'

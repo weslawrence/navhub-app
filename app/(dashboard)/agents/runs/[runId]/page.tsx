@@ -594,9 +594,16 @@ export default function RunStreamPage() {
 
             {/* Model + tokens meta — shown when done */}
             {isDone && (modelLabel ?? tokens > 0) && (
-              <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                {modelLabel && <span>{modelLabel}</span>}
-                {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
+              <div className="flex flex-col gap-0.5">
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {modelLabel && <span>{modelLabel}</span>}
+                  {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
+                </div>
+                {tokens > 20000 && (
+                  <div className="text-amber-400 text-xs">
+                    ⚠️ High token usage — consider simplifying the brief or reducing enabled tools
+                  </div>
+                )}
               </div>
             )}
 

@@ -666,14 +666,7 @@ async function callClaude(
 
       const evType = event.type as string
 
-      if (evType === 'content_block_delta') {
-        const delta = event.delta as Record<string, unknown>
-        if (delta.type === 'text_delta') {
-          const chunk = delta.text as string
-          fullText += chunk
-          onChunk(chunk)
-        }
-      } else if (evType === 'content_block_start') {
+      if (evType === 'content_block_start') {
         const block = event.content_block as Record<string, unknown>
         if (block.type === 'tool_use') {
           toolUses.push({
@@ -684,9 +677,13 @@ async function callClaude(
         }
       } else if (evType === 'content_block_delta') {
         const delta = event.delta as Record<string, unknown>
-        if (delta.type === 'input_json_delta' && toolUses.length > 0) {
+        if (delta.type === 'text_delta') {
+          const chunk = delta.text as string
+          fullText += chunk
+          onChunk(chunk)
+        } else if (delta.type === 'input_json_delta' && toolUses.length > 0) {
+          // Accumulate tool input JSON fragments — will be parsed after stream ends
           const last = toolUses[toolUses.length - 1]
-          // Accumulate JSON — will be parsed at message_stop
           const existing = (last.input as Record<string, unknown>).__raw ?? ''
           last.input = { __raw: (existing as string) + (delta.partial_json as string ?? '') }
         }
@@ -965,8 +962,22 @@ export async function executeAgentRun(
     let continueLoop   = true
     const toolCallLogs: ToolCallLog[] = []
 
+    // Loop guards — prevent infinite tool call loops
+    const MAX_ITERATIONS   = 10
+    const MAX_TOOL_FAILURES = 3
+    let   iterationCount   = 0
+    const toolFailureCounts: Record<string, number> = {}
+
     // Agentic loop — continue until no more tool calls
     while (continueLoop) {
+      iterationCount++
+      if (iterationCount > MAX_ITERATIONS) {
+        const msg = '\n\n⚠️ Agent stopped: maximum iterations reached.'
+        fullOutput += msg
+        onChunk({ type: 'text', content: msg })
+        continueLoop = false
+        break
+      }
       // ── Cancellation checkpoint ──────────────────────────────────────────
       // Poll the DB at the start of every iteration. If a cancel was requested
       // (via POST /api/agents/runs/[id]/cancel) while we were executing tools,
@@ -1035,6 +1046,14 @@ export async function executeAgentRun(
         const toolName = tc.name as AgentTool
         const startTs  = Date.now()
 
+        // Diagnostic log — helps debug tool input issues
+        console.log('Tool call raw:', JSON.stringify({
+          tool:        tc.name,
+          input:       tc.input,
+          inputKeys:   Object.keys(tc.input || {}),
+          inputValues: Object.values(tc.input || {}),
+        }))
+
         onChunk({ type: 'tool_start', tool: toolName, input: tc.input })
 
         let output: string
@@ -1072,6 +1091,20 @@ export async function executeAgentRun(
         const durationMs = Date.now() - startTs
         onChunk({ type: 'tool_end', tool: toolName, output })
 
+        // Track consecutive tool failures — stop if a tool fails too many times
+        if (output.includes('"success":false') || output.startsWith('Error:')) {
+          toolFailureCounts[toolName] = (toolFailureCounts[toolName] ?? 0) + 1
+          if (toolFailureCounts[toolName] >= MAX_TOOL_FAILURES) {
+            const errorMsg = `\n\n⚠️ Agent stopped: ${toolName} failed ${MAX_TOOL_FAILURES} times consecutively. Last error: ${output}`
+            fullOutput += errorMsg
+            onChunk({ type: 'text', content: errorMsg })
+            continueLoop = false
+          }
+        } else {
+          // Reset failure count on success
+          toolFailureCounts[toolName] = 0
+        }
+
         toolCallLogs.push({
           tool:        toolName,
           input:       tc.input,
@@ -1085,10 +1118,13 @@ export async function executeAgentRun(
           tool_use_id: tc.id,
           content:     output,
         })
+
+        // If loop guard triggered, break inner loop too
+        if (!continueLoop) break
       }
 
-      // Add tool results to messages
-      messages.push({ role: 'user', content: toolResults })
+      // Add tool results to messages (only if loop is still running)
+      if (continueLoop) messages.push({ role: 'user', content: toolResults })
     }
 
     // Check for generated draft report

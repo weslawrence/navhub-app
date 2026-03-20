@@ -804,6 +804,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Members API Fix + Support/Feedback + Agent Polish | ✅ Complete | Migration 020 (support_requests, feature_suggestions, agent personality/scheduling cols), HelpMenu in sidebar, SupportModal, FeatureSuggestionModal, /api/support + /api/feature-suggestions, admin system page updates, agents/[id]/page.tsx (Schedule + Personality + API Keys tabs), BYO Anthropic key per-agent, buildSystemPrompt communication_style + response_length |
 | Agent Tool Fixes | ✅ Complete | renderReport/generateReport parameter validation (template_id, report_name, slot_data guards); safeName null-safety; stronger CRITICAL TOOL SEQUENCING RULES in buildSystemPrompt; explicit render_report tool description requiring list → read → render sequence |
 | Phase 7c+7d — Document Exports + Share Token | ✅ Complete | Install docx + pptxgenjs; lib/document-export.ts (parseMarkdown, exportToDocx, exportToPptx, exportToPdfHtml); GET /api/documents/[id]/export?format=docx|pptx|pdf; Export dropdown on document page; migration 021 no-op (share columns already in 014) |
+| Agent Tool Input Bug Fix + Loop Guard | ✅ Complete | Fixed dead-code else-if in callClaude SSE parser (input_json_delta never ran); tool input logging before executeTool; loop guard (MAX_ITERATIONS=10, MAX_TOOL_FAILURES=3 per tool); token >20k warning in run page |
 
 ---
 
@@ -3062,4 +3063,95 @@ The following were already fully implemented as part of Phase 7a (migration 014)
 - `app/(dashboard)/documents/page.tsx` — emerald "Shared" badge on cards
 
 `supabase/migrations/021_document_sharing.sql` is a no-op placeholder confirming these columns exist.
+
+---
+
+## Agent Tool Input Bug Fix + Loop Guard
+
+### Fix 1 — Tool Input Parsing Bug (`lib/agent-runner.ts`)
+
+**Root cause**: The `callClaude` SSE stream parser had a duplicate `else if (evType === 'content_block_delta')` branch. In an if-else chain, only the **first** matching branch executes. The second branch (which handled `input_json_delta` accumulation) was **dead code** — it never ran. As a result, tool input JSON fragments were never accumulated, and all tool calls received an empty `{}` input object, causing `template_id`, `company_id`, etc. to be `undefined`.
+
+**Before (broken)**:
+```typescript
+if (evType === 'content_block_delta') {         // ← caught text_delta here
+  if (delta.type === 'text_delta') { ... }
+} else if (evType === 'content_block_start') {
+  ...
+} else if (evType === 'content_block_delta') {  // ← DEAD CODE — never reached
+  if (delta.type === 'input_json_delta') { ... }
+}
+```
+
+**After (fixed)**: merged into a single `content_block_delta` branch with two sub-conditions:
+```typescript
+if (evType === 'content_block_start') {
+  ...
+} else if (evType === 'content_block_delta') {
+  const delta = event.delta as Record<string, unknown>
+  if (delta.type === 'text_delta') {
+    fullText += chunk; onChunk(chunk)
+  } else if (delta.type === 'input_json_delta' && toolUses.length > 0) {
+    // Accumulate tool input JSON fragments — parsed after stream ends
+    const last = toolUses[toolUses.length - 1]
+    const existing = (last.input as Record<string, unknown>).__raw ?? ''
+    last.input = { __raw: (existing as string) + (delta.partial_json as string ?? '') }
+  }
+}
+```
+
+**Diagnostic logging** added before each `executeTool` call:
+```typescript
+console.log('Tool call raw:', JSON.stringify({
+  tool: tc.name, input: tc.input,
+  inputKeys: Object.keys(tc.input || {}), inputValues: Object.values(tc.input || {}),
+}))
+```
+
+### Fix 2 — Loop Guard (`lib/agent-runner.ts`)
+
+Added two guards to prevent infinite loops:
+
+**Maximum iterations** (checked at the top of each while loop iteration):
+```typescript
+const MAX_ITERATIONS = 10
+let   iterationCount = 0
+// ...
+iterationCount++
+if (iterationCount > MAX_ITERATIONS) {
+  const msg = '\n\n⚠️ Agent stopped: maximum iterations reached.'
+  fullOutput += msg; onChunk({ type: 'text', content: msg })
+  continueLoop = false; break
+}
+```
+
+**Per-tool failure tracking** (checked after each tool execution):
+```typescript
+const MAX_TOOL_FAILURES = 3
+const toolFailureCounts: Record<string, number> = {}
+// After output is received:
+if (output.includes('"success":false') || output.startsWith('Error:')) {
+  toolFailureCounts[toolName] = (toolFailureCounts[toolName] ?? 0) + 1
+  if (toolFailureCounts[toolName] >= MAX_TOOL_FAILURES) {
+    const errorMsg = `\n\n⚠️ Agent stopped: ${toolName} failed 3 times. Last error: ${output}`
+    fullOutput += errorMsg; onChunk({ type: 'text', content: errorMsg })
+    continueLoop = false
+  }
+} else {
+  toolFailureCounts[toolName] = 0  // Reset on success
+}
+```
+
+Inner for-loop also breaks when `continueLoop` becomes false. Tool results are only appended to messages if the loop is still running.
+
+### Fix 3 — High Token Usage Warning (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+
+Amber warning shown in the Output section header area when `tokens > 20000`:
+```tsx
+{tokens > 20000 && (
+  <div className="text-amber-400 text-xs">
+    ⚠️ High token usage — consider simplifying the brief or reducing enabled tools
+  </div>
+)}
+```
 

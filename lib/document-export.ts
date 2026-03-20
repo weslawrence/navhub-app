@@ -21,7 +21,6 @@ import {
   ShadingType,
   BorderStyle,
   LevelFormat,
-  UnderlineType,
 } from 'docx'
 import PptxGenJS from 'pptxgenjs'
 import type { Document as NavDocument, DocumentType } from '@/lib/types'

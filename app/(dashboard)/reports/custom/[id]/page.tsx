@@ -1,14 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
-import { useParams, useRouter }              from 'next/navigation'
-import Link                                  from 'next/link'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useParams, useRouter }                       from 'next/navigation'
+import Link                                           from 'next/link'
 import {
   ArrowLeft, Download, Trash2, Loader2, AlertCircle,
-  ExternalLink, Share2, Copy, Check, X, Link2, Link2Off,
+  ExternalLink, Share2, Copy, Check, X, Link2, Link2Off, Pencil,
 } from 'lucide-react'
-import { Button }    from '@/components/ui/button'
-import { cn }        from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { cn }     from '@/lib/utils'
 
 // ── Share status type ─────────────────────────────────────────────────────────
 interface ShareStatus {
@@ -22,14 +22,14 @@ function SharePopover({
   reportId,
   onClose,
 }: {
-  reportId:   string
-  onClose:    () => void
+  reportId: string
+  onClose:  () => void
 }) {
-  const [status,   setStatus]   = useState<ShareStatus | null>(null)
-  const [loading,  setLoading]  = useState(true)
-  const [saving,   setSaving]   = useState(false)
-  const [error,    setError]    = useState<string | null>(null)
-  const [copied,   setCopied]   = useState(false)
+  const [status,  setStatus]  = useState<ShareStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
+  const [copied,  setCopied]  = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -216,6 +216,11 @@ export default function ReportViewerPage() {
   const [ready,      setReady]      = useState(false)
   const [showShare,  setShowShare]  = useState(false)
 
+  // Edit mode state
+  const [editMode,   setEditMode]   = useState(false)
+  const [editSaving, setEditSaving] = useState(false)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+
   const fileUrl = `/api/reports/custom/${params.id}/file`
 
   useEffect(() => {
@@ -262,6 +267,115 @@ export default function ReportViewerPage() {
       setDeleting(false)
     }
   }
+
+  // ── Edit mode helpers ──────────────────────────────────────────────────────
+
+  function enterEditMode() {
+    setEditMode(true)
+    // Wait a tick — the iframe DOM is already loaded but React needs to commit the ref
+    setTimeout(() => {
+      const iframe = iframeRef.current
+      if (!iframe?.contentDocument) return
+      const doc = iframe.contentDocument
+
+      // Make leaf text elements contenteditable
+      const editableSelectors = [
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+        'p', 'span', 'td', 'th', 'li',
+        'div:not(:has(> div)):not(:has(> table))', // leaf divs only
+      ]
+
+      editableSelectors.forEach(selector => {
+        doc.querySelectorAll(selector).forEach((el: Element) => {
+          // Skip elements that contain block-level children (would create nested editable issues)
+          const hasBlockChildren = Array.from(el.children).some(child =>
+            ['DIV', 'P', 'TABLE', 'UL', 'OL', 'H1', 'H2', 'H3'].includes(child.tagName)
+          )
+          if (!hasBlockChildren) {
+            ;(el as HTMLElement).contentEditable = 'true'
+            ;(el as HTMLElement).style.outline   = 'none'
+            ;(el as HTMLElement).style.cursor    = 'text'
+          }
+        })
+      })
+
+      // Inject amber hover/focus highlight styles into the iframe document
+      const style = doc.createElement('style')
+      style.id = 'navhub-edit-styles'
+      style.textContent = `
+        [contenteditable="true"] {
+          border-radius: 2px;
+          transition: background 0.15s;
+        }
+        [contenteditable="true"]:hover {
+          background: rgba(251,191,36,0.08) !important;
+          outline: 1px dashed rgba(251,191,36,0.4) !important;
+          outline-offset: 2px;
+        }
+        [contenteditable="true"]:focus {
+          background: rgba(251,191,36,0.12) !important;
+          outline: 1.5px solid rgba(251,191,36,0.6) !important;
+          outline-offset: 2px;
+        }
+      `
+      doc.head.appendChild(style)
+    }, 100)
+  }
+
+  function exitEditMode() {
+    setEditMode(false)
+    const iframe = iframeRef.current
+    if (!iframe?.contentDocument) return
+    const doc = iframe.contentDocument
+
+    // Strip contenteditable from all elements and reset inline styles
+    doc.querySelectorAll('[contenteditable]').forEach((el: Element) => {
+      ;(el as HTMLElement).removeAttribute('contenteditable')
+      ;(el as HTMLElement).style.cursor = ''
+    })
+
+    // Remove injected edit styles
+    doc.getElementById('navhub-edit-styles')?.remove()
+  }
+
+  async function saveReport() {
+    const iframe = iframeRef.current
+    if (!iframe?.contentDocument) return
+
+    setEditSaving(true)
+    try {
+      const doc = iframe.contentDocument
+
+      // Strip edit mode artifacts before serialising so they don't end up in the saved file
+      doc.querySelectorAll('[contenteditable]').forEach((el: Element) => {
+        ;(el as HTMLElement).removeAttribute('contenteditable')
+        ;(el as HTMLElement).style.cursor  = ''
+        ;(el as HTMLElement).style.outline = ''
+      })
+      doc.getElementById('navhub-edit-styles')?.remove()
+
+      // Serialise the full modified document
+      const html = '<!DOCTYPE html>\n' + doc.documentElement.outerHTML
+
+      // Overwrite the file in Storage via the content API
+      const res = await fetch(`/api/reports/custom/${params.id}/content`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ html }),
+      })
+
+      if (!res.ok) throw new Error('Failed to save')
+
+      // Re-enable editing on the now-saved content (no reload needed)
+      enterEditMode()
+      setEditSaving(false)
+    } catch (err) {
+      console.error('Save failed:', err)
+      setEditSaving(false)
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col h-[calc(100vh-3.5rem-3rem)]" style={{ minHeight: 0 }}>
@@ -313,9 +427,30 @@ export default function ReportViewerPage() {
                   <ExternalLink className="h-4 w-4 mr-1.5" /> Open in tab
                 </a>
               </Button>
+
+              {/* Edit button — admin only, hidden during edit mode */}
+              {isAdmin && !editMode && (
+                <Button variant="outline" size="sm" onClick={enterEditMode}>
+                  <Pencil className="h-4 w-4 mr-1.5" /> Edit Report
+                </Button>
+              )}
+
+              {/* Cancel + Save — shown only in edit mode */}
+              {isAdmin && editMode && (
+                <>
+                  <Button variant="outline" size="sm" onClick={exitEditMode}>
+                    Cancel
+                  </Button>
+                  <Button size="sm" onClick={() => void saveReport()} disabled={editSaving}>
+                    {editSaving ? 'Saving...' : 'Save Changes'}
+                  </Button>
+                </>
+              )}
             </>
           )}
-          {isAdmin && (
+
+          {/* Delete — admin only, hidden while editing to avoid accidental loss */}
+          {isAdmin && !editMode && (
             <Button
               variant="outline"
               size="sm"
@@ -401,8 +536,17 @@ export default function ReportViewerPage() {
               </div>
             </div>
 
-            {/* iframe fills remaining height */}
+            {/* Edit mode amber banner */}
+            {editMode && (
+              <div className="bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 text-xs text-amber-400 flex items-center gap-2 flex-shrink-0">
+                <Pencil className="h-3 w-3" />
+                Edit mode — click any text to edit it directly. Click Save Changes when done.
+              </div>
+            )}
+
+            {/* Report iframe — fills remaining height */}
             <iframe
+              ref={iframeRef}
               src={fileUrl}
               title={reportName || 'Custom Report'}
               className="w-full flex-1 border-0 bg-white"

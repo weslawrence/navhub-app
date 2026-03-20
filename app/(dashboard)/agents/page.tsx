@@ -68,10 +68,11 @@ export default function AgentsPage() {
   const searchParams = useSearchParams()
   const briefParam   = searchParams.get('brief') ?? ''
 
-  const [agents,    setAgents]    = useState<Agent[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [isAdmin,   setIsAdmin]   = useState(false)
-  const [runTarget, setRunTarget] = useState<Agent | null>(null)
+  const [agents,       setAgents]       = useState<Agent[]>([])
+  const [loading,      setLoading]      = useState(true)
+  const [isAdmin,      setIsAdmin]      = useState(false)
+  const [runTarget,    setRunTarget]    = useState<Agent | null>(null)
+  const [initialBrief, setInitialBrief] = useState(briefParam)
 
   useEffect(() => {
     async function load() {
@@ -87,6 +88,18 @@ export default function AgentsPage() {
     }
     void load()
   }, [])
+
+  // Auto-open RunModal when ?brief= param is present and agents are loaded
+  useEffect(() => {
+    if (loading || !briefParam || runTarget) return
+    const activeAgents = agents.filter(a => a.is_active)
+    if (activeAgents.length === 0) return
+    // Pick first active agent — user can change in modal
+    setInitialBrief(briefParam)
+    setRunTarget(activeAgents[0])
+    // Clear URL param without page reload
+    window.history.replaceState({}, '', '/agents')
+  }, [loading, briefParam, agents]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleToggleActive(agent: Agent) {
     const newValue = !agent.is_active
@@ -177,8 +190,8 @@ export default function AgentsPage() {
       {runTarget && (
         <RunModal
           agent={runTarget}
-          initialInstructions={briefParam}
-          onClose={() => setRunTarget(null)}
+          initialInstructions={initialBrief}
+          onClose={() => { setRunTarget(null); setInitialBrief('') }}
         />
       )}
     </div>

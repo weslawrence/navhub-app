@@ -19,11 +19,18 @@ export interface AssistantContext {
   folders:          { id: string; name: string }[]
 }
 
+export interface AssistantQuestion {
+  question:     string
+  options:      string[]
+  multiSelect?: boolean
+}
+
 export interface AssistantMessage {
-  id:       string
-  role:     'user' | 'assistant'
-  content:  string
-  brief?:   string | null   // extracted agent brief if present
+  id:        string
+  role:      'user' | 'assistant'
+  content:   string
+  brief?:    string | null       // extracted agent brief if present
+  question?: AssistantQuestion | null  // structured question card if present
 }
 
 // ─── Brief extraction ─────────────────────────────────────────────────────────
@@ -39,6 +46,34 @@ export function extractBrief(text: string): { displayText: string; brief: string
   const brief       = match[1].trim()
   const displayText = text.replace(/\[BRIEF_START\][\s\S]*?\[BRIEF_END\]/g, '').trim()
   return { displayText, brief }
+}
+
+// ─── Question extraction ──────────────────────────────────────────────────────
+
+/**
+ * Parses [QUESTION_START]...[QUESTION_END] markers from assistant response text.
+ * The marker content must be a JSON object: { question, options, multiSelect? }
+ * Returns the display text (markers removed) and the extracted question (or null).
+ */
+export function extractQuestion(text: string): { displayText: string; question: AssistantQuestion | null } {
+  const match = /\[QUESTION_START\]([\s\S]*?)\[QUESTION_END\]/g.exec(text)
+  if (!match) return { displayText: text, question: null }
+
+  let question: AssistantQuestion | null = null
+  try {
+    const parsed = JSON.parse(match[1].trim()) as AssistantQuestion
+    // Validate structure
+    if (
+      typeof parsed.question === 'string' &&
+      Array.isArray(parsed.options) &&
+      parsed.options.length >= 2
+    ) {
+      question = parsed
+    }
+  } catch { /* invalid JSON — ignore */ }
+
+  const displayText = text.replace(/\[QUESTION_START\][\s\S]*?\[QUESTION_END\]/g, '').trim()
+  return { displayText, question }
 }
 
 // ─── System prompt builder ────────────────────────────────────────────────────
@@ -122,9 +157,16 @@ ${reportsList}
 Document folders:
 ${foldersList}
 
+RESPONSE BEHAVIOUR:
+- Be direct and action-oriented. Make reasonable assumptions based on context — do NOT ask unnecessary clarifying questions.
+- If you genuinely cannot proceed without one specific piece of information, ask ONLY ONE question — the most important one — and always provide 2–4 specific options the user can click.
+- NEVER ask open-ended questions without options. NEVER ask more than one question per response.
+- When you must ask, emit the question using this exact JSON format inside markers (do not include anything after the marker):
+  [QUESTION_START]{"question":"Which period should I focus on?","options":["Last month","This quarter","Current financial year","All available periods"],"multiSelect":false}[QUESTION_END]
+- If asking a multi-select question (e.g. which companies to include), set "multiSelect":true.
+
 When helping with agent briefs:
-- Ask clarifying questions if needed (what period? what audience? what company?)
-- Draft a specific, actionable brief the user can use directly
+- Draft a specific, actionable brief the user can use directly — don't ask for clarification unless truly blocked
 - Reference the exact template NAME (not ID) — agents must always look up IDs themselves
 - NEVER include a template_id or any UUID in a brief — agents use list_report_templates to find IDs
 - Always instruct the agent to: (1) call list_report_templates to find the template by name, (2) use the returned template_id with read_report_template, (3) then render_report

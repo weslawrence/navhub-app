@@ -6,15 +6,16 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm     from 'remark-gfm'
 import {
   X, Plus, Send, Copy, Check, ExternalLink, Sparkles,
+  Maximize2, Minimize2, History, ChevronLeft, Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn }     from '@/lib/utils'
-import type { AssistantMessage } from '@/lib/assistant'
+import type { AssistantMessage, AssistantQuestion } from '@/lib/assistant'
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DEFAULT_WIDTH  = 420
-const DEFAULT_HEIGHT = 580
+const DEFAULT_WIDTH  = 480
+const DEFAULT_HEIGHT = 640
 const MIN_WIDTH      = 300
 const MIN_HEIGHT     = 400
 const MAX_WIDTH      = 800
@@ -22,6 +23,16 @@ const MAX_HEIGHT     = 900
 
 const STORAGE_KEY_POSITION = 'navhub:assistant:position'
 const STORAGE_KEY_SIZE     = 'navhub:assistant:size'
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+type PanelMessage = AssistantMessage & { streaming?: boolean }
+
+interface ConvSummary {
+  id:         string
+  title:      string
+  updated_at: string
+}
 
 // ─── Suggested prompts ────────────────────────────────────────────────────────
 
@@ -32,9 +43,79 @@ const SUGGESTED_PROMPTS = [
   'Help me set up a cash flow forecast',
 ]
 
+// ─── Question Card ────────────────────────────────────────────────────────────
+
+function QuestionCard({
+  q,
+  onConfirm,
+  answered,
+}: {
+  q:         AssistantQuestion
+  onConfirm: (answer: string) => void
+  answered?: boolean
+}) {
+  const [selected, setSelected] = useState<string[]>([])
+
+  function toggle(opt: string) {
+    if (answered) return
+    if (q.multiSelect) {
+      setSelected(prev => prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt])
+    } else {
+      setSelected([opt])
+    }
+  }
+
+  function handleConfirm() {
+    if (selected.length === 0 || answered) return
+    onConfirm(selected.join(', '))
+  }
+
+  return (
+    <div
+      className={cn(
+        'mt-2 rounded-lg border p-3 space-y-2.5',
+        answered
+          ? 'border-border bg-muted/20 opacity-60'
+          : 'border-amber-400/50 bg-amber-950/10 dark:bg-amber-950/20',
+      )}
+    >
+      <p className="text-sm font-medium text-foreground">{q.question}</p>
+      <div className="space-y-1.5">
+        {q.options.map(opt => (
+          <button
+            key={opt}
+            onClick={() => toggle(opt)}
+            disabled={answered}
+            className={cn(
+              'w-full text-left text-sm px-3 py-2 rounded-lg border transition-colors',
+              selected.includes(opt) && !answered
+                ? 'border-amber-400 bg-amber-400/10 text-foreground'
+                : 'border-border text-muted-foreground hover:border-amber-400/50 hover:text-foreground',
+              answered && 'cursor-not-allowed',
+            )}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
+      {!answered && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs border-amber-400/50 hover:border-amber-400 hover:bg-amber-400/10"
+          disabled={selected.length === 0}
+          onClick={handleConfirm}
+        >
+          Confirm
+        </Button>
+      )}
+    </div>
+  )
+}
+
 // ─── Agent Brief Card ─────────────────────────────────────────────────────────
 
-function AgentBriefCard({ brief }: { brief: string }) {
+function AgentBriefCard({ brief, onClose }: { brief: string; onClose?: () => void }) {
   const router  = useRouter()
   const [copied, setCopied] = useState(false)
 
@@ -45,6 +126,7 @@ function AgentBriefCard({ brief }: { brief: string }) {
   }
 
   function handleLaunch() {
+    onClose?.()
     router.push(`/agents?brief=${encodeURIComponent(brief)}`)
   }
 
@@ -96,7 +178,7 @@ function TypingIndicator() {
 
 // ─── Message bubble ───────────────────────────────────────────────────────────
 
-function MessageBubble({ msg }: { msg: AssistantMessage & { streaming?: boolean } }) {
+function MessageBubble({ msg }: { msg: PanelMessage }) {
   const isUser = msg.role === 'user'
 
   return (
@@ -116,7 +198,7 @@ function MessageBubble({ msg }: { msg: AssistantMessage & { streaming?: boolean 
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
               {msg.content || ' '}
             </ReactMarkdown>
-            {(msg as { streaming?: boolean }).streaming && (
+            {msg.streaming && (
               <span className="inline-block w-1.5 h-3.5 bg-current animate-pulse ml-0.5 rounded-sm align-text-bottom" />
             )}
           </div>
@@ -124,6 +206,20 @@ function MessageBubble({ msg }: { msg: AssistantMessage & { streaming?: boolean 
       </div>
     </div>
   )
+}
+
+// ─── Relative date helper ─────────────────────────────────────────────────────
+
+function relativeDate(isoString: string): string {
+  const diff = Date.now() - new Date(isoString).getTime()
+  const mins  = Math.floor(diff / 60_000)
+  const hours = Math.floor(diff / 3_600_000)
+  const days  = Math.floor(diff / 86_400_000)
+  if (mins  < 1)  return 'just now'
+  if (mins  < 60) return `${mins}m ago`
+  if (hours < 24) return `${hours}h ago`
+  if (days  < 7)  return `${days}d ago`
+  return new Date(isoString).toLocaleDateString()
 }
 
 // ─── Assistant Panel ──────────────────────────────────────────────────────────
@@ -137,17 +233,31 @@ interface AssistantPanelProps {
 export default function AssistantPanel({ isAdmin = false, onClose, groupId }: AssistantPanelProps) {
   const pathname = usePathname()
 
-  const [messages,  setMessages]  = useState<(AssistantMessage & { streaming?: boolean })[]>([])
-  const [input,     setInput]     = useState('')
-  const [streaming, setStreaming] = useState(false)
+  const [messages,          setMessages]          = useState<PanelMessage[]>([])
+  const [input,             setInput]             = useState('')
+  const [streaming,         setStreaming]         = useState(false)
+  const [answeredQuestions, setAnsweredQuestions] = useState<Set<string>>(new Set())
 
   // Minimal context — just pathname + role; server builds the full context
-  const [userRole,  setUserRole]  = useState('member')
+  const [userRole,     setUserRole]     = useState('member')
   const [contextReady, setContextReady] = useState(false)
 
   // ── Position & size ──
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
   const [size,     setSize]     = useState<{ width: number; height: number }>({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT })
+
+  // ── Maximise ──
+  const [maximised, setMaximised] = useState(false)
+
+  // ── History sidebar ──
+  const [showHistory,    setShowHistory]    = useState(false)
+  const [conversations,  setConversations]  = useState<ConvSummary[]>([])
+  const [currentConvId,  setCurrentConvId]  = useState<string | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+
+  // Ref to track current conversation ID synchronously (used in callbacks + effects)
+  const currentConvIdRef = useRef<string | null>(null)
+  const saveTimerRef     = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Drag state ──
   const dragging    = useRef(false)
@@ -165,17 +275,11 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const panelRef    = useRef<HTMLDivElement>(null)
 
-  // ── Derived localStorage key for history ──
-  const historyKey = groupId ? `navhub:assistant:messages:${groupId}` : null
-
-  // ── Load persisted position, size, and history on mount ──
+  // ── Load position/size from localStorage ──
   useEffect(() => {
     try {
       const savedPos = localStorage.getItem(STORAGE_KEY_POSITION)
-      if (savedPos) {
-        const p = JSON.parse(savedPos) as { x: number; y: number }
-        setPosition(p)
-      }
+      if (savedPos) setPosition(JSON.parse(savedPos) as { x: number; y: number })
       const savedSize = localStorage.getItem(STORAGE_KEY_SIZE)
       if (savedSize) {
         const s = JSON.parse(savedSize) as { width: number; height: number }
@@ -185,16 +289,41 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
         })
       }
     } catch { /* ignore */ }
+  }, [])
 
-    if (historyKey) {
+  // ── loadConversation ──
+  const loadConversation = useCallback(async (id: string) => {
+    try {
+      const res  = await fetch(`/api/assistant/conversations/${id}`)
+      const json = await res.json() as { data?: { messages: PanelMessage[] } }
+      if (json.data) {
+        setMessages(json.data.messages ?? [])
+        currentConvIdRef.current = id
+        setCurrentConvId(id)
+        setAnsweredQuestions(new Set())
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  // ── Load conversation history from DB on mount ──
+  useEffect(() => {
+    if (!groupId) return
+    async function loadHistory() {
+      setHistoryLoading(true)
       try {
-        const saved = localStorage.getItem(historyKey)
-        if (saved) {
-          setMessages(JSON.parse(saved) as (AssistantMessage & { streaming?: boolean })[])
+        const res  = await fetch('/api/assistant/conversations')
+        const json = await res.json() as { data?: ConvSummary[] }
+        const convs = json.data ?? []
+        setConversations(convs)
+        // Auto-load most recent conversation
+        if (convs.length > 0) {
+          await loadConversation(convs[0].id)
         }
       } catch { /* ignore */ }
+      setHistoryLoading(false)
     }
-  }, [historyKey])
+    void loadHistory()
+  }, [groupId, loadConversation])
 
   // ── Fetch user role once on mount ──
   useEffect(() => {
@@ -209,15 +338,32 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     void loadRole()
   }, [])
 
-  // ── Persist messages to localStorage whenever they change ──
+  // ── Debounced DB persistence when messages change ──
   useEffect(() => {
-    if (!historyKey || messages.length === 0) return
+    const convId = currentConvIdRef.current
+    if (!convId || messages.length === 0) return
+
     // Don't save in-flight streaming messages
-    const toSave = messages.filter(m => !m.streaming)
-    try {
-      localStorage.setItem(historyKey, JSON.stringify(toSave))
-    } catch { /* ignore quota errors */ }
-  }, [messages, historyKey])
+    const nonStreaming = messages.filter(m => !m.streaming)
+    if (nonStreaming.length === 0) return
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    saveTimerRef.current = setTimeout(() => {
+      void fetch(`/api/assistant/conversations/${convId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ messages: nonStreaming }),
+      }).then(() => {
+        setConversations(prev => prev.map(c =>
+          c.id === convId ? { ...c, updated_at: new Date().toISOString() } : c,
+        ))
+      }).catch(() => { /* ignore */ })
+    }, 1000)
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    }
+  }, [messages])
 
   // ── Scroll to bottom on new messages ──
   useEffect(() => {
@@ -245,8 +391,9 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     return position ?? getDefaultPosition()
   }
 
-  // ── Drag handlers ──
+  // ── Drag handlers (disabled when maximised) ──
   function handleHeaderMouseDown(e: React.MouseEvent) {
+    if (maximised) return
     if ((e.target as HTMLElement).closest('button')) return
     dragging.current = true
     const pos = resolvedPosition()
@@ -302,6 +449,7 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
 
   // ── Resize handle mouse down ──
   function handleLeftResizeMouseDown(e: React.MouseEvent) {
+    if (maximised) return
     e.preventDefault()
     resizing.current      = 'left'
     resizeStartX.current  = e.clientX
@@ -310,30 +458,47 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
   }
 
   function handleBottomResizeMouseDown(e: React.MouseEvent) {
+    if (maximised) return
     e.preventDefault()
     resizing.current     = 'bottom'
     resizeStartY.current = e.clientY
     resizeStartH.current = size.height
   }
 
+  // ── Delete conversation ──
+  const deleteConversation = useCallback(async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      await fetch(`/api/assistant/conversations/${id}`, { method: 'DELETE' })
+      setConversations(prev => prev.filter(c => c.id !== id))
+      if (currentConvIdRef.current === id) {
+        setMessages([])
+        setAnsweredQuestions(new Set())
+        currentConvIdRef.current = null
+        setCurrentConvId(null)
+      }
+    } catch { /* ignore */ }
+  }, [])
+
   // ── New conversation ──
   function handleNewConversation() {
     setMessages([])
-    if (historyKey) {
-      try { localStorage.removeItem(historyKey) } catch { /* ignore */ }
-    }
+    setAnsweredQuestions(new Set())
+    currentConvIdRef.current = null
+    setCurrentConvId(null)
+    setShowHistory(false)
   }
 
   // ── Send message ──
   const sendMessage = useCallback(async (text: string) => {
     if (!text.trim() || streaming || !contextReady) return
 
-    const userMsg: AssistantMessage = {
+    const userMsg: PanelMessage = {
       id:      crypto.randomUUID(),
       role:    'user',
       content: text.trim(),
     }
-    const assistantMsg: AssistantMessage & { streaming: boolean } = {
+    const assistantMsg: PanelMessage = {
       id:        crypto.randomUUID(),
       role:      'assistant',
       content:   '',
@@ -344,25 +509,36 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     setInput('')
     setStreaming(true)
 
+    // Create DB conversation on first message if none exists
+    let convId = currentConvIdRef.current
+    if (!convId) {
+      try {
+        const convRes  = await fetch('/api/assistant/conversations', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ title: text.trim().slice(0, 60) }),
+        })
+        const convJson = await convRes.json() as { data?: { id: string; title: string; updated_at: string } }
+        if (convJson.data?.id) {
+          convId = convJson.data.id
+          currentConvIdRef.current = convId
+          setCurrentConvId(convId)
+          setConversations(prev => [convJson.data!, ...prev])
+        }
+      } catch { /* continue without DB persistence */ }
+    }
+
     // Build conversation history for API
     const history = messages.map(m => ({ role: m.role, content: m.content }))
     history.push({ role: 'user', content: text.trim() })
 
-    // Minimal context — server builds the full picture from groupId cookie
-    const context = {
-      pathname,
-      userRole,
-    }
+    const context = { pathname, userRole }
 
     try {
       const res = await fetch('/api/assistant/chat', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          messages: history,
-          context,
-          isAdmin,
-        }),
+        body:    JSON.stringify({ messages: history, context, isAdmin }),
       })
 
       if (!res.ok || !res.body) {
@@ -394,8 +570,9 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
                 : m,
             ))
           } else if (event.type === 'done') {
-            const brief       = event.brief as string | null
+            const brief       = event.brief       as string | null
             const displayText = event.displayText as string | null
+            const question    = event.question    as import('@/lib/assistant').AssistantQuestion | null
 
             setMessages(prev => prev.map(m => {
               if (m.id !== assistantMsg.id) return m
@@ -403,14 +580,14 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
                 ...m,
                 streaming: false,
                 brief,
-                // Replace content with displayText if brief was extracted
+                question,
                 content: displayText ?? m.content,
               }
             }))
           } else if (event.type === 'error') {
             setMessages(prev => prev.map(m =>
               m.id === assistantMsg.id
-                ? { ...m, streaming: false, content: `Sorry, something went wrong. Please try again.` }
+                ? { ...m, streaming: false, content: 'Sorry, something went wrong. Please try again.' }
                 : m,
             ))
           }
@@ -434,7 +611,22 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     }
   }
 
+  // ── Panel style — normal vs maximised ──
   const pos = resolvedPosition()
+  const panelStyle = maximised
+    ? {
+        position: 'fixed' as const,
+        left:     '5vw',
+        top:      '5vh',
+        width:    '90vw',
+        height:   '90vh',
+      }
+    : {
+        left:   pos.x,
+        top:    pos.y,
+        width:  size.width,
+        height: size.height,
+      }
 
   return (
     <>
@@ -448,35 +640,50 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
       <div
         ref={panelRef}
         className="fixed z-50 bg-background border shadow-2xl flex flex-col rounded-xl overflow-hidden"
-        style={{
-          left:   pos.x,
-          top:    pos.y,
-          width:  size.width,
-          height: size.height,
-        }}
+        style={panelStyle}
       >
-        {/* ── Left resize handle ── */}
-        <div
-          onMouseDown={handleLeftResizeMouseDown}
-          className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-primary/20 transition-colors"
-        />
+        {/* ── Left resize handle (disabled when maximised) ── */}
+        {!maximised && (
+          <div
+            onMouseDown={handleLeftResizeMouseDown}
+            className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-primary/20 transition-colors"
+          />
+        )}
 
-        {/* ── Bottom resize handle ── */}
-        <div
-          onMouseDown={handleBottomResizeMouseDown}
-          className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize z-10 hover:bg-primary/20 transition-colors"
-        />
+        {/* ── Bottom resize handle (disabled when maximised) ── */}
+        {!maximised && (
+          <div
+            onMouseDown={handleBottomResizeMouseDown}
+            className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize z-10 hover:bg-primary/20 transition-colors"
+          />
+        )}
 
         {/* ── Header (drag target) ── */}
         <div
           onMouseDown={handleHeaderMouseDown}
-          className="flex items-center gap-2 px-4 py-3.5 border-b bg-background shrink-0 select-none cursor-grab active:cursor-grabbing"
+          className={cn(
+            'flex items-center gap-1.5 px-4 py-3.5 border-b bg-background shrink-0 select-none',
+            !maximised && 'cursor-grab active:cursor-grabbing',
+          )}
         >
           <Sparkles className="h-4 w-4 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
             <p className="text-sm font-semibold leading-none">NavHub Assistant</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">Powered by Claude</p>
           </div>
+
+          {/* History */}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0 text-muted-foreground"
+            title="Conversation history"
+            onClick={() => setShowHistory(true)}
+          >
+            <History className="h-4 w-4" />
+          </Button>
+
+          {/* New conversation */}
           <Button
             size="sm"
             variant="ghost"
@@ -486,6 +693,21 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
           >
             <Plus className="h-4 w-4" />
           </Button>
+
+          {/* Maximise / restore */}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 w-7 p-0 text-muted-foreground"
+            title={maximised ? 'Restore' : 'Maximise'}
+            onClick={() => setMaximised(m => !m)}
+          >
+            {maximised
+              ? <Minimize2 className="h-4 w-4" />
+              : <Maximize2 className="h-4 w-4" />}
+          </Button>
+
+          {/* Close */}
           <Button
             size="sm"
             variant="ghost"
@@ -494,6 +716,74 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
           >
             <X className="h-4 w-4" />
           </Button>
+        </div>
+
+        {/* ── History sidebar (absolute overlay, slides in from left) ── */}
+        <div
+          className={cn(
+            'absolute inset-0 z-20 bg-background flex flex-col transition-transform duration-200',
+            showHistory ? 'translate-x-0' : '-translate-x-full',
+          )}
+        >
+          {/* History header */}
+          <div className="flex items-center gap-2 px-4 py-3.5 border-b shrink-0">
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0"
+              onClick={() => setShowHistory(false)}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <p className="text-sm font-semibold flex-1">Conversations</p>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs gap-1 px-2"
+              onClick={handleNewConversation}
+            >
+              <Plus className="h-3.5 w-3.5" /> New
+            </Button>
+          </div>
+
+          {/* Conversation list */}
+          <div className="flex-1 overflow-y-auto">
+            {historyLoading ? (
+              <p className="text-center text-sm text-muted-foreground py-8">Loading…</p>
+            ) : conversations.length === 0 ? (
+              <div className="text-center py-12 px-4">
+                <History className="h-8 w-8 text-muted-foreground/30 mx-auto mb-3" />
+                <p className="text-sm text-muted-foreground">No conversations yet</p>
+                <p className="text-xs text-muted-foreground/60 mt-1">Start chatting to save history</p>
+              </div>
+            ) : (
+              conversations.map(conv => (
+                <div
+                  key={conv.id}
+                  className={cn(
+                    'group flex items-start gap-2 px-4 py-3 border-b cursor-pointer',
+                    'hover:bg-muted/50 transition-colors',
+                    conv.id === currentConvId && 'bg-primary/5 border-l-2 border-l-primary',
+                  )}
+                  onClick={() => void loadConversation(conv.id).then(() => setShowHistory(false))}
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{conv.title}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      {relativeDate(conv.updated_at)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={(e) => void deleteConversation(conv.id, e)}
+                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all shrink-0 mt-0.5 p-0.5 rounded"
+                    title="Delete conversation"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
         </div>
 
         {/* ── Chat messages ── */}
@@ -527,10 +817,25 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
               {messages.map(msg => (
                 <div key={msg.id}>
                   <MessageBubble msg={msg} />
+
                   {/* Agent Brief Card — rendered below assistant message */}
                   {msg.role === 'assistant' && msg.brief && !msg.streaming && (
                     <div className="pl-0">
-                      <AgentBriefCard brief={msg.brief} />
+                      <AgentBriefCard brief={msg.brief} onClose={onClose} />
+                    </div>
+                  )}
+
+                  {/* Question Card — rendered below assistant message */}
+                  {msg.role === 'assistant' && msg.question && !msg.streaming && (
+                    <div className="pl-0">
+                      <QuestionCard
+                        q={msg.question}
+                        answered={answeredQuestions.has(msg.id)}
+                        onConfirm={(answer) => {
+                          setAnsweredQuestions(prev => { const s = new Set(prev); s.add(msg.id); return s })
+                          void sendMessage(answer)
+                        }}
+                      />
                     </div>
                   )}
                 </div>

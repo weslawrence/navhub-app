@@ -805,6 +805,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent Tool Fixes | ✅ Complete | renderReport/generateReport parameter validation (template_id, report_name, slot_data guards); safeName null-safety; stronger CRITICAL TOOL SEQUENCING RULES in buildSystemPrompt; explicit render_report tool description requiring list → read → render sequence |
 | Phase 7c+7d — Document Exports + Share Token | ✅ Complete | Install docx + pptxgenjs; lib/document-export.ts (parseMarkdown, exportToDocx, exportToPptx, exportToPdfHtml); GET /api/documents/[id]/export?format=docx|pptx|pdf; Export dropdown on document page; migration 021 no-op (share columns already in 014) |
 | Agent Tool Input Bug Fix + Loop Guard | ✅ Complete | Fixed dead-code else-if in callClaude SSE parser (input_json_delta never ran); tool input logging before executeTool; loop guard (MAX_ITERATIONS=10, MAX_TOOL_FAILURES=3 per tool); token >20k warning in run page |
+| Assistant UX Fixes: Questions, History, Navigation | ✅ Complete | Structured question cards ([QUESTION_START] markers), DB-persisted conversation history (migration 022), history sidebar, maximise toggle, auto-open RunModal on ?brief= |
 
 ---
 
@@ -1463,6 +1464,195 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 
 ---
 
+## Assistant UX Fixes: Questions, History, Navigation
+
+Three workstreams improving the NavHub Assistant floating chat panel.
+
+### WS1 — Structured Question Cards
+
+**Problem**: The assistant would ask multiple verbose open-ended questions. The fix instructs the model to make assumptions and, when it truly must ask, emit a structured JSON marker that the UI renders as a clickable option card.
+
+**`lib/assistant.ts` additions:**
+
+```typescript
+export interface AssistantQuestion {
+  question:     string
+  options:      string[]
+  multiSelect?: boolean
+}
+
+// Added to AssistantMessage:
+question?: AssistantQuestion | null
+
+export function extractQuestion(text: string): { displayText: string; question: AssistantQuestion | null }
+// Extracts [QUESTION_START]JSON[QUESTION_END] markers from assistant text.
+// Validates: question string + options array (≥ 2 items). Strips markers from displayText.
+```
+
+**System prompt update** (`buildSystemPrompt()`): Added RESPONSE BEHAVIOUR section:
+- Make reasonable assumptions rather than asking about unknowns
+- Ask at most ONE question per message, only when critically blocked
+- Format: `[QUESTION_START]{"question":"...","options":["A","B","C"],"multiSelect":false}[QUESTION_END]`
+- 2–4 options per question
+
+**`app/api/assistant/chat/route.ts`**: Updated `done` SSE event to include `question`:
+```typescript
+const { displayText: afterBrief, brief } = extractBrief(fullText)
+const { displayText, question }          = extractQuestion(afterBrief)
+// Emits: { type: 'done', brief, question, displayText }
+```
+
+**`QuestionCard` component** (in `AssistantPanel.tsx`):
+- Amber left border (`border-l-4 border-amber-400`)
+- Question text + option buttons (single or multi-select)
+- Confirm button sends `selected.join(', ')` as next user message
+- `answeredQuestions` `Set<string>` (keyed by message ID) prevents re-answering
+- Rendered below assistant message when `msg.question !== null && !answeredQuestions.has(msg.id)`
+
+**Set mutation pattern** (avoids downlevelIteration TS error):
+```typescript
+// ✅ Correct — no spread of Set:
+setAnsweredQuestions(prev => { const s = new Set(prev); s.add(msg.id); return s })
+// ❌ Wrong — TS2802 error with spread:
+setAnsweredQuestions(prev => new Set([...prev, msg.id]))
+```
+
+---
+
+### WS2 — DB-Persisted Conversation History
+
+**Database (migration 022)**
+
+`supabase/migrations/022_assistant_history.sql`:
+```sql
+CREATE TABLE IF NOT EXISTS assistant_conversations (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id    uuid        NOT NULL REFERENCES groups(id)     ON DELETE CASCADE,
+  user_id     uuid        NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  title       text        NOT NULL DEFAULT 'New Conversation',
+  messages    jsonb       NOT NULL DEFAULT '[]',
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now()
+);
+-- RLS: each user can only see/manage their own conversations
+CREATE POLICY "Users own their conversations" ON assistant_conversations
+  FOR ALL USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid());
+```
+
+**API routes:**
+```
+GET  /api/assistant/conversations       → list last 20 for user+group (newest first)
+POST /api/assistant/conversations       → create new conversation
+GET  /api/assistant/conversations/[id]  → fetch full conversation (with messages jsonb)
+PATCH  /api/assistant/conversations/[id] → update messages + auto-title from first user msg (60 chars)
+DELETE /api/assistant/conversations/[id] → hard delete
+```
+
+All routes: auth check + `user_id = session.user.id` filter. Admin client for DB writes; group scoping via `active_group_id` cookie.
+
+**Auto-title**: PATCH derives title from the first user message if `title` not provided:
+```typescript
+const firstUserMsg = body.messages?.find(m => m.role === 'user')
+if (firstUserMsg?.content) title = firstUserMsg.content.slice(0, 60)
+```
+
+**AssistantPanel changes:**
+
+Replaced `localStorage` message persistence with DB persistence:
+- New state: `conversations: ConvSummary[]`, `currentConvId: string | null`, `historyLoading: boolean`
+- `currentConvIdRef` — `useRef` for synchronous access inside async `sendMessage` callback
+- `saveTimerRef` — `useRef<ReturnType<typeof setTimeout>>` for 1-second debounce
+
+**DB auto-create on first message** (inside `sendMessage`):
+```typescript
+if (!convId) {
+  const res = await fetch('/api/assistant/conversations', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ title: text.trim().slice(0, 60) }),
+  })
+  const json = await res.json()
+  convId = json.data.id
+  currentConvIdRef.current = convId
+  setCurrentConvId(convId)
+  setConversations(prev => [json.data, ...prev])
+}
+```
+
+**Debounced PATCH** (1s delay):
+```typescript
+useEffect(() => {
+  if (!currentConvId || messages.length === 0) return
+  if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+  const persistable = messages.filter(m => !m.streaming)
+  if (persistable.length === 0) return
+  saveTimerRef.current = setTimeout(() => {
+    void fetch(`/api/assistant/conversations/${currentConvId}`, {
+      method: 'PATCH', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ messages: persistable }),
+    })
+  }, 1000)
+}, [messages, currentConvId])
+```
+
+**Auto-load** on mount: fetches conversation list, then calls `loadConversation(convs[0].id)` for the most recent.
+
+**`loadConversation(id)` + `deleteConversation(id, e)`**: useCallback functions.
+
+**History sidebar** (slides in from left):
+- `absolute inset-0 bg-background z-20 transition-transform` — mounted always, shown/hidden with `translate-x-0` / `-translate-x-full`
+- Conversation list: title (truncated), relative date, Trash2 delete button per item
+- Click → `loadConversation(id)`, closes sidebar
+- `historyLoading` shows skeleton rows while loading
+
+**"New conversation"** (Plus icon in header): clears messages, `currentConvId`, and `currentConvIdRef`.
+
+---
+
+### WS3 — Maximise Toggle + Launch Agent Fix
+
+**Maximise toggle:**
+- `maximised` boolean state
+- `Maximize2` / `Minimize2` icon button in panel header (between Plus and X)
+- When maximised: `position: 'fixed', left: '5vw', top: '5vh', width: '90vw', height: '90vh'`
+- Drag disabled when maximised (header `onMouseDown` returns early if `maximised`)
+- Resize handles hidden when maximised (`!maximised &&` condition in JSX)
+- Size/position state not updated when maximised (restores to last normal size on un-maximise)
+
+**Default panel size increased**: `DEFAULT_WIDTH = 480`, `DEFAULT_HEIGHT = 640` (was 420/580)
+
+**"Launch Agent →" fix** (`AgentBriefCard`):
+- Accepts optional `onClose?: () => void` prop
+- Calls `onClose?.()` before `router.push('/agents?brief=...')` — closes the panel before navigating
+- Prevents the panel from remaining open and obscuring the modal that auto-opens
+
+**Auto-open RunModal on `?brief=`** (`app/(dashboard)/agents/page.tsx`):
+```typescript
+const [initialBrief, setInitialBrief] = useState(briefParam)
+
+// Auto-open effect:
+useEffect(() => {
+  if (loading || !briefParam || runTarget) return
+  const activeAgents = agents.filter(a => a.is_active)
+  if (activeAgents.length === 0) return
+  setInitialBrief(briefParam)
+  setRunTarget(activeAgents[0])
+  window.history.replaceState({}, '', '/agents')  // clear URL param without reload
+}, [loading, briefParam, agents])
+
+// RunModal clears brief on close:
+<RunModal
+  agent={runTarget}
+  initialInstructions={initialBrief}
+  onClose={() => { setRunTarget(null); setInitialBrief('') }}
+/>
+```
+Previously the `?brief=` param was only used when the user manually clicked Run on an agent. Now it auto-picks the first active agent and opens RunModal immediately on page load.
+
+### Manual steps required
+- **Run migration `022_assistant_history.sql`** in Supabase dashboard
+
+---
+
 ## Next Steps
 
 1. Set up Supabase Storage bucket `report-files` with RLS policies (manual — see Phase 2f section)
@@ -1490,6 +1680,7 @@ if (!params.template_id || params.template_id === 'undefined' || params.template
 21. **Run migration `019_marketing.sql`** in Supabase dashboard (Marketing Site — waitlist_signups, demo_requests, contact_submissions, support_requests, feature_suggestions tables)
 22. Add `DEMO_NOTIFICATION_EMAIL` to Vercel env vars (used by demo + contact notification emails)
 23. ~~Keystatic CMS~~ — removed; re-add when GitHub OAuth app is configured (`KEYSTATIC_GITHUB_CLIENT_ID`, `KEYSTATIC_GITHUB_CLIENT_SECRET`, `KEYSTATIC_SECRET`, `KEYSTATIC_GITHUB_TOKEN`)
+24. **Run migration `022_assistant_history.sql`** in Supabase dashboard (Assistant UX Fixes — assistant_conversations table)
 
 ---
 

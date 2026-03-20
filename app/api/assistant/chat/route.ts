@@ -2,7 +2,7 @@ import { NextResponse }    from 'next/server'
 import { cookies }         from 'next/headers'
 import { createClient }    from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { buildSystemPrompt, extractBrief } from '@/lib/assistant'
+import { buildSystemPrompt, extractBrief, extractQuestion } from '@/lib/assistant'
 import type { AssistantContext } from '@/lib/assistant'
 
 interface ChatMessage {
@@ -247,14 +247,16 @@ export async function POST(request: Request) {
           ),
         )
       } finally {
-        // Extract brief (if any) and send done event
-        const { displayText, brief } = extractBrief(fullText)
+        // Extract brief + question (if any) and send done event
+        const { displayText: afterBrief, brief } = extractBrief(fullText)
+        const { displayText, question }           = extractQuestion(afterBrief)
         controller.enqueue(
           encoder.encode(
             `data: ${JSON.stringify({
               type:        'done',
               brief,
-              displayText: brief ? displayText : null,  // only send displayText when brief found
+              question,
+              displayText: (brief || question) ? displayText : null,
             })}\n\n`,
           ),
         )

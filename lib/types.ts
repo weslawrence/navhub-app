@@ -281,6 +281,8 @@ export type AgentTool =
   | 'update_cashflow_item'
   | 'create_cashflow_snapshot'
   | 'summarise_cashflow'
+  | 'read_marketing_data'
+  | 'summarise_marketing'
   | 'ask_user'
 
 export type PersonaPreset =
@@ -670,6 +672,152 @@ export const DOCUMENT_AUDIENCE_LABELS: Record<DocumentAudience, string> = {
   internal:   'Internal',
   hr:         'HR',
   external:   'External / Client',
+}
+
+// ============================================================
+// Marketing Intelligence types (Phase 8a)
+// ============================================================
+
+export type MarketingPlatform =
+  | 'ga4' | 'search_console' | 'meta' | 'linkedin'
+  | 'google_ads' | 'meta_ads' | 'mailchimp' | 'hubspot' | 'freshsales'
+
+export const MARKETING_PLATFORM_LABELS: Record<MarketingPlatform, string> = {
+  ga4:            'Google Analytics 4',
+  search_console: 'Google Search Console',
+  meta:           'Meta (Facebook/Instagram)',
+  linkedin:       'LinkedIn',
+  google_ads:     'Google Ads',
+  meta_ads:       'Meta Ads',
+  mailchimp:      'Mailchimp',
+  hubspot:        'HubSpot',
+  freshsales:     'Freshsales',
+}
+
+export const MARKETING_PLATFORM_ICONS: Record<MarketingPlatform, string> = {
+  ga4:            '📊',
+  search_console: '🔍',
+  meta:           '📘',
+  linkedin:       '💼',
+  google_ads:     '🎯',
+  meta_ads:       '📣',
+  mailchimp:      '🐵',
+  hubspot:        '🧡',
+  freshsales:     '🌱',
+}
+
+export interface MarketingMetricDef {
+  key:         string
+  label:       string
+  type:        'number' | 'percentage' | 'currency'
+  description: string
+}
+
+export const MARKETING_METRICS: Record<MarketingPlatform, MarketingMetricDef[]> = {
+  ga4: [
+    { key: 'sessions',             label: 'Sessions',             type: 'number',     description: 'Total website sessions' },
+    { key: 'users',                label: 'Users',                type: 'number',     description: 'Unique users' },
+    { key: 'new_users',            label: 'New Users',            type: 'number',     description: 'First-time visitors' },
+    { key: 'bounce_rate',          label: 'Bounce Rate',          type: 'percentage', description: 'Single-page sessions %' },
+    { key: 'avg_session_duration', label: 'Avg Session Duration', type: 'number',     description: 'Seconds' },
+    { key: 'conversions',          label: 'Conversions',          type: 'number',     description: 'Goal completions' },
+    { key: 'conversion_rate',      label: 'Conversion Rate',      type: 'percentage', description: 'Conversions / sessions' },
+  ],
+  search_console: [
+    { key: 'impressions',   label: 'Impressions',        type: 'number',     description: 'Search result appearances' },
+    { key: 'clicks',        label: 'Clicks',             type: 'number',     description: 'Search result clicks' },
+    { key: 'ctr',           label: 'Click-Through Rate', type: 'percentage', description: 'Clicks / impressions' },
+    { key: 'avg_position',  label: 'Avg Position',       type: 'number',     description: 'Average search ranking' },
+  ],
+  meta: [
+    { key: 'followers',       label: 'Followers',       type: 'number',     description: 'Total page followers' },
+    { key: 'reach',           label: 'Reach',           type: 'number',     description: 'Unique accounts reached' },
+    { key: 'impressions',     label: 'Impressions',     type: 'number',     description: 'Total post impressions' },
+    { key: 'engagement',      label: 'Engagement',      type: 'number',     description: 'Likes, comments, shares' },
+    { key: 'engagement_rate', label: 'Engagement Rate', type: 'percentage', description: 'Engagement / reach' },
+    { key: 'page_views',      label: 'Page Views',      type: 'number',     description: 'Profile page views' },
+  ],
+  linkedin: [
+    { key: 'followers',       label: 'Followers',       type: 'number',     description: 'Page followers' },
+    { key: 'impressions',     label: 'Impressions',     type: 'number',     description: 'Post impressions' },
+    { key: 'engagement',      label: 'Engagement',      type: 'number',     description: 'Reactions, comments, shares' },
+    { key: 'engagement_rate', label: 'Engagement Rate', type: 'percentage', description: 'Engagement / impressions' },
+    { key: 'clicks',          label: 'Clicks',          type: 'number',     description: 'Link clicks' },
+  ],
+  google_ads: [
+    { key: 'spend',       label: 'Spend',       type: 'currency',   description: 'Total ad spend' },
+    { key: 'impressions', label: 'Impressions', type: 'number',     description: 'Ad impressions' },
+    { key: 'clicks',      label: 'Clicks',      type: 'number',     description: 'Ad clicks' },
+    { key: 'ctr',         label: 'CTR',         type: 'percentage', description: 'Click-through rate' },
+    { key: 'conversions', label: 'Conversions', type: 'number',     description: 'Ad conversions' },
+    { key: 'cpc',         label: 'Avg CPC',     type: 'currency',   description: 'Cost per click' },
+    { key: 'roas',        label: 'ROAS',        type: 'number',     description: 'Return on ad spend' },
+  ],
+  meta_ads: [
+    { key: 'spend',       label: 'Spend',       type: 'currency',   description: 'Total ad spend' },
+    { key: 'impressions', label: 'Impressions', type: 'number',     description: 'Ad impressions' },
+    { key: 'reach',       label: 'Reach',       type: 'number',     description: 'Unique reach' },
+    { key: 'clicks',      label: 'Clicks',      type: 'number',     description: 'Link clicks' },
+    { key: 'ctr',         label: 'CTR',         type: 'percentage', description: 'Click-through rate' },
+    { key: 'conversions', label: 'Conversions', type: 'number',     description: 'Ad conversions' },
+    { key: 'cpc',         label: 'Avg CPC',     type: 'currency',   description: 'Cost per click' },
+    { key: 'roas',        label: 'ROAS',        type: 'number',     description: 'Return on ad spend' },
+  ],
+  mailchimp: [
+    { key: 'list_size',        label: 'List Size',         type: 'number',     description: 'Total subscribers' },
+    { key: 'sends',            label: 'Emails Sent',       type: 'number',     description: 'Total emails sent' },
+    { key: 'open_rate',        label: 'Open Rate',         type: 'percentage', description: 'Opens / sends' },
+    { key: 'click_rate',       label: 'Click Rate',        type: 'percentage', description: 'Clicks / sends' },
+    { key: 'unsubscribe_rate', label: 'Unsubscribe Rate',  type: 'percentage', description: 'Unsubscribes / sends' },
+    { key: 'bounce_rate',      label: 'Bounce Rate',       type: 'percentage', description: 'Bounced / sends' },
+  ],
+  hubspot: [
+    { key: 'total_contacts',  label: 'Total Contacts',  type: 'number',   description: 'CRM contact count' },
+    { key: 'new_contacts',    label: 'New Contacts',    type: 'number',   description: 'New this period' },
+    { key: 'deals_open',      label: 'Open Deals',      type: 'number',   description: 'Active pipeline deals' },
+    { key: 'deals_won',       label: 'Deals Won',       type: 'number',   description: 'Closed won this period' },
+    { key: 'pipeline_value',  label: 'Pipeline Value',  type: 'currency', description: 'Total open deal value' },
+    { key: 'emails_sent',     label: 'Emails Sent',     type: 'number',   description: 'Marketing emails sent' },
+    { key: 'email_open_rate', label: 'Email Open Rate', type: 'percentage', description: 'Email opens %' },
+  ],
+  freshsales: [
+    { key: 'total_contacts', label: 'Total Contacts', type: 'number',   description: 'CRM contact count' },
+    { key: 'new_contacts',   label: 'New Contacts',   type: 'number',   description: 'New this period' },
+    { key: 'deals_open',     label: 'Open Deals',     type: 'number',   description: 'Active pipeline deals' },
+    { key: 'deals_won',      label: 'Deals Won',      type: 'number',   description: 'Closed won this period' },
+    { key: 'pipeline_value', label: 'Pipeline Value', type: 'currency', description: 'Total open deal value' },
+  ],
+}
+
+export interface MarketingSnapshot {
+  id:           string
+  group_id:     string
+  company_id:   string | null
+  platform:     string
+  metric_key:   string
+  value_number: number | null
+  value_text:   string | null
+  period_start: string
+  period_end:   string
+  period_type:  'day' | 'week' | 'month'
+  source:       string
+  created_by:   string | null
+  created_at:   string
+}
+
+export interface MarketingDatabaseSnapshot {
+  id:                       string
+  group_id:                 string
+  company_id:               string | null
+  platform:                 string
+  total_contacts:           number | null
+  active_contacts:          number | null
+  new_this_period:          number | null
+  unsubscribed_this_period: number | null
+  snapshot_date:            string
+  source:                   string
+  notes:                    string | null
+  created_at:               string
 }
 
 // ============================================================

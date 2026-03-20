@@ -3,9 +3,22 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plug, ChevronDown, RefreshCw, Check } from 'lucide-react'
 import { Badge }     from '@/components/ui/badge'
+import { Button }    from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import ConnectXero   from '@/components/integrations/ConnectXero'
 import SyncButton    from '@/components/integrations/SyncButton'
+import {
+  MARKETING_PLATFORM_LABELS,
+  MARKETING_PLATFORM_ICONS,
+  type MarketingPlatform,
+} from '@/lib/types'
+
+const MARKETING_PLATFORM_GROUPS: { label: string; platforms: MarketingPlatform[] }[] = [
+  { label: 'Web & Search',  platforms: ['ga4', 'search_console'] },
+  { label: 'Social Media',  platforms: ['meta', 'linkedin'] },
+  { label: 'Paid Ads',      platforms: ['google_ads', 'meta_ads'] },
+  { label: 'Email & CRM',   platforms: ['mailchimp', 'hubspot', 'freshsales'] },
+]
 
 interface CompanyOption  { id: string; name: string }
 interface DivisionOption { id: string; name: string; company_id: string; company_name: string }
@@ -226,6 +239,50 @@ export default function IntegrationsTab() {
         {!loading && (
           <ConnectXero companies={companies} divisions={divisionList} />
         )}
+      </div>
+
+      {/* ── Marketing Platforms ─────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <span>📊</span> Marketing Platforms
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Connect marketing platforms to pull data automatically. Manual entry is always available from the{' '}
+            <a href="/marketing" className="text-primary hover:underline">Marketing section</a>.
+          </p>
+        </div>
+
+        <div className="space-y-4">
+          {MARKETING_PLATFORM_GROUPS.map(group => (
+            <div key={group.label}>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">
+                {group.label}
+              </p>
+              <div className="space-y-2">
+                {group.platforms.map(platform => (
+                  <div
+                    key={platform}
+                    className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">{MARKETING_PLATFORM_ICONS[platform]}</span>
+                      <div>
+                        <p className="text-sm font-medium text-foreground">
+                          {MARKETING_PLATFORM_LABELS[platform]}
+                        </p>
+                        <p className="text-xs text-muted-foreground">Manual entry supported</p>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] text-muted-foreground border-border">
+                      Coming soon
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
     </div>

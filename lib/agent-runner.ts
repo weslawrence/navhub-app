@@ -29,6 +29,8 @@ import {
   updateCashflowItem,
   createCashflowSnapshot,
   summariseCashflow,
+  readMarketingData,
+  summariseMarketing,
 } from '@/lib/agent-tools'
 import type {
   Agent,
@@ -357,6 +359,32 @@ const ALL_TOOL_DEFS: Record<string, object> = {
       type: 'object',
       properties: {
         company_id: { type: 'string', description: 'UUID of the company to summarise.' },
+      },
+      required: ['company_id'],
+    },
+  },
+  read_marketing_data: {
+    name:        'read_marketing_data',
+    description: 'Fetch marketing performance data (web, social, ads, email/CRM metrics) for one or all companies. Returns structured metric values grouped by platform and period.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id:  { type: 'string',                description: 'Optional: UUID of a specific company. Omit for group-wide data.' },
+        platforms:   { type: 'array', items: { type: 'string' }, description: 'Optional: filter to specific platforms (e.g. ["ga4","meta"]). Omit for all platforms.' },
+        period:      { type: 'string',                description: 'Optional: YYYY-MM period to fetch. Defaults to latest available.' },
+        num_periods: { type: 'number',                description: 'Optional: how many past periods to include (1–12). Default 3.' },
+      },
+      required: [],
+    },
+  },
+  summarise_marketing: {
+    name:        'summarise_marketing',
+    description: 'Generate an AI-powered executive summary of marketing performance for a specific company, including trends and recommendations.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        company_id: { type: 'string', description: 'UUID of the company to summarise marketing data for.' },
+        period:     { type: 'string', description: 'Optional: YYYY-MM period to focus on. Defaults to latest available.' },
       },
       required: ['company_id'],
     },
@@ -898,6 +926,10 @@ async function executeTool(
       return createCashflowSnapshot(input as unknown as Parameters<typeof createCashflowSnapshot>[0], context)
     case 'summarise_cashflow':
       return summariseCashflow(input as unknown as Parameters<typeof summariseCashflow>[0], context)
+    case 'read_marketing_data':
+      return readMarketingData(input as unknown as Parameters<typeof readMarketingData>[0], context)
+    case 'summarise_marketing':
+      return summariseMarketing(input as unknown as Parameters<typeof summariseMarketing>[0], context)
     case 'ask_user':
       // Handled specially in executeAgentRun — should never reach executeTool
       return 'ask_user is handled by the runner directly.'

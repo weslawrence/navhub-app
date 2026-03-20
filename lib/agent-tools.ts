@@ -10,7 +10,8 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { getSummaryValue } from '@/lib/financial'
 import { renderTemplate, validateSlots } from '@/lib/template-renderer'
 import { buildForecastGrid, get13Weeks, formatWeekHeader } from '@/lib/cashflow'
-import type { FinancialData, Agent, ReportTemplate, SlotDefinition, DocumentType, DocumentAudience, CashflowItem, CashflowSettings, CashflowXeroItem } from '@/lib/types'
+import type { FinancialData, Agent, ReportTemplate, SlotDefinition, DocumentType, DocumentAudience, CashflowItem, CashflowSettings, CashflowXeroItem, MarketingPlatform } from '@/lib/types'
+import { MARKETING_PLATFORM_LABELS, MARKETING_METRICS } from '@/lib/types'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Types
@@ -80,6 +81,18 @@ export interface AnalyseDocumentParams {
   file_url?:    string
   file_content?: string
   instructions?: string
+}
+
+export interface ReadMarketingDataParams {
+  company_id?:  string        // optional — if omitted, returns group-level rollup
+  platforms?:   MarketingPlatform[]  // optional filter
+  period?:      string        // YYYY-MM; defaults to latest available
+  num_periods?: number        // how many past periods to include (1–12); default 3
+}
+
+export interface SummariseMarketingParams {
+  company_id: string          // required — summarise one company at a time
+  period?:    string          // YYYY-MM; defaults to latest available
 }
 
 export interface SendSlackParams {
@@ -1562,6 +1575,193 @@ export async function summariseCashflow(
 3. 2–3 actionable recommendations
 Be concise and direct. Format as plain text with clear headings.`,
         messages: [{ role: 'user', content: forecastText }],
+      }),
+    })
+
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({})) as { error?: { message?: string } }
+      throw new Error(`Anthropic API error ${res.status}: ${errBody.error?.message ?? 'Unknown'}`)
+    }
+
+    const message = await res.json() as { content: { type: string; text?: string }[] }
+    const summary = message.content
+      .filter(b => b.type === 'text')
+      .map(b => b.text ?? '')
+      .join('')
+
+    return JSON.stringify({ success: true, data: { company: (co as { name: string }).name, summary } })
+  } catch (err) {
+    return JSON.stringify({
+      success: false,
+      error: `Summarisation failed: ${err instanceof Error ? err.message : String(err)}`,
+    })
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// read_marketing_data
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function readMarketingData(
+  params:  ReadMarketingDataParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Resolve which periods to fetch
+  const numPeriods = Math.min(Math.max(params.num_periods ?? 3, 1), 12)
+
+  // Build query
+  let query = admin
+    .from('marketing_snapshots')
+    .select('platform, metric_key, value_number, period_start, company_id')
+    .eq('group_id', context.groupId)
+    .order('period_start', { ascending: false })
+    .limit(numPeriods * 50)  // generous limit to cover all platforms × metrics × periods
+
+  if (params.company_id) query = query.eq('company_id', params.company_id)
+  if (params.platforms && params.platforms.length > 0) {
+    query = query.in('platform', params.platforms)
+  }
+  if (params.period) {
+    // Filter to period range: from (period - numPeriods months) to period
+    const [y, m] = params.period.split('-').map(Number)
+    const endDate   = new Date(y, m, 0).toISOString().slice(0, 10)      // last day of period
+    const startYear = m - numPeriods <= 0 ? y - 1 : y
+    const startMonth = ((m - numPeriods - 1 + 12) % 12) + 1
+    const startDate = new Date(startYear, startMonth - 1, 1).toISOString().slice(0, 10)
+    query = query.gte('period_start', startDate).lte('period_start', endDate)
+  }
+
+  const { data: snapshots, error } = await query
+  if (error) return `Error fetching marketing data: ${error.message}`
+  if (!snapshots || snapshots.length === 0) {
+    return JSON.stringify({ success: true, data: [], message: 'No marketing data found for the specified criteria.' })
+  }
+
+  // Group by platform → period → metric
+  const grouped: Record<string, Record<string, Record<string, number>>> = {}
+  for (const snap of snapshots) {
+    const platformKey = snap.platform as string
+    const period      = (snap.period_start as string).slice(0, 7)  // YYYY-MM
+    const metricKey   = snap.metric_key as string
+    const value       = snap.value_number as number
+
+    if (!grouped[platformKey]) grouped[platformKey] = {}
+    if (!grouped[platformKey][period]) grouped[platformKey][period] = {}
+    grouped[platformKey][period][metricKey] = value
+  }
+
+  // Format as structured text
+  const lines: string[] = ['## Marketing Data Summary']
+  const platformKeys = Object.keys(grouped) as MarketingPlatform[]
+
+  for (const platform of platformKeys) {
+    const platformLabel = MARKETING_PLATFORM_LABELS[platform] ?? platform
+    lines.push(`\n### ${platformLabel}`)
+
+    const periods = Object.keys(grouped[platform]).sort().reverse()
+    const metrics = MARKETING_METRICS[platform] ?? []
+
+    for (const period of periods) {
+      lines.push(`**${period}**`)
+      const periodData = grouped[platform][period]
+      for (const metric of metrics) {
+        const val = periodData[metric.key]
+        if (val !== undefined) {
+          const formatted = metric.type === 'percentage'
+            ? `${val.toFixed(1)}%`
+            : metric.type === 'currency'
+              ? `$${val >= 1000 ? `${(val / 1000).toFixed(1)}K` : val.toFixed(0)}`
+              : val >= 1000 ? `${(val / 1000).toFixed(1)}K` : String(val)
+          lines.push(`  • ${metric.label}: ${formatted}`)
+        }
+      }
+    }
+  }
+
+  return JSON.stringify({ success: true, data: grouped, summary: lines.join('\n') })
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// summarise_marketing
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function summariseMarketing(
+  params:  SummariseMarketingParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  // Fetch company name
+  const { data: co } = await admin
+    .from('companies')
+    .select('id, name')
+    .eq('id', params.company_id)
+    .single()
+
+  if (!co) return JSON.stringify({ success: false, error: 'Company not found' })
+
+  // Fetch last 3 months of snapshots for all platforms
+  const { data: snapshots, error } = await admin
+    .from('marketing_snapshots')
+    .select('platform, metric_key, value_number, period_start')
+    .eq('group_id', context.groupId)
+    .eq('company_id', params.company_id)
+    .order('period_start', { ascending: false })
+    .limit(200)
+
+  if (error) return JSON.stringify({ success: false, error: error.message })
+  if (!snapshots || snapshots.length === 0) {
+    return JSON.stringify({ success: false, error: 'No marketing data available for this company.' })
+  }
+
+  // Build a compact text summary of the data for Claude to analyse
+  const dataLines: string[] = []
+  const grouped: Record<string, Record<string, number>> = {}
+
+  for (const snap of snapshots) {
+    const key = `${snap.platform as string}::${(snap.period_start as string).slice(0, 7)}`
+    if (!grouped[key]) grouped[key] = {}
+    grouped[key][snap.metric_key as string] = snap.value_number as number
+  }
+
+  for (const [key, metrics] of Object.entries(grouped)) {
+    const [platform, period] = key.split('::') as [MarketingPlatform, string]
+    const platformLabel = MARKETING_PLATFORM_LABELS[platform] ?? platform
+    const platformMetrics = MARKETING_METRICS[platform] ?? []
+    const metricParts = platformMetrics
+      .filter(m => metrics[m.key] !== undefined)
+      .map(m => `${m.label}: ${metrics[m.key]}`)
+    if (metricParts.length > 0) {
+      dataLines.push(`${platformLabel} (${period}): ${metricParts.join(', ')}`)
+    }
+  }
+
+  const marketingText = dataLines.join('\n')
+
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    return JSON.stringify({ success: false, error: 'ANTHROPIC_API_KEY not configured' })
+  }
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:  'POST',
+      headers: {
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type':      'application/json',
+      },
+      body: JSON.stringify({
+        model:      'claude-haiku-4-5-20251001',
+        max_tokens: 800,
+        system: `You are a marketing analyst. Analyse the marketing performance data and provide:
+1. A brief executive summary (2–3 sentences)
+2. Key trends and highlights (top performing channels, notable changes)
+3. 2–3 actionable recommendations
+Be concise and direct. Format as plain text with clear headings.`,
+        messages: [{ role: 'user', content: `Marketing data for ${(co as { name: string }).name}:\n\n${marketingText}` }],
       }),
     })
 

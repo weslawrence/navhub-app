@@ -37,6 +37,8 @@ const TOOL_LABELS: Record<AgentTool, string> = {
   update_cashflow_item:     'Update CF Item',
   create_cashflow_snapshot: 'CF Snapshot',
   summarise_cashflow:       'Summarise CF',
+  read_marketing_data:      'Marketing Data',
+  summarise_marketing:      'Summarise Mktg',
   ask_user:                 'Ask User',
 }
 

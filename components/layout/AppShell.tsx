@@ -104,7 +104,8 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
   const [forecastOpen,  setForecastOpen]  = useState(() => pathname.startsWith('/forecasting'))
   const [cashflowOpen,  setCashflowOpen]  = useState(() => pathname.startsWith('/cashflow'))
   const [showCreateGrp, setShowCreateGrp] = useState(false)
-  const documentsActive = pathname.startsWith('/documents')
+  const documentsActive  = pathname.startsWith('/documents')
+  const marketingActive  = pathname.startsWith('/marketing')
 
   // Derive admin status from active group membership
   const activeRole = groups.find(g => g.group_id === activeGroup.id)?.role
@@ -449,6 +450,31 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
                 </Link>
               </TooltipTrigger>
               {collapsed && !mobile && <TooltipContent side="right">Documents</TooltipContent>}
+            </Tooltip>
+            {/* Marketing — flat nav item */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Link
+                  href="/marketing"
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(
+                    'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                    marketingActive
+                      ? 'bg-white/10 text-white'
+                      : 'text-white/60 hover:text-white hover:bg-white/10',
+                    collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+                  )}
+                  style={
+                    marketingActive
+                      ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
+                      : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
+                  }
+                >
+                  <BarChart2 className="h-5 w-5 shrink-0" />
+                  {(!collapsed || mobile) && <span>Marketing</span>}
+                </Link>
+              </TooltipTrigger>
+              {collapsed && !mobile && <TooltipContent side="right">Marketing</TooltipContent>}
             </Tooltip>
             <CashflowGroup  mobile={mobile} />
             <ForecastGroup  mobile={mobile} />

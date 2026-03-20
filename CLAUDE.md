@@ -808,6 +808,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Assistant UX Fixes: Questions, History, Navigation | ✅ Complete | Structured question cards ([QUESTION_START] markers), DB-persisted conversation history (migration 022), history sidebar, maximise toggle, auto-open RunModal on ?brief= |
 | HTML Report Inline Editor | ✅ Complete | Edit mode on report viewer: contenteditable injection into iframe DOM, amber hover/focus styles, Save serialises modified HTML and overwrites Storage via PATCH /api/reports/custom/[id]/content |
 | Report Save Fix + Library Improvements | ✅ Complete | WS1: saveReport() exits edit mode + shows success toast; WS2: tags column (migration 023), auto-tagging in agent tools, tag editor on detail page; WS3: library redesign with search, tag/source/sort filters, grid + table views |
+| Phase 8a | ✅ Complete | Marketing Intelligence Foundation — migration 024 (3 tables), 9 platforms, manual entry modal, MetricChart (recharts), group overview + company detail pages, Marketing sidebar nav, IntegrationsTab marketing section, read_marketing_data + summarise_marketing agent tools |
 
 ---
 
@@ -3540,4 +3541,147 @@ Amber warning shown in the Output section header area when `tokens > 20000`:
   </div>
 )}
 ```
+
+---
+
+## Phase 8a — Marketing Intelligence Foundation
+
+### Overview
+A new Marketing section for tracking digital marketing performance across 9 platforms via manual data entry. Full API integration ("Coming soon") is scaffolded for future auto-sync. Data is stored as time-series metric snapshots and displayed in tabbed company detail pages with trend charts.
+
+### Database (migration 024)
+Three tables:
+- **`marketing_connections`** — per-group/company OAuth connections to marketing platforms; `UNIQUE(group_id, company_id, platform)`; stores encrypted credentials, config JSONB, `is_active`, `last_synced_at`
+- **`marketing_snapshots`** — per-group/company/platform metric snapshots: `platform`, `metric_key`, `value_number`, `period_start`, `period_end`, `period_type`, `source`, `created_by`; `UNIQUE(group_id, company_id, platform, metric_key, period_start, period_type)`
+- **`marketing_database_snapshots`** — CRM/email contact count snapshots: `total_contacts`, `active_contacts`, `new_this_period`, `unsubscribed_this_period`, `snapshot_date`; `UNIQUE(group_id, company_id, platform, snapshot_date)`
+
+Three indexes: `idx_marketing_snapshots_group`, `idx_marketing_snapshots_period`, `idx_marketing_db_snapshots_group`
+
+RLS: group members can SELECT + INSERT snapshots; group admins can ALL on connections and management.
+
+### lib/types.ts additions
+```typescript
+export type MarketingPlatform =
+  'ga4' | 'search_console' | 'meta' | 'linkedin' |
+  'google_ads' | 'meta_ads' | 'mailchimp' | 'hubspot' | 'freshsales'
+
+export const MARKETING_PLATFORM_LABELS: Record<MarketingPlatform, string>
+export const MARKETING_PLATFORM_ICONS:  Record<MarketingPlatform, string>  // emoji
+
+export interface MarketingMetricDef {
+  key: string; label: string; type: 'number'|'percentage'|'currency'; description: string
+}
+export const MARKETING_METRICS: Record<MarketingPlatform, MarketingMetricDef[]>
+// GA4: sessions, users, bounce_rate, avg_session_duration
+// Search Console: impressions, clicks, ctr, avg_position
+// Meta: reach, impressions, engagement_rate, link_clicks
+// LinkedIn: impressions, clicks, ctr, engagement_rate
+// Google Ads: impressions, clicks, ctr, cost, conversions, cpa
+// Meta Ads: impressions, clicks, ctr, spend, conversions, cpa
+// Mailchimp/HubSpot/Freshsales: contacts + performance metrics
+
+export interface MarketingSnapshot { id, group_id, company_id, platform, metric_key,
+  value_number, value_text, period_start, period_end, period_type, source, created_by, created_at }
+
+export interface MarketingDatabaseSnapshot { id, group_id, company_id, platform,
+  total_contacts, active_contacts, new_this_period, unsubscribed_this_period,
+  snapshot_date, source, notes, created_at }
+```
+
+`AgentTool` union extended: `'read_marketing_data' | 'summarise_marketing'`
+
+### API routes
+```
+GET  /api/marketing/snapshots           → list snapshots (filter: company_id, platform, period_type, from, to)
+POST /api/marketing/snapshots           → upsert single snapshot (source='manual')
+POST /api/marketing/snapshots/bulk      → bulk upsert: { company_id?, platform, period_start, period_end, period_type, metrics: Record<string,number> }
+GET  /api/marketing/database            → list database snapshots (filter: company_id, platform)
+POST /api/marketing/database            → upsert database snapshot
+```
+All routes: auth + active_group_id cookie + admin client for writes.
+
+### Dependencies
+- **`recharts`** v3.8.0 — installed for `LineChart` trend charts
+
+### Components
+
+#### `components/marketing/MetricChart.tsx`
+- Props: `data: { period: string; value: number }[]`, `metricLabel`, `metricType`, `color?`
+- `formatValue()`: percentage → `X.X%`, currency → `$XK/$XM`, number → compact
+- `formatPeriod()`: YYYY-MM → "Jan '26" (prior year) or "Jan" (current year)
+- Custom `CustomTooltip` component
+- `h-40` fixed height; empty state when data is empty
+
+#### `components/marketing/MarketingEntryModal.tsx`
+- Props: `platform`, `companyId`, `groupId`, `onSave`, `onClose`
+- Quick preset buttons: "This month" | "Last month" | "This quarter"
+- Manual date range: `<Input type="date">` for period start + end
+- Per-metric number inputs: currency = `$` prefix, percentage = `%` suffix
+- Submits to `POST /api/marketing/snapshots/bulk`; success = checkmark 800ms → `onSave()` + `onClose()`
+
+### Pages
+
+#### `app/(dashboard)/marketing/page.tsx` — Group Overview
+- Client component; loads companies + snapshots + group name
+- Period filter (`<input type="month">`) + company filter dropdown
+- 4 summary cards: Web Traffic (GA4 sessions), Social Reach (Meta+LinkedIn), Ad Spend (Google+Meta Ads cost), Email List (contacts sum)
+- `PLATFORM_CATEGORIES`: platforms grouped into cards with key metric grid
+- Platform cards link to `/marketing/[companyId]?platform={platform}`
+
+#### `app/(dashboard)/marketing/[companyId]/page.tsx` — Company Detail
+- Client component; initial tab from `?platform=` search param
+- 4 tabs: **Web** (ga4, search_console) · **Social** (meta, linkedin) · **Ads** (google_ads, meta_ads) · **Email & CRM** (mailchimp, hubspot, freshsales)
+- Period selector dropdown (last 12 months) + Refresh button
+- Per platform: metric cards grid + `MetricChart` (first metric, last 6 periods) + "Enter Data" button
+- Empty state per platform: dashed card + "Add manually" button
+- `MarketingEntryModal` opens on "Enter Data" / "Add manually"
+
+### AppShell navigation
+- `marketingActive = pathname.startsWith('/marketing')` state variable
+- Marketing flat nav item inserted between Documents and CashflowGroup
+- Icon: `BarChart2` (already imported); tooltip "Marketing" when collapsed
+- Active state: `bg-white/10 text-white` + `borderLeft: 3px solid var(--palette-primary)`
+
+### IntegrationsTab updates
+- Imports `MARKETING_PLATFORM_LABELS`, `MARKETING_PLATFORM_ICONS`, `MarketingPlatform` from `@/lib/types`
+- `MARKETING_PLATFORM_GROUPS` constant: 4 groups (Web & Search, Social Media, Paid Ads, Email & CRM)
+- New "Marketing Platforms" section below Xero Connections
+- Each platform row: emoji icon + name + "Manual entry supported" + "Coming soon" outline badge
+- Introductory text links to `/marketing` for manual entry
+
+### Agent tools
+
+#### `readMarketingData(params, context)` — `lib/agent-tools.ts`
+```typescript
+// params:
+company_id?:  string           // optional — omit for group-wide
+platforms?:   MarketingPlatform[]  // optional filter
+period?:      string           // YYYY-MM; defaults to latest
+num_periods?: number           // 1–12; default 3
+```
+- Queries `marketing_snapshots` for group + optional company/platforms/date range
+- Groups results: platform → period → metric key → value
+- Returns `{ success, data: grouped, summary: readableText }`
+
+#### `summariseMarketing(params, context)` — `lib/agent-tools.ts`
+```typescript
+// params:
+company_id: string   // required
+period?:    string   // YYYY-MM; defaults to latest
+```
+- Fetches last 200 snapshots, builds compact text summary
+- Secondary Anthropic API call (claude-haiku): marketing analyst system prompt
+- Returns `{ success, data: { company, summary } }`
+
+#### `lib/agent-runner.ts` changes
+- Import `readMarketingData`, `summariseMarketing`
+- 2 new entries in `ALL_TOOL_DEFS` with full JSON schema
+- 2 new `case` branches in `executeTool()`
+
+#### Agent UI updates
+- `TOOL_LABELS` in `agents/page.tsx`: `read_marketing_data: 'Marketing Data'`, `summarise_marketing: 'Summarise Mktg'`
+- `TOOL_OPTIONS` in `agents/_form.tsx`: both tools with 📊/📈 emoji and descriptions
+
+### Manual setup required
+Run migration `024_marketing.sql` in Supabase dashboard.
 

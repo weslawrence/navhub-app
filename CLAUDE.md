@@ -806,6 +806,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 7c+7d — Document Exports + Share Token | ✅ Complete | Install docx + pptxgenjs; lib/document-export.ts (parseMarkdown, exportToDocx, exportToPptx, exportToPdfHtml); GET /api/documents/[id]/export?format=docx|pptx|pdf; Export dropdown on document page; migration 021 no-op (share columns already in 014) |
 | Agent Tool Input Bug Fix + Loop Guard | ✅ Complete | Fixed dead-code else-if in callClaude SSE parser (input_json_delta never ran); tool input logging before executeTool; loop guard (MAX_ITERATIONS=10, MAX_TOOL_FAILURES=3 per tool); token >20k warning in run page |
 | Assistant UX Fixes: Questions, History, Navigation | ✅ Complete | Structured question cards ([QUESTION_START] markers), DB-persisted conversation history (migration 022), history sidebar, maximise toggle, auto-open RunModal on ?brief= |
+| HTML Report Inline Editor | ✅ Complete | Edit mode on report viewer: contenteditable injection into iframe DOM, amber hover/focus styles, Save serialises modified HTML and overwrites Storage via PATCH /api/reports/custom/[id]/content |
 
 ---
 
@@ -1650,6 +1651,71 @@ Previously the `?brief=` param was only used when the user manually clicked Run 
 
 ### Manual steps required
 - **Run migration `022_assistant_history.sql`** in Supabase dashboard
+
+---
+
+## HTML Report Inline Editor
+
+### Overview
+Admins can edit the HTML content of a custom report directly in the browser without leaving NavHub. The report iframe's text elements become `contenteditable`, allowing in-place editing. Saving serialises the modified DOM and overwrites the file in Supabase Storage.
+
+### How it works
+
+**Entering edit mode** (`enterEditMode()` in `app/(dashboard)/reports/custom/[id]/page.tsx`):
+- Sets `editMode` state to `true`
+- Uses a 100ms `setTimeout` to ensure the iframe DOM is accessible via `iframeRef.current.contentDocument`
+- Queries all leaf text elements in the iframe: `h1–h6`, `p`, `span`, `td`, `th`, `li`, and `div:not(:has(> div)):not(:has(> table))`
+- Applies `contentEditable='true'` to each (with extra check that element has no block-level children)
+- Injects `<style id="navhub-edit-styles">` into `<head>` with amber hover (`rgba(251,191,36,0.08)`) + focus (`rgba(251,191,36,0.12)`) highlight styles and dashed outline
+
+**Exiting edit mode** (`exitEditMode()`):
+- Sets `editMode` to `false`
+- Removes `contenteditable` attribute from all edited elements
+- Removes the injected `<style id="navhub-edit-styles">` tag
+- Resets cursor style
+
+**Saving** (`saveReport()`):
+- Strips all edit artifacts from the live iframe DOM (removes `contenteditable`, `style.cursor`, `style.outline`)
+- Removes injected style tag
+- Serialises: `'<!DOCTYPE html>\n' + doc.documentElement.outerHTML`
+- POSTs to `PATCH /api/reports/custom/${id}/content` with `{ html }` body
+- On success: calls `enterEditMode()` on the already-modified iframe DOM (no page reload needed — user can continue editing)
+- Sets `editSaving` during save to show loading spinner
+
+### UI changes (`app/(dashboard)/reports/custom/[id]/page.tsx`)
+- **Toolbar** (admin only):
+  - When not in edit mode: "Edit Report" button (`Pencil` icon) → `enterEditMode()`
+  - When in edit mode: "Cancel" (ghost) → `exitEditMode()` + "Save Changes" (primary) → `saveReport()`
+- **Delete button**: hidden during edit mode (`{isAdmin && !editMode && ...}`) to prevent accidental data loss
+- **Amber banner**: shown between branded header and iframe when `editMode=true`:
+  - `"Edit mode — click any text to edit it directly. Click Save Changes when done."`
+
+### API route — `PATCH /api/reports/custom/[id]/content`
+
+**File**: `app/api/reports/custom/[id]/content/route.ts`
+
+```
+PATCH /api/reports/custom/[id]/content
+  body: { html: string }
+  → Auth check (session required)
+  → Active group check (active_group_id cookie required)
+  → Admin role check (super_admin or group_admin only)
+  → Fetch report: custom_reports WHERE id=params.id AND group_id=activeGroupId AND is_active=true
+  → admin.storage.from('report-files').update(report.file_path, Buffer.from(html, 'utf-8'), { contentType: 'text/html', upsert: true })
+  → admin.from('custom_reports').update({ updated_at: new Date().toISOString() }).eq('id', params.id)
+  → Returns { success: true }
+```
+
+**Key implementation details:**
+- Uses `Buffer.from(html, 'utf-8')` to convert HTML string to bytes for storage upload
+- `upsert: true` ensures the update works even if the storage object somehow doesn't exist
+- `updated_at` is refreshed on the DB record so the reports library shows the correct "last modified" time
+- No migration needed — no DB schema changes
+
+### Security
+- Admin role required (group_admin or super_admin)
+- Ownership verified via `group_id = activeGroupId` filter on `custom_reports` table (RLS also applies)
+- No change to the standalone viewer (`app/view/report/[id]/page.tsx`) — read-only
 
 ---
 

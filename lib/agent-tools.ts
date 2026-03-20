@@ -253,6 +253,7 @@ export async function generateReport(
   }
 
   let html: string
+  let usedTemplateType: string | null = null
 
   // If template_id + slot_data provided, render via template system
   if (params.template_id && params.slot_data) {
@@ -264,6 +265,8 @@ export async function generateReport(
       .single()
 
     if (!tmpl) return `Error: Template ${params.template_id} not found`
+
+    usedTemplateType = (tmpl.template_type as string) ?? null
 
     const validation = validateSlots(tmpl.slots as SlotDefinition[], params.slot_data)
     if (!validation.valid) {
@@ -313,6 +316,20 @@ export async function generateReport(
     await admin.storage.from('report-files').remove([storagePath])
     return `Error saving report record: ${dbErr?.message ?? 'Unknown error'}`
   }
+
+  // Auto-generate tags from template type + report name words
+  const stopWords = ['the','a','an','and','or','for','of','in','to','v1','v2','v3','v4','v5']
+  const autoTags: string[] = []
+  if (usedTemplateType) autoTags.push(usedTemplateType)
+  const nameWords = (params.title ?? 'report')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 3 && !stopWords.includes(w))
+    .slice(0, 3)
+  autoTags.push(...nameWords)
+  const tags = autoTags.filter((v, i, a) => a.indexOf(v) === i)
+  void admin.from('custom_reports').update({ tags }).eq('id', report.id)
 
   return JSON.stringify({
     report_id: report.id,
@@ -841,6 +858,19 @@ export async function renderReport(
     await admin.storage.from('report-files').remove([storagePath])
     return `Error saving report record: ${dbErr?.message ?? 'Unknown error'}`
   }
+
+  // Auto-generate tags from template type + report name words
+  const stopWordsR = ['the','a','an','and','or','for','of','in','to','v1','v2','v3','v4','v5']
+  const autoTagsR: string[] = [(tmpl as ReportTemplate).template_type as string]
+  const nameWordsR = (params.report_name ?? 'report')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((w: string) => w.length > 3 && !stopWordsR.includes(w))
+    .slice(0, 3)
+  autoTagsR.push(...nameWordsR)
+  const tagsR = autoTagsR.filter((v, i, a) => a.indexOf(v) === i)
+  void admin.from('custom_reports').update({ tags: tagsR }).eq('id', report.id)
 
   return JSON.stringify({
     success:     true,

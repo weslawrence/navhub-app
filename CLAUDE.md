@@ -807,6 +807,7 @@ Three tabs: **Display** | **Group** | **Members**
 | Agent Tool Input Bug Fix + Loop Guard | ✅ Complete | Fixed dead-code else-if in callClaude SSE parser (input_json_delta never ran); tool input logging before executeTool; loop guard (MAX_ITERATIONS=10, MAX_TOOL_FAILURES=3 per tool); token >20k warning in run page |
 | Assistant UX Fixes: Questions, History, Navigation | ✅ Complete | Structured question cards ([QUESTION_START] markers), DB-persisted conversation history (migration 022), history sidebar, maximise toggle, auto-open RunModal on ?brief= |
 | HTML Report Inline Editor | ✅ Complete | Edit mode on report viewer: contenteditable injection into iframe DOM, amber hover/focus styles, Save serialises modified HTML and overwrites Storage via PATCH /api/reports/custom/[id]/content |
+| Report Save Fix + Library Improvements | ✅ Complete | WS1: saveReport() exits edit mode + shows success toast; WS2: tags column (migration 023), auto-tagging in agent tools, tag editor on detail page; WS3: library redesign with search, tag/source/sort filters, grid + table views |
 
 ---
 
@@ -1718,6 +1719,134 @@ PATCH /api/reports/custom/[id]/content
 - No change to the standalone viewer (`app/view/report/[id]/page.tsx`) — read-only
 
 ---
+
+## Report Save Fix + Library Improvements
+
+### WS1 — Save Fix (`app/(dashboard)/reports/custom/[id]/page.tsx`)
+
+**Problem**: After a successful save in `saveReport()`, the previous code called `enterEditMode()`, which re-entered edit mode on the already-saved content — preventing the user from seeing the saved result.
+
+**Fix**: After a successful save, `saveReport()` now:
+1. Calls `exitEditMode()` to remove all `contenteditable` attributes and injected styles cleanly
+2. Sets a success toast: "Report saved" (green, 3-second auto-dismiss)
+3. Removes the `enterEditMode()` call entirely
+
+**Toast system**: A `saveToast` state (string | null) renders a fixed top-right toast with green styling for success and red for errors. Auto-dismissed after 3 seconds.
+
+### WS2 — Tags on Custom Reports
+
+#### Database (migration 023)
+```sql
+ALTER TABLE custom_reports
+  ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+
+CREATE INDEX IF NOT EXISTS idx_custom_reports_tags
+  ON custom_reports USING gin(tags);
+```
+
+#### `lib/types.ts` — CustomReport additions
+```typescript
+export interface CustomReport {
+  // ... existing fields ...
+  tags:          string[]
+  agent_run_id:  string | null
+  template_id:   string | null
+}
+```
+
+#### Auto-tagging in `lib/agent-tools.ts`
+Both `generateReport()` and `renderReport()` now auto-generate tags after inserting the `custom_reports` record (fire-and-forget `void` update):
+
+**`generateReport()`**:
+- Declares `let usedTemplateType: string | null = null` before the if/else block
+- Sets `usedTemplateType = tmpl.template_type` inside the template branch
+- After insert: pushes `usedTemplateType` (if set) + up to 3 name-derived words (lowercase, filtered by stopWords list, words > 3 chars)
+
+**`renderReport()`**:
+- Always has `tmpl` in scope — pushes `tmpl.template_type` + up to 3 name-derived words
+- Same stopWords filter: `['the','a','an','and','or','for','of','in','to','v1','v2','v3','v4','v5']`
+- Deduplication: `.filter((v, i, a) => a.indexOf(v) === i)` — avoids `[...new Set()]` spread (not compatible with project tsconfig)
+
+#### `GET /api/reports/custom/tags` (new route)
+```
+GET /api/reports/custom/tags
+  → Returns { data: string[] } — all unique tags across active reports for the active group
+  → Auth required; uses server client (RLS enforces group membership)
+  → Flattens + deduplicates + sorts tags from all group reports
+```
+
+#### `PATCH /api/reports/custom/[id]` (new handler)
+```
+PATCH /api/reports/custom/[id]
+  → Body: { tags: string[] }
+  → Admin only (super_admin / group_admin)
+  → Sanitises tags: lowercase, trim, max 40 chars, deduplicate
+  → Returns { data: { id, name, tags } }
+```
+
+Also updated `GET /api/reports/custom/[id]` to include `tags` and `is_shareable` in its select.
+
+#### Tag editor UI on detail page
+A slim tags row sits between the toolbar and the report content area:
+- When not editing: tag badges (clickable to add to library filter) + "Edit tags" link (admin only)
+- When editing (admin clicks "Edit tags"):
+  - `TagEditor` component renders current tags as removable chips + text input for new tags
+  - Autocomplete dropdown: suggests existing `allTags` not already in the current list
+  - Enter key adds a tag (sanitised: lowercase, non-alphanumeric → hyphens, collapsed)
+  - Save → `PATCH /api/reports/custom/[id]` with `{ tags }` → success toast + updates library allTags
+  - Cancel → reverts draft without saving
+
+### WS3 — Reports Library Redesign (`app/(dashboard)/reports/custom/page.tsx`)
+
+Full rewrite of the library page with search, filtering, sorting, and a grid/table view toggle.
+
+#### State added
+| State | Type | Purpose |
+|-------|------|---------|
+| `view` | `'grid'|'table'` | Persisted to `localStorage:navhub:reports:view` |
+| `search` | `string` | Filters by name, description, or tag |
+| `selectedTags` | `string[]` | Tag filter (AND logic — must have all selected tags) |
+| `source` | `'all'|'agent'|'manual'` | Source filter |
+| `sort` | `'newest'|'oldest'|'name_asc'|'name_desc'` | Sort order |
+| `allTags` | `string[]` | All unique tags loaded from GET /api/reports/custom/tags |
+
+#### Toolbar (shown only when reports exist)
+- **Search input**: filters by name, description, tags; clear X button
+- **Tags dropdown**: multi-select checkbox list of all available tags; shows count badge when active; closes on outside click; "Clear tag filters" at bottom
+- **Source dropdown**: All / Agent generated / Manually uploaded
+- **Sort dropdown**: Newest first / Oldest first / Name A–Z / Name Z–A
+- **Clear button**: resets all filters (visible when any filter active)
+- **View toggle**: Grid / Table buttons (border-contained toggle)
+
+#### Filtered results (client-side, `useMemo`)
+1. Search filter: case-insensitive match on name, description, any tag
+2. Source filter: compares `uploaded_by === 'agent'` or `!== 'agent'`
+3. Tag filter: AND logic — report must contain all selected tags
+4. Sort: applied last
+
+#### Grid view (default, 4-col xl / 3-col lg / 2-col sm)
+Each `ReportCard` shows:
+- Icon + badges row: purple Sparkles icon (agent-created), emerald Shared badge, file type badge
+- Name (2-line clamp) + optional description (2-line clamp)
+- Tags: first 3 chips (clickable — adds to filter), "+N more" count
+- Relative date + Open button + three-dot DropdownMenu (admin only: Open / Edit tags / Delete)
+- Three-dot menu fades in on card hover
+
+#### Table view
+Headers: Name | Tags | Source | Shared | Added | Actions
+- Tags: up to 4 chips clickable, "+N more" count
+- Three-dot menu per row (admin only)
+- Striped hover on rows
+
+#### Empty states
+- **No reports at all**: BookOpen icon, admin/non-admin message
+- **No filter matches**: Search icon, "Clear all filters" link
+
+#### Result count footer
+Shows "{N} reports" or "{N} of {M} reports" when filters are active.
+
+#### `relativeDate(iso: string): string` helper
+Converts ISO timestamp to human-friendly relative string: "just now", "5m ago", "3h ago", "2d ago", "1w ago", or falls back to `toLocaleDateString()`.
 
 ## Next Steps
 

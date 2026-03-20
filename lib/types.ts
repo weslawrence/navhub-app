@@ -218,6 +218,9 @@ export interface CustomReport {
   is_shareable:           boolean
   share_token:            string | null
   share_token_created_at: string | null
+  tags:                   string[]
+  agent_run_id:           string | null
+  template_id:            string | null
   created_at:             string
   updated_at:             string
 }

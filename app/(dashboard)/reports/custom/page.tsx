@@ -1,67 +1,179 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import Link from 'next/link'
 import {
   FileText, Upload, Plus, X, Check, Loader2, BookOpen, Share2,
+  Search, LayoutGrid, List, ChevronDown, Sparkles, Tag,
+  ArrowUpDown, MoreHorizontal, Pencil,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
 import { Input }     from '@/components/ui/input'
 import { Label }     from '@/components/ui/label'
 import { Badge }     from '@/components/ui/badge'
-import { cn } from '@/lib/utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { cn }        from '@/lib/utils'
 import type { CustomReport } from '@/lib/types'
 
-const MAX_FILE_MB = 5
+const MAX_FILE_MB    = 5
 const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 
-// ─── Reports Library Page ─────────────────────────────────────────────────────
+type SortOption   = 'newest' | 'oldest' | 'name_asc' | 'name_desc'
+type SourceFilter = 'all' | 'agent' | 'manual'
+type ViewMode     = 'grid' | 'table'
+
+const SORT_LABELS: Record<SortOption, string> = {
+  newest:    'Newest first',
+  oldest:    'Oldest first',
+  name_asc:  'Name A–Z',
+  name_desc: 'Name Z–A',
+}
+
+function relativeDate(iso: string): string {
+  const d    = new Date(iso)
+  const now  = new Date()
+  const diff = (now.getTime() - d.getTime()) / 1000
+  if (diff < 60)           return 'just now'
+  if (diff < 3600)         return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400)        return `${Math.floor(diff / 3600)}h ago`
+  if (diff < 86400 * 7)   return `${Math.floor(diff / 86400)}d ago`
+  if (diff < 86400 * 30)  return `${Math.floor(diff / 86400 / 7)}w ago`
+  return d.toLocaleDateString()
+}
+
+// ── Reports Library Page ───────────────────────────────────────────────────────
 
 export default function ReportsLibraryPage() {
-  const [reports,  setReports]  = useState<CustomReport[]>([])
-  const [loading,  setLoading]  = useState(true)
-  const [isAdmin,  setIsAdmin]  = useState(false)
+  const [reports,    setReports]    = useState<CustomReport[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [isAdmin,    setIsAdmin]    = useState(false)
   const [showUpload, setShowUpload] = useState(false)
+  const [allTags,    setAllTags]    = useState<string[]>([])
 
-  // ── Upload form state ────────────────────────────────────────────────────
-  const [file,         setFile]         = useState<File | null>(null)
-  const [reportName,   setReportName]   = useState('')
-  const [description,  setDescription]  = useState('')
-  const [uploading,    setUploading]    = useState(false)
-  const [uploadToast,  setUploadToast]  = useState<string | null>(null)
-  const [dragOver,     setDragOver]     = useState(false)
+  // Filters & view
+  const [view,         setView]         = useState<ViewMode>('grid')
+  const [search,       setSearch]       = useState('')
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
+  const [source,       setSource]       = useState<SourceFilter>('all')
+  const [sort,         setSort]         = useState<SortOption>('newest')
+  const [tagsOpen,     setTagsOpen]     = useState(false)
+  const tagsRef = useRef<HTMLDivElement>(null)
 
+  // Upload form
+  const [file,        setFile]        = useState<File | null>(null)
+  const [reportName,  setReportName]  = useState('')
+  const [description, setDescription] = useState('')
+  const [uploading,   setUploading]   = useState(false)
+  const [uploadToast, setUploadToast] = useState<string | null>(null)
+  const [dragOver,    setDragOver]    = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Load reports + admin status ──────────────────────────────────────────
+  // ── Initialise view from localStorage ───────────────────────────────────────
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('navhub:reports:view') as ViewMode | null
+      if (saved === 'grid' || saved === 'table') setView(saved)
+    }
+  }, [])
 
-  const loadReports = useCallback(async () => {
+  function setViewMode(v: ViewMode) {
+    setView(v)
+    if (typeof window !== 'undefined') localStorage.setItem('navhub:reports:view', v)
+  }
+
+  // ── Load reports, admin status, tags ────────────────────────────────────────
+
+  const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [rRes, gRes] = await Promise.all([
+      const [rRes, gRes, tRes] = await Promise.all([
         fetch('/api/reports/custom'),
         fetch('/api/groups/active'),
+        fetch('/api/reports/custom/tags'),
       ])
       const rJson = await rRes.json()
       const gJson = await gRes.json()
-      if (rJson.data) setReports(rJson.data)
+      const tJson = await tRes.json()
+
+      if (rJson.data) setReports(rJson.data as CustomReport[])
       if (gJson.data) setIsAdmin(gJson.data.is_admin)
+      if (tJson.data) setAllTags(tJson.data as string[])
     } catch { /* silent */ } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { void loadReports() }, [loadReports])
+  useEffect(() => { void loadData() }, [loadData])
 
+  // ── Toast auto-dismiss ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!uploadToast) return
     const t = setTimeout(() => setUploadToast(null), 4000)
     return () => clearTimeout(t)
   }, [uploadToast])
 
-  // ── File handling ────────────────────────────────────────────────────────
+  // ── Close tags dropdown on outside click ────────────────────────────────────
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (tagsRef.current && !tagsRef.current.contains(e.target as Node)) {
+        setTagsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
+  // ── Filtered + sorted reports ────────────────────────────────────────────────
+  const filtered = useMemo(() => {
+    let r = [...reports]
+
+    // Search
+    if (search.trim()) {
+      const q = search.toLowerCase()
+      r = r.filter(rep =>
+        rep.name.toLowerCase().includes(q) ||
+        (rep.description ?? '').toLowerCase().includes(q) ||
+        (rep.tags ?? []).some((t: string) => t.includes(q))
+      )
+    }
+
+    // Source
+    if (source === 'agent')  r = r.filter(rep => rep.uploaded_by === 'agent')
+    if (source === 'manual') r = r.filter(rep => rep.uploaded_by !== 'agent')
+
+    // Tags (AND logic — must have all selected tags)
+    if (selectedTags.length > 0) {
+      r = r.filter(rep =>
+        selectedTags.every(tag => (rep.tags ?? []).includes(tag))
+      )
+    }
+
+    // Sort
+    if (sort === 'newest')    r.sort((a, b) => b.created_at.localeCompare(a.created_at))
+    if (sort === 'oldest')    r.sort((a, b) => a.created_at.localeCompare(b.created_at))
+    if (sort === 'name_asc')  r.sort((a, b) => a.name.localeCompare(b.name))
+    if (sort === 'name_desc') r.sort((a, b) => b.name.localeCompare(a.name))
+
+    return r
+  }, [reports, search, source, selectedTags, sort])
+
+  const hasFilters = search !== '' || selectedTags.length > 0 || source !== 'all' || sort !== 'newest'
+
+  function clearFilters() {
+    setSearch('')
+    setSelectedTags([])
+    setSource('all')
+    setSort('newest')
+  }
+
+  // ── File handling ────────────────────────────────────────────────────────────
   function handleFileSelect(selected: File | null) {
     if (!selected) return
     if (!selected.name.endsWith('.html') && !selected.name.endsWith('.htm')) {
@@ -74,7 +186,6 @@ export default function ReportsLibraryPage() {
     }
     setFile(selected)
     if (!reportName) {
-      // Auto-fill name from filename (strip extension, replace hyphens/underscores)
       setReportName(
         selected.name
           .replace(/\.(html?)/i, '')
@@ -107,12 +218,12 @@ export default function ReportsLibraryPage() {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Upload failed')
 
-      setReports(rs => [...rs, json.data])
+      setReports(rs => [...rs, json.data as CustomReport])
       setFile(null)
       setReportName('')
       setDescription('')
       setShowUpload(false)
-      setUploadToast(`"${json.data.name}" uploaded successfully`)
+      setUploadToast(`"${(json.data as CustomReport).name}" uploaded successfully`)
     } catch (err) {
       setUploadToast(err instanceof Error ? err.message : 'Upload failed')
     } finally {
@@ -132,11 +243,228 @@ export default function ReportsLibraryPage() {
     }
   }
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Report card (grid) ───────────────────────────────────────────────────────
+  function ReportCard({ report }: { report: CustomReport }) {
+    const tags = report.tags ?? []
+    const visibleTags = tags.slice(0, 3)
+    const extraCount  = tags.length - 3
+
+    return (
+      <Card className="group relative hover:border-primary/50 transition-colors flex flex-col">
+        <CardContent className="p-4 space-y-2.5 flex flex-col flex-1">
+          {/* Top row: icon + badges */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+              <FileText className="h-4.5 w-4.5 text-primary" />
+            </div>
+            <div className="flex flex-wrap gap-1 justify-end items-center">
+              {report.uploaded_by === 'agent' && (
+                <span title="Generated by agent">
+                  <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+                </span>
+              )}
+              {report.is_shareable && (
+                <Badge
+                  variant="outline"
+                  className="text-[10px] gap-1 border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30"
+                >
+                  <Share2 className="h-2.5 w-2.5" /> Shared
+                </Badge>
+              )}
+              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                {report.file_type}
+              </Badge>
+            </div>
+          </div>
+
+          {/* Name + description */}
+          <div className="flex-1">
+            <p className="text-sm font-semibold leading-snug line-clamp-2">{report.name}</p>
+            {report.description && (
+              <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
+                {report.description}
+              </p>
+            )}
+          </div>
+
+          {/* Tags */}
+          {tags.length > 0 && (
+            <div className="flex items-center gap-1 flex-wrap">
+              {visibleTags.map(tag => (
+                <Badge
+                  key={tag}
+                  variant="secondary"
+                  className="text-[10px] px-1.5 py-0 cursor-pointer"
+                  onClick={() => {
+                    if (!selectedTags.includes(tag)) {
+                      setSelectedTags(prev => [...prev, tag])
+                    }
+                  }}
+                >
+                  {tag}
+                </Badge>
+              ))}
+              {extraCount > 0 && (
+                <span className="text-[10px] text-muted-foreground">+{extraCount}</span>
+              )}
+            </div>
+          )}
+
+          {/* Date + actions */}
+          <div className="flex items-center justify-between pt-0.5">
+            <p className="text-[11px] text-muted-foreground">{relativeDate(report.created_at)}</p>
+            <div className="flex items-center gap-1">
+              <Button size="sm" className="h-7 text-xs px-3" asChild>
+                <Link href={`/reports/custom/${report.id}`}>Open</Link>
+              </Button>
+              {isAdmin && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 w-7 p-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <MoreHorizontal className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem asChild>
+                      <Link href={`/reports/custom/${report.id}`}>Open</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem asChild>
+                      <Link href={`/reports/custom/${report.id}`}>Edit tags</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive focus:text-destructive"
+                      onClick={() => void handleDelete(report)}
+                    >
+                      Delete
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  // ── Table row ────────────────────────────────────────────────────────────────
+  function TableRow({ report }: { report: CustomReport }) {
+    const tags = report.tags ?? []
+    return (
+      <tr className="border-b last:border-b-0 hover:bg-muted/30 transition-colors group">
+        {/* Name */}
+        <td className="py-2.5 px-3">
+          <div className="flex items-center gap-2">
+            {report.uploaded_by === 'agent' && (
+              <Sparkles className="h-3.5 w-3.5 text-purple-400 shrink-0" />
+            )}
+            <div>
+              <p className="text-sm font-medium leading-snug">{report.name}</p>
+              {report.description && (
+                <p className="text-xs text-muted-foreground truncate max-w-xs">{report.description}</p>
+              )}
+            </div>
+          </div>
+        </td>
+
+        {/* Tags */}
+        <td className="py-2.5 px-3">
+          <div className="flex gap-1 flex-wrap">
+            {tags.slice(0, 4).map(tag => (
+              <Badge
+                key={tag}
+                variant="secondary"
+                className="text-[10px] px-1.5 py-0 cursor-pointer"
+                onClick={() => {
+                  if (!selectedTags.includes(tag)) {
+                    setSelectedTags(prev => [...prev, tag])
+                  }
+                }}
+              >
+                {tag}
+              </Badge>
+            ))}
+            {tags.length > 4 && (
+              <span className="text-[10px] text-muted-foreground">+{tags.length - 4}</span>
+            )}
+          </div>
+        </td>
+
+        {/* Source */}
+        <td className="py-2.5 px-3">
+          <span className="text-xs text-muted-foreground">
+            {report.uploaded_by === 'agent' ? 'Agent' : 'Manual'}
+          </span>
+        </td>
+
+        {/* Shared */}
+        <td className="py-2.5 px-3">
+          {report.is_shareable && (
+            <Badge
+              variant="outline"
+              className="text-[10px] gap-1 border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30"
+            >
+              <Share2 className="h-2.5 w-2.5" /> Shared
+            </Badge>
+          )}
+        </td>
+
+        {/* Date */}
+        <td className="py-2.5 px-3">
+          <span className="text-xs text-muted-foreground">{relativeDate(report.created_at)}</span>
+        </td>
+
+        {/* Actions */}
+        <td className="py-2.5 px-3 text-right">
+          <div className="flex items-center gap-1 justify-end">
+            <Button size="sm" variant="outline" className="h-7 text-xs px-2.5" asChild>
+              <Link href={`/reports/custom/${report.id}`}>Open</Link>
+            </Button>
+            {isAdmin && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 w-7 p-0 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem asChild>
+                    <Link href={`/reports/custom/${report.id}`}>Open</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link href={`/reports/custom/${report.id}`}>Edit tags</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="text-destructive focus:text-destructive"
+                    onClick={() => void handleDelete(report)}
+                  >
+                    Delete
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        </td>
+      </tr>
+    )
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
+    <div className="space-y-5">
+
+      {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
@@ -153,7 +481,7 @@ export default function ReportsLibraryPage() {
         )}
       </div>
 
-      {/* Global toast */}
+      {/* ── Toast ──────────────────────────────────────────────────────── */}
       {uploadToast && (
         <div className={cn(
           'flex items-center gap-2 rounded-md px-4 py-2.5 text-sm',
@@ -163,12 +491,12 @@ export default function ReportsLibraryPage() {
         )}>
           {(uploadToast.includes('success') || uploadToast.includes('successfully'))
             ? <Check className="h-4 w-4 shrink-0" />
-            : <X className="h-4 w-4 shrink-0" />}
+            : <X     className="h-4 w-4 shrink-0" />}
           {uploadToast}
         </div>
       )}
 
-      {/* Upload panel */}
+      {/* ── Upload panel ────────────────────────────────────────────────── */}
       {showUpload && isAdmin && (
         <Card>
           <CardHeader>
@@ -188,7 +516,6 @@ export default function ReportsLibraryPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Dropzone */}
             <div
               onDrop={handleDrop}
               onDragOver={e => { e.preventDefault(); setDragOver(true) }}
@@ -225,7 +552,6 @@ export default function ReportsLibraryPage() {
               )}
             </div>
 
-            {/* Name + description */}
             <div className="grid gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="report-name">Report name <span className="text-destructive">*</span></Label>
@@ -248,12 +574,10 @@ export default function ReportsLibraryPage() {
             </div>
 
             <div className="flex gap-2">
-              <Button onClick={handleUpload} disabled={uploading || !file}>
-                {uploading ? (
-                  <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Uploading…</>
-                ) : (
-                  <><Upload className="h-4 w-4 mr-1.5" /> Upload</>
-                )}
+              <Button onClick={() => void handleUpload()} disabled={uploading || !file}>
+                {uploading
+                  ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Uploading…</>
+                  : <><Upload  className="h-4 w-4 mr-1.5" /> Upload</>}
               </Button>
               <Button
                 variant="outline"
@@ -267,8 +591,163 @@ export default function ReportsLibraryPage() {
         </Card>
       )}
 
-      {/* Reports grid */}
+      {/* ── Toolbar: search + filters + view toggle ──────────────────── */}
+      {!loading && reports.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[180px] max-w-xs">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search reports…"
+              className="pl-8 h-8 text-sm"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+
+          {/* Tags dropdown */}
+          {allTags.length > 0 && (
+            <div className="relative" ref={tagsRef}>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn('h-8 gap-1.5', selectedTags.length > 0 && 'border-primary text-primary')}
+                onClick={() => setTagsOpen(o => !o)}
+              >
+                <Tag className="h-3.5 w-3.5" />
+                Tags
+                {selectedTags.length > 0 && (
+                  <Badge className="h-4 text-[10px] px-1.5 ml-0.5 bg-primary text-primary-foreground">
+                    {selectedTags.length}
+                  </Badge>
+                )}
+                <ChevronDown className={cn('h-3 w-3 transition-transform', tagsOpen && 'rotate-180')} />
+              </Button>
+
+              {tagsOpen && (
+                <div className="absolute left-0 top-full mt-1 z-20 w-52 rounded-md border bg-popover shadow-md py-1.5">
+                  <p className="px-3 py-1 text-[11px] text-muted-foreground font-medium uppercase tracking-wide">
+                    Filter by tag
+                  </p>
+                  {allTags.map(tag => {
+                    const active = selectedTags.includes(tag)
+                    return (
+                      <button
+                        key={tag}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent transition-colors"
+                        onClick={() => setSelectedTags(prev =>
+                          active ? prev.filter(t => t !== tag) : [...prev, tag]
+                        )}
+                      >
+                        <span className={cn(
+                          'h-3.5 w-3.5 rounded border flex items-center justify-center flex-shrink-0',
+                          active ? 'bg-primary border-primary text-primary-foreground' : 'border-input'
+                        )}>
+                          {active && <Check className="h-2.5 w-2.5" />}
+                        </span>
+                        {tag}
+                      </button>
+                    )
+                  })}
+                  {selectedTags.length > 0 && (
+                    <>
+                      <div className="border-t my-1" />
+                      <button
+                        className="w-full px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground text-left"
+                        onClick={() => setSelectedTags([])}
+                      >
+                        Clear tag filters
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Source filter */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className={cn('h-8 gap-1.5', source !== 'all' && 'border-primary text-primary')}
+              >
+                Source: {source === 'all' ? 'All' : source === 'agent' ? 'Agent' : 'Manual'}
+                <ChevronDown className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setSource('all')}   className={cn(source === 'all'    && 'font-medium')}>All sources</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSource('agent')} className={cn(source === 'agent'  && 'font-medium')}>Agent generated</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSource('manual')} className={cn(source === 'manual' && 'font-medium')}>Manually uploaded</DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Sort */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8 gap-1.5">
+                <ArrowUpDown className="h-3.5 w-3.5" />
+                {SORT_LABELS[sort]}
+                <ChevronDown className="h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {(Object.keys(SORT_LABELS) as SortOption[]).map(opt => (
+                <DropdownMenuItem
+                  key={opt}
+                  onClick={() => setSort(opt)}
+                  className={cn(sort === opt && 'font-medium')}
+                >
+                  {SORT_LABELS[opt]}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          {/* Clear filters */}
+          {hasFilters && (
+            <Button variant="ghost" size="sm" className="h-8 text-muted-foreground" onClick={clearFilters}>
+              <X className="h-3.5 w-3.5 mr-1" /> Clear
+            </Button>
+          )}
+
+          {/* Spacer + view toggle */}
+          <div className="ml-auto flex items-center gap-1 border rounded-md p-0.5">
+            <Button
+              variant={view === 'grid' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-6 w-7 p-0"
+              onClick={() => setViewMode('grid')}
+              title="Grid view"
+            >
+              <LayoutGrid className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              variant={view === 'table' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-6 w-7 p-0"
+              onClick={() => setViewMode('table')}
+              title="Table view"
+            >
+              <List className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Content ─────────────────────────────────────────────────────── */}
       {loading ? (
+        /* Loading skeleton */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map(i => (
             <Card key={i} className="animate-pulse">
@@ -281,6 +760,7 @@ export default function ReportsLibraryPage() {
           ))}
         </div>
       ) : reports.length === 0 ? (
+        /* Empty state — no reports at all */
         <Card>
           <CardContent className="py-16 text-center">
             <BookOpen className="h-12 w-12 text-muted-foreground/30 mx-auto mb-4" />
@@ -296,69 +776,54 @@ export default function ReportsLibraryPage() {
             )}
           </CardContent>
         </Card>
-      ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {reports.map(report => (
-            <Card
-              key={report.id}
-              className="group relative hover:border-primary/50 transition-colors"
-            >
-              <CardContent className="p-5 space-y-3">
-                {/* Icon + badges */}
-                <div className="flex items-start justify-between gap-2">
-                  <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <FileText className="h-5 w-5 text-primary" />
-                  </div>
-                  <div className="flex flex-wrap gap-1.5 justify-end">
-                    {report.is_shareable && (
-                      <Badge
-                        variant="outline"
-                        className="text-xs gap-1 border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30"
-                      >
-                        <Share2 className="h-3 w-3" /> Shared
-                      </Badge>
-                    )}
-                    <Badge variant="outline" className="text-xs uppercase tracking-wide">
-                      {report.file_type}
-                    </Badge>
-                  </div>
-                </div>
-
-                {/* Name + description */}
-                <div>
-                  <p className="text-sm font-semibold leading-snug">{report.name}</p>
-                  {report.description && (
-                    <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">
-                      {report.description}
-                    </p>
-                  )}
-                </div>
-
-                {/* Date */}
-                <p className="text-xs text-muted-foreground">
-                  Added {new Date(report.created_at).toLocaleDateString()}
-                </p>
-
-                {/* Actions */}
-                <div className="flex gap-2 pt-1">
-                  <Button size="sm" className="flex-1" asChild>
-                    <Link href={`/reports/custom/${report.id}`}>Open</Link>
-                  </Button>
-                  {isAdmin && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-muted-foreground hover:text-destructive"
-                      onClick={() => void handleDelete(report)}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+      ) : filtered.length === 0 ? (
+        /* Empty state — filters returned nothing */
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Search className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />
+            <p className="text-sm font-medium text-muted-foreground">No reports match your filters</p>
+            <Button variant="link" size="sm" className="mt-2 text-muted-foreground" onClick={clearFilters}>
+              Clear all filters
+            </Button>
+          </CardContent>
+        </Card>
+      ) : view === 'grid' ? (
+        /* Grid view */
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {filtered.map(report => (
+            <ReportCard key={report.id} report={report} />
           ))}
         </div>
+      ) : (
+        /* Table view */
+        <div className="rounded-lg border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/40">
+              <tr>
+                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Name</th>
+                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Tags</th>
+                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Source</th>
+                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Shared</th>
+                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Added</th>
+                <th className="text-right py-2.5 px-3 text-xs font-medium text-muted-foreground">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(report => (
+                <TableRow key={report.id} report={report} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Result count */}
+      {!loading && reports.length > 0 && (
+        <p className="text-xs text-muted-foreground text-right">
+          {filtered.length === reports.length
+            ? `${reports.length} report${reports.length !== 1 ? 's' : ''}`
+            : `${filtered.length} of ${reports.length} reports`}
+        </p>
       )}
     </div>
   )

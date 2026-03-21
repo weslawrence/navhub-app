@@ -85,7 +85,7 @@ export default function MarketingCompanyPage({
   const [snapshots,      setSnapshots]      = useState<MarketingSnapshot[]>([])
   const [loading,        setLoading]        = useState(true)
   const [entryModal,     setEntryModal]     = useState<MarketingPlatform | null>(null)
-  const [groupId,        setGroupId]        = useState('')
+  const [,        setGroupId]        = useState('')
   const periodOptions = getPeriodOptions()
   const [selectedPeriod, setSelectedPeriod] = useState(periodOptions[1] ?? periodOptions[0])
 

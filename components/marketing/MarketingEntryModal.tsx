@@ -16,7 +16,6 @@ import {
 interface MarketingEntryModalProps {
   platform:   MarketingPlatform
   companyId:  string | null
-  groupId:    string
   onSave:     () => void
   onClose:    () => void
 }
@@ -51,7 +50,6 @@ function getQuarterRange(): { start: string; end: string } {
 export default function MarketingEntryModal({
   platform,
   companyId,
-  groupId: _groupId,
   onSave,
   onClose,
 }: MarketingEntryModalProps) {

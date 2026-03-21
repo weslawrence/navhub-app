@@ -316,7 +316,6 @@ export default function MarketingCompanyPage({
         <MarketingEntryModal
           platform={entryModal}
           companyId={params.companyId}
-          groupId={groupId}
           onSave={() => void loadSnapshots()}
           onClose={() => setEntryModal(null)}
         />

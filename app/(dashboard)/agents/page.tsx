@@ -67,8 +67,9 @@ function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' 
 // ─── Agents list page ─────────────────────────────────────────────────────────
 
 export default function AgentsPage() {
-  const searchParams = useSearchParams()
-  const briefParam   = searchParams.get('brief') ?? ''
+  const searchParams   = useSearchParams()
+  const briefParam     = searchParams.get('brief') ?? ''
+  const agentNameParam = searchParams.get('agent_name') ?? ''
 
   const [agents,       setAgents]       = useState<Agent[]>([])
   const [loading,      setLoading]      = useState(true)
@@ -96,12 +97,18 @@ export default function AgentsPage() {
     if (loading || !briefParam || runTarget) return
     const activeAgents = agents.filter(a => a.is_active)
     if (activeAgents.length === 0) return
-    // Pick first active agent — user can change in modal
-    setInitialBrief(briefParam)
-    setRunTarget(activeAgents[0])
-    // Clear URL param without page reload
+    setInitialBrief(decodeURIComponent(briefParam))
+    // Try to match agent by name if provided
+    let targetAgent = activeAgents[0]
+    if (agentNameParam) {
+      const decodedName = decodeURIComponent(agentNameParam).toLowerCase()
+      const match = activeAgents.find(a => a.name.toLowerCase().includes(decodedName))
+      if (match) targetAgent = match
+    }
+    setRunTarget(targetAgent)
+    // Clear URL params without page reload
     window.history.replaceState({}, '', '/agents')
-  }, [loading, briefParam, agents]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [loading, briefParam, agentNameParam, agents]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleToggleActive(agent: Agent) {
     const newValue = !agent.is_active

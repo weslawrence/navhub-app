@@ -115,7 +115,20 @@ function QuestionCard({
 
 // ─── Agent Brief Card ─────────────────────────────────────────────────────────
 
-function AgentBriefCard({ brief, onClose }: { brief: string; onClose?: () => void }) {
+function extractAgentName(text: string): string | null {
+  const match = text.match(/(?:brief|use|ask|agent[:\s]+)\s+([A-Z][a-z]+ (?:[A-Z][a-z]+ )?[A-Z][a-z]+)/i)
+  return match?.[1] ?? null
+}
+
+function AgentBriefCard({
+  brief,
+  msgContent,
+  onClose,
+}: {
+  brief:       string
+  msgContent?: string
+  onClose?:    () => void
+}) {
   const router  = useRouter()
   const [copied, setCopied] = useState(false)
 
@@ -127,7 +140,10 @@ function AgentBriefCard({ brief, onClose }: { brief: string; onClose?: () => voi
 
   function handleLaunch() {
     onClose?.()
-    router.push(`/agents?brief=${encodeURIComponent(brief)}`)
+    const agentName = msgContent ? extractAgentName(msgContent) : null
+    const params    = new URLSearchParams({ brief: brief })
+    if (agentName) params.set('agent_name', agentName)
+    router.push(`/agents?${params.toString()}`)
   }
 
   return (
@@ -821,7 +837,7 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
                   {/* Agent Brief Card — rendered below assistant message */}
                   {msg.role === 'assistant' && msg.brief && !msg.streaming && (
                     <div className="pl-0">
-                      <AgentBriefCard brief={msg.brief} onClose={onClose} />
+                      <AgentBriefCard brief={msg.brief} msgContent={msg.content} onClose={onClose} />
                     </div>
                   )}
 

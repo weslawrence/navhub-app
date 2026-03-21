@@ -52,28 +52,33 @@ export async function GET(
       .eq('group_id', params.id)
       .order('created_at', { ascending: true })
 
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    if (error) throw error
 
-    // Fetch all users in one call (much faster than individual getUserById calls)
-    const { data: { users } } = await admin.auth.admin.listUsers({ perPage: 1000 })
-    const emailMap: Record<string, string> = {}
-    users.forEach(u => { emailMap[u.id] = u.email ?? '' })
-
-    const members: GroupMember[] = (userGroups ?? []).map((ug: {
-      user_id: string; role: string; is_default: boolean; created_at: string
-    }) => ({
-      user_id:    ug.user_id,
-      email:      emailMap[ug.user_id] ?? '',
-      role:       ug.role,
-      is_default: ug.is_default,
-      joined_at:  ug.created_at,
-    }))
+    // Fetch user emails using auth admin API with error handling per user
+    const members: GroupMember[] = await Promise.all(
+      (userGroups ?? []).map(async (ug: {
+        user_id: string; role: string; is_default: boolean; created_at: string
+      }) => {
+        let email = ''
+        try {
+          const { data } = await admin.auth.admin.getUserById(ug.user_id)
+          email = data.user?.email ?? ''
+        } catch {
+          email = ''
+        }
+        return {
+          user_id:    ug.user_id,
+          email,
+          role:       ug.role,
+          is_default: ug.is_default,
+          joined_at:  ug.created_at,
+        }
+      })
+    )
 
     return NextResponse.json({ data: members })
   } catch (err) {
-    console.error('Members API error:', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    console.error('Members API error:', JSON.stringify(err))
+    return NextResponse.json({ error: 'Internal server error', detail: String(err) }, { status: 500 })
   }
 }

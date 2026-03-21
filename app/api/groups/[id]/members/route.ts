@@ -70,7 +70,7 @@ export async function GET(
           email,
           role:       ug.role,
           is_default: ug.is_default,
-          joined_at:  null,
+          joined_at:  '',
         }
       })
     )

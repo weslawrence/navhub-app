@@ -48,16 +48,15 @@ export async function GET(
     // Get all user_groups rows for this group
     const { data: userGroups, error } = await admin
       .from('user_groups')
-      .select('user_id, role, is_default, created_at')
+      .select('user_id, role, is_default')
       .eq('group_id', params.id)
-      .order('created_at', { ascending: true })
 
     if (error) throw error
 
     // Fetch user emails using auth admin API with error handling per user
     const members: GroupMember[] = await Promise.all(
       (userGroups ?? []).map(async (ug: {
-        user_id: string; role: string; is_default: boolean; created_at: string
+        user_id: string; role: string; is_default: boolean
       }) => {
         let email = ''
         try {
@@ -71,7 +70,7 @@ export async function GET(
           email,
           role:       ug.role,
           is_default: ug.is_default,
-          joined_at:  ug.created_at,
+          joined_at:  null,
         }
       })
     )

@@ -32,6 +32,13 @@ export async function GET(
       .eq('is_active', true)
       .single()
 
+    console.log('Report query:', { 
+      id: params.id, 
+      activeGroupId, 
+      error: error?.message, 
+      found: !!report 
+    })
+
     if (error || !report) {
       return NextResponse.json({ error: 'Report not found' }, { status: 404 })
     }

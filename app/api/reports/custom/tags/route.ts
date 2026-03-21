@@ -17,24 +17,34 @@ export async function GET() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    // Use admin client to avoid RLS issues with tags column
     const admin = createAdminClient()
+
     const { data, error } = await admin
       .from('custom_reports')
       .select('tags')
       .eq('group_id', activeGroupId)
-      .eq('is_active', true)
       .not('tags', 'is', null)
 
-    if (error) throw error
+    if (error) {
+      console.error('Tags error:', JSON.stringify(error))
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
 
     // Flatten + deduplicate + sort (avoid Set spread for TS compat)
-    const flatTags = (data ?? []).flatMap((r: { tags: string[] | null }) => r.tags ?? []).filter(Boolean)
-    const allTags  = flatTags.filter((v, i, a) => a.indexOf(v) === i).sort()
+    const allTags = (data ?? [])
+      .flatMap((r: { tags: string[] | null }) => r.tags ?? [])
+      .filter(Boolean)
+      .filter((v, i, a) => a.indexOf(v) === i)
+      .sort()
 
     return NextResponse.json({ data: allTags })
   } catch (err) {
-    console.error('Tags API error:', JSON.stringify(err))
-    return NextResponse.json({ error: 'Internal server error', detail: String(err) }, { status: 500 })
+    const message = err instanceof Error
+      ? err.message
+      : typeof err === 'object'
+        ? JSON.stringify(err)
+        : String(err)
+    console.error('Tags API error:', message)
+    return NextResponse.json({ error: 'Internal server error', detail: message }, { status: 500 })
   }
 }

@@ -78,7 +78,12 @@ export async function GET(
 
     return NextResponse.json({ data: members })
   } catch (err) {
-    console.error('Members API error:', JSON.stringify(err))
-    return NextResponse.json({ error: 'Internal server error', detail: String(err) }, { status: 500 })
+    const message = err instanceof Error
+      ? err.message
+      : typeof err === 'object'
+        ? JSON.stringify(err)
+        : String(err)
+    console.error('Members API error:', message)
+    return NextResponse.json({ error: 'Internal server error', detail: message }, { status: 500 })
   }
 }

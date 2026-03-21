@@ -24,7 +24,7 @@ export async function GET(
 
     const admin = createAdminClient()
 
-    const { data: report, error } = await supabase
+    const { data: report, error } = await admin
       .from('custom_reports')
       .select('id, name, description, file_type, tags, is_shareable, created_at, updated_at')
       .eq('id', params.id)
@@ -38,8 +38,13 @@ export async function GET(
 
     return NextResponse.json({ data: report })
   } catch (err) {
-    console.error('Report GET error:', JSON.stringify(err))
-    return NextResponse.json({ error: 'Internal server error', detail: String(err) }, { status: 500 })
+    const message = err instanceof Error
+      ? err.message
+      : typeof err === 'object'
+        ? JSON.stringify(err)
+        : String(err)
+    console.error('Report GET error:', message)
+    return NextResponse.json({ error: 'Internal server error', detail: message }, { status: 500 })
   }
 }
 
@@ -54,8 +59,6 @@ export async function PATCH(
   const supabase      = createClient()
   const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
-
-  const admin = createAdminClient()
 
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
@@ -73,8 +76,10 @@ export async function PATCH(
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
 
+  const admin = createAdminClient()
+
   // Verify report belongs to group
-  const { data: existing } = await supabase
+  const { data: existing } = await admin
     .from('custom_reports')
     .select('id')
     .eq('id', params.id)
@@ -101,7 +106,6 @@ export async function PATCH(
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
   }
 
-  const admin = createAdminClient()
   const { data: updated, error } = await admin
     .from('custom_reports')
     .update({ ...updates, updated_at: new Date().toISOString() })
@@ -126,8 +130,6 @@ export async function DELETE(
   const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
 
-  const admin = createAdminClient()
-  
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
@@ -144,19 +146,19 @@ export async function DELETE(
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
   }
 
+  const admin = createAdminClient()
+
   // Fetch the report to get file_path and verify group ownership
-  const { data: report } = await supabase
+  const { data: report } = await admin
     .from('custom_reports')
     .select('file_path, group_id')
     .eq('id', params.id)
-    .eq('group_id', activeGroupId)  // RLS + explicit group check
+    .eq('group_id', activeGroupId)
     .single()
 
   if (!report) {
     return NextResponse.json({ error: 'Report not found' }, { status: 404 })
   }
-
-  const admin = createAdminClient()
 
   // Soft-delete the DB record
   const { error: dbError } = await admin

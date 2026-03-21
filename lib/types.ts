@@ -317,6 +317,7 @@ export interface Agent {
   schedule_enabled:      boolean
   schedule_config:       Record<string, unknown> | null
   last_scheduled_run_at: string | null
+  next_scheduled_run_at: string | null
   created_at:            string
   updated_at:            string
 }
@@ -346,7 +347,7 @@ export interface AgentRun {
   id:                string
   agent_id:          string
   group_id:          string
-  triggered_by:      string
+  triggered_by:      'user' | 'schedule' | 'api' | string
   triggered_by_user: string | null
   status:            RunStatus
   input_context: {
@@ -377,6 +378,17 @@ export interface AgentRunInteraction {
   answer:      string | null
   answered_at: string | null
   created_at:  string
+}
+
+export interface ScheduledRunLog {
+  id:           string
+  agent_id:     string
+  run_id:       string | null
+  scheduled_at: string
+  triggered_at: string | null
+  status:       'pending' | 'triggered' | 'failed' | 'skipped'
+  error:        string | null
+  created_at:   string
 }
 
 export const PERSONA_PRESETS: Record<PersonaPreset, string> = {

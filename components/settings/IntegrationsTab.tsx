@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plug, ChevronDown, RefreshCw, Check } from 'lucide-react'
+import { Plug, ChevronDown, RefreshCw, Check, Link2, Link2Off, ExternalLink, Loader2 } from 'lucide-react'
 import { Badge }     from '@/components/ui/badge'
 import { Button }    from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -32,6 +32,15 @@ interface XeroConn {
   division?:      { name: string }
 }
 
+interface SharePointConnection {
+  id:          string
+  is_active:   boolean
+  site_url:    string | null
+  drive_id:    string | null
+  folder_path: string | null
+  expires_at:  string
+}
+
 export default function IntegrationsTab() {
   const [companies,    setCompanies]    = useState<CompanyOption[]>([])
   const [divisions,    setDivisions]    = useState<DivisionOption[]>([])
@@ -40,15 +49,21 @@ export default function IntegrationsTab() {
   const [linkSaving,   setLinkSaving]   = useState<string | null>(null)
   const [linkToast,    setLinkToast]    = useState<Record<string, string>>({})
 
+  // SharePoint state
+  const [spConnection,    setSpConnection]    = useState<SharePointConnection | null>(null)
+  const [spDisconnecting, setSpDisconnecting] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [cRes, xRes] = await Promise.all([
+      const [cRes, xRes, spRes] = await Promise.all([
         fetch('/api/companies?include_inactive=false'),
         fetch('/api/xero/connections'),
+        fetch('/api/integrations/sharepoint/status'),
       ])
       const cJson = await cRes.json()
       const xJson = await xRes.json()
+      const spJson = spRes.ok ? await spRes.json() as { data: SharePointConnection | null } : { data: null }
 
       const companyList: CompanyOption[] = cJson.data ?? []
       setCompanies(companyList)
@@ -69,6 +84,7 @@ export default function IntegrationsTab() {
       }
 
       setConnections(xJson.data ?? [])
+      setSpConnection(spJson.data)
     } catch { /* silent */ } finally {
       setLoading(false)
     }
@@ -130,6 +146,17 @@ export default function IntegrationsTab() {
   }
 
   const divisionList = divisions.map(d => ({ id: d.id, name: d.name, company_name: d.company_name }))
+
+  async function disconnectSharePoint() {
+    if (!confirm('Disconnect SharePoint? Existing synced files will remain in SharePoint but future syncs will stop.')) return
+    setSpDisconnecting(true)
+    try {
+      await fetch('/api/integrations/sharepoint/status', { method: 'DELETE' })
+      setSpConnection(null)
+    } catch { /* silent */ } finally {
+      setSpDisconnecting(false)
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -283,6 +310,77 @@ export default function IntegrationsTab() {
             </div>
           ))}
         </div>
+      </div>
+
+      {/* ── SharePoint / OneDrive ────────────────────────────────────────────── */}
+      <div className="space-y-3">
+        <div>
+          <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
+            <span>🗂️</span> SharePoint / OneDrive
+          </h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Connect Microsoft 365 to automatically sync documents to SharePoint or OneDrive.
+          </p>
+        </div>
+
+        {spConnection ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-green-500" />
+                  Connected
+                </CardTitle>
+                <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">Active</Badge>
+              </div>
+              <CardDescription className="text-xs">
+                Sync folder: <span className="font-mono text-foreground">{spConnection.folder_path ?? 'NavHub/Documents'}</span>
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {spConnection.site_url && (
+                <a
+                  href={spConnection.site_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  Open SharePoint site
+                </a>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 gap-1.5"
+                onClick={() => void disconnectSharePoint()}
+                disabled={spDisconnecting}
+              >
+                {spDisconnecting
+                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : <Link2Off className="h-3.5 w-3.5" />
+                }
+                Disconnect
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="rounded-lg border border-border bg-card px-4 py-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-2xl">📎</span>
+              <div>
+                <p className="text-sm font-medium text-foreground">Microsoft SharePoint / OneDrive</p>
+                <p className="text-xs text-muted-foreground">Not connected</p>
+              </div>
+            </div>
+            <a href="/api/integrations/sharepoint/connect">
+              <Button size="sm" className="gap-1.5">
+                <Link2 className="h-3.5 w-3.5" />
+                Connect
+              </Button>
+            </a>
+          </div>
+        )}
       </div>
 
     </div>

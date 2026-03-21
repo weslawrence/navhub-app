@@ -157,7 +157,15 @@ export default function AgentRunsPage() {
                   {runs.map(run => (
                     <tr key={run.id} className="hover:bg-muted/20 transition-colors">
                       <td className="px-4 py-3">
-                        <RunStatusBadge status={run.status} />
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <RunStatusBadge status={run.status} />
+                          {run.triggered_by === 'schedule' && (
+                            <Badge className="gap-1 text-xs font-normal bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+                              <Clock className="h-3 w-3" />
+                              Scheduled
+                            </Badge>
+                          )}
+                        </div>
                         {run.status === 'awaiting_input' && (
                           <AwaitingInputIndicator runId={run.id} />
                         )}

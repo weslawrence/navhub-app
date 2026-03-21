@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link from 'next/link'
-import { TrendingUp, TrendingDown, Minus, BarChart2, ArrowRight } from 'lucide-react'
+import { BarChart2, ArrowRight } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { cn }   from '@/lib/utils'
@@ -112,6 +112,7 @@ export default function MarketingOverviewPage() {
   useEffect(() => { void loadSnapshots() }, [loadSnapshots])
 
   // Derive which platforms have data
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const platformsWithData = useMemo(() => {
     const platforms = new Set(snapshots.map(s => s.platform as MarketingPlatform))
     return PLATFORM_CATEGORIES

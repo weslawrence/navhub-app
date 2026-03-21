@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -13,7 +13,9 @@ import { Input }     from '@/components/ui/input'
 import { Label }     from '@/components/ui/label'
 import { Badge }     from '@/components/ui/badge'
 import { cn }        from '@/lib/utils'
-import type { Agent, AgentCredential } from '@/lib/types'
+import type { Agent, AgentCredential, ScheduledRunLog } from '@/lib/types'
+import { getNextRunTime, formatNextRun } from '@/lib/scheduling'
+import type { ScheduleConfig as LibScheduleConfig } from '@/lib/scheduling'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,6 +74,9 @@ export default function AgentDetailPage() {
   const [commStyle,     setCommStyle]     = useState<'formal' | 'balanced' | 'casual'>('balanced')
   const [respLength,    setRespLength]    = useState<'concise' | 'balanced' | 'detailed'>('balanced')
 
+  // Schedule logs state
+  const [scheduledLogs, setScheduledLogs] = useState<ScheduledRunLog[]>([])
+
   // API Keys state
   const [anthropicKey,  setAnthropicKey]  = useState('')
   const [showKey,       setShowKey]       = useState(false)
@@ -84,9 +89,10 @@ export default function AgentDetailPage() {
   const loadAgent = useCallback(async () => {
     setLoading(true)
     try {
-      const [agentRes, credsRes] = await Promise.all([
+      const [agentRes, credsRes, logsRes] = await Promise.all([
         fetch(`/api/agents/${agentId}`),
         fetch(`/api/agents/${agentId}/credentials`),
+        fetch(`/api/agents/${agentId}/schedule-logs`),
       ])
       if (!agentRes.ok) { router.push('/agents'); return }
       const agentData = (await agentRes.json()) as { data: Agent }
@@ -110,6 +116,12 @@ export default function AgentDetailPage() {
         const anthCred = creds.find(c => c.key === 'anthropic_api_key')
         setHasAnthropicKey(!!anthCred)
         setAnthropicCredId(anthCred?.id ?? null)
+      }
+
+      // Scheduled logs
+      if (logsRes.ok) {
+        const logsData = (await logsRes.json()) as { data: ScheduledRunLog[] }
+        setScheduledLogs(logsData.data ?? [])
       }
     } finally {
       setLoading(false)
@@ -146,10 +158,27 @@ export default function AgentDetailPage() {
   // ── Schedule save ─────────────────────────────────────────────────────────
 
   async function saveSchedule() {
-    await patchAgent({
+    const updates: Record<string, unknown> = {
       schedule_enabled: scheduleEnabled,
       schedule_config:  scheduleEnabled ? scheduleConfig : null,
-    })
+    }
+    if (scheduleEnabled) {
+      try {
+        const config: LibScheduleConfig = {
+          frequency:    scheduleConfig.frequency,
+          time:         scheduleConfig.time,
+          day_of_week:  scheduleConfig.day_of_week,
+          day_of_month: scheduleConfig.day_of_month,
+          timezone:     'Australia/Brisbane',
+        }
+        updates.next_scheduled_run_at = getNextRunTime(config).toISOString()
+      } catch {
+        // leave next_scheduled_run_at unset if calculation fails
+      }
+    } else {
+      updates.next_scheduled_run_at = null
+    }
+    await patchAgent(updates)
   }
 
   // ── Personality save ──────────────────────────────────────────────────────
@@ -219,6 +248,25 @@ export default function AgentDetailPage() {
       setKeyLoading(false)
     }
   }
+
+  // ── Next run display (timezone-aware via lib/scheduling) ─────────────────
+
+  const nextRunDisplay = useMemo(() => {
+    if (!scheduleEnabled) return null
+    try {
+      const config: LibScheduleConfig = {
+        frequency:    scheduleConfig.frequency,
+        time:         scheduleConfig.time,
+        day_of_week:  scheduleConfig.day_of_week,
+        day_of_month: scheduleConfig.day_of_month,
+        timezone:     'Australia/Brisbane',
+      }
+      const next = getNextRunTime(config)
+      return formatNextRun(next)
+    } catch {
+      return null
+    }
+  }, [scheduleEnabled, scheduleConfig])
 
   // ── Next run preview ──────────────────────────────────────────────────────
 
@@ -447,12 +495,55 @@ export default function AgentDetailPage() {
               </div>
             )}
 
-            <div className="flex justify-end pt-2">
+            <div className="flex items-center justify-between pt-2">
+              <div>
+                {nextRunDisplay && (
+                  <p className="text-xs text-muted-foreground">
+                    Next run: <span className="text-foreground font-medium">{nextRunDisplay}</span>
+                  </p>
+                )}
+              </div>
               <Button onClick={saveSchedule} disabled={saving} className="gap-2">
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <Check className="h-4 w-4" /> : null}
                 {saved ? 'Saved' : 'Save Schedule'}
               </Button>
             </div>
+
+            {/* Recent scheduled runs */}
+            {scheduledLogs.length > 0 && (
+              <div className="border-t border-border pt-4 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Recent Scheduled Runs</p>
+                <div className="divide-y divide-border rounded-md border border-border overflow-hidden">
+                  {scheduledLogs.map(log => (
+                    <div key={log.id} className="flex items-center justify-between px-3 py-2 bg-background hover:bg-muted/30 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className={cn(
+                          'inline-flex h-1.5 w-1.5 rounded-full',
+                          log.status === 'triggered' ? 'bg-green-500' :
+                          log.status === 'failed'    ? 'bg-red-500'   :
+                          log.status === 'skipped'   ? 'bg-amber-500' :
+                                                       'bg-muted-foreground'
+                        )} />
+                        <span className="text-muted-foreground capitalize">{log.status}</span>
+                        {log.run_id && (
+                          <Link
+                            href={`/agents/runs/${log.run_id}`}
+                            className="text-primary hover:underline"
+                          >
+                            View run →
+                          </Link>
+                        )}
+                      </div>
+                      <span className="text-muted-foreground">
+                        {new Date(log.triggered_at ?? log.scheduled_at).toLocaleString('en-AU', {
+                          day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

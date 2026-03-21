@@ -7,7 +7,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
-  History, RotateCcw, Share2, Download,
+  History, RotateCcw, Share2, Download, Cloud, Loader2 as SyncLoader,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -167,20 +167,30 @@ export default function DocumentPage() {
   const [showShare,  setShowShare]  = useState(false)
   const [showPreview,setShowPreview] = useState(true)
 
+  // SharePoint state
+  const [spConnected, setSpConnected] = useState(false)
+  const [spSyncing,   setSpSyncing]   = useState(false)
+  const [spSyncMsg,   setSpSyncMsg]   = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
   // Lock keepalive interval
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const editingRef   = useRef(false)
   editingRef.current = editing
 
   const loadDoc = useCallback(async () => {
-    const [docRes, roleRes] = await Promise.all([
+    const [docRes, roleRes, spRes] = await Promise.all([
       fetch(`/api/documents/${docId}`),
       fetch('/api/groups/active'),
+      fetch('/api/integrations/sharepoint/status'),
     ])
     const [docJson, roleJson] = await Promise.all([docRes.json(), roleRes.json()])
     if (docJson.data) setDoc(docJson.data)
     const role = roleJson.data?.role as string | undefined
     setIsAdmin(role === 'super_admin' || role === 'group_admin')
+    if (spRes.ok) {
+      const spJson = await spRes.json() as { data: { is_active: boolean } | null }
+      setSpConnected(!!spJson.data?.is_active)
+    }
     setLoading(false)
   }, [docId])
 
@@ -283,6 +293,26 @@ export default function DocumentPage() {
     a.download = `${doc?.title ?? 'document'}.${format}`
     a.click()
     URL.revokeObjectURL(url)
+  }
+
+  async function handleSyncToSharePoint() {
+    setSpSyncing(true)
+    setSpSyncMsg(null)
+    try {
+      const res = await fetch('/api/integrations/sharepoint/sync', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ document_id: docId }),
+      })
+      const json = await res.json() as { success?: boolean; filename?: string; error?: string }
+      if (!res.ok || !json.success) throw new Error(json.error ?? 'Sync failed')
+      setSpSyncMsg({ type: 'success', text: `Synced: ${json.filename ?? 'document'}` })
+      setTimeout(() => setSpSyncMsg(null), 4000)
+    } catch (err) {
+      setSpSyncMsg({ type: 'error', text: err instanceof Error ? err.message : 'Sync failed' })
+    } finally {
+      setSpSyncing(false)
+    }
   }
 
   async function handleRestore(version: DocumentVersion) {
@@ -389,6 +419,20 @@ export default function DocumentPage() {
               >
                 <Share2 className="h-3.5 w-3.5" /> Share
               </Button>
+              {spConnected && (
+                <Button
+                  size="sm" variant="outline"
+                  onClick={() => void handleSyncToSharePoint()}
+                  disabled={spSyncing}
+                  className="gap-1.5"
+                >
+                  {spSyncing
+                    ? <SyncLoader className="h-3.5 w-3.5 animate-spin" />
+                    : <Cloud className="h-3.5 w-3.5" />
+                  }
+                  {spSyncing ? 'Syncing…' : 'SharePoint'}
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={() => void handleEnterEdit()}
@@ -413,6 +457,19 @@ export default function DocumentPage() {
           <Lock className="h-4 w-4 shrink-0" />
           Currently being edited by {lockName}
           {lockMinutesLeft !== null && ` — lock expires in ${lockMinutesLeft} minute${lockMinutesLeft !== 1 ? 's' : ''}`}
+        </div>
+      )}
+
+      {/* ── SharePoint sync message ── */}
+      {spSyncMsg && (
+        <div className={cn(
+          'border-b px-6 py-2 text-sm flex items-center gap-2',
+          spSyncMsg.type === 'success'
+            ? 'bg-green-50 dark:bg-green-950 border-green-200 dark:border-green-800 text-green-700 dark:text-green-300'
+            : 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300',
+        )}>
+          <Cloud className="h-4 w-4 shrink-0" />
+          {spSyncMsg.text}
         </div>
       )}
 

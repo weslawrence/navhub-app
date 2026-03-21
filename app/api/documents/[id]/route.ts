@@ -2,6 +2,13 @@ import { NextResponse } from 'next/server'
 import { cookies }       from 'next/headers'
 import { createClient }  from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import {
+  getValidSharePointToken,
+  ensureSharePointFolder,
+  uploadFileToSharePoint,
+} from '@/lib/sharepoint'
+import { exportToDocx } from '@/lib/document-export'
+import type { Document } from '@/lib/types'
 
 // ─── GET — single document ──────────────────────────────────────────────────
 
@@ -88,6 +95,48 @@ export async function PATCH(
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Auto-sync to SharePoint if content changed and connection is active (fire-and-forget)
+  if (body.content_markdown !== undefined && body.content_markdown !== existing.content_markdown && activeGroupId) {
+    void (async () => {
+      try {
+        const { data: conn } = await admin
+          .from('sharepoint_connections')
+          .select('*')
+          .eq('group_id', activeGroupId)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (!conn || !conn.drive_id) return
+
+        const { access_token }    = await getValidSharePointToken(conn.id)
+        const { data: groupData } = await admin.from('groups').select('name').eq('id', activeGroupId).single()
+        const groupName           = groupData?.name ?? 'NavHub'
+        const docxBuffer          = await exportToDocx(data as Document, groupName)
+        const folderPath          = conn.folder_path ?? 'NavHub/Documents'
+        const folderId            = await ensureSharePointFolder(access_token, conn.drive_id, folderPath)
+        const safeName            = (data.title as string).replace(/[^a-zA-Z0-9 \-_]/g, '').trim() || 'Document'
+        const filename            = `${safeName}.docx`
+
+        const uploaded = await uploadFileToSharePoint(
+          access_token, conn.drive_id, folderId, filename, docxBuffer,
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+
+        void admin.from('document_sharepoint_sync').upsert({
+          document_id:        params.id,
+          connection_id:      conn.id,
+          sharepoint_item_id: uploaded.id,
+          sharepoint_url:     uploaded.webUrl,
+          last_synced_at:     new Date().toISOString(),
+          sync_status:        'synced',
+        }, { onConflict: 'document_id' })
+      } catch (err) {
+        console.error('SharePoint auto-sync error:', err)
+      }
+    })()
+  }
+
   return NextResponse.json({ data })
 }
 

@@ -548,6 +548,12 @@ export default function RunStreamPage() {
             {status === 'cancelled'      && <Ban            className="h-3 w-3" />}
             {cfg.label}
           </Badge>
+          {run?.triggered_by === 'schedule' && (
+            <Badge className="gap-1 text-xs font-normal bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300">
+              <Clock className="h-3 w-3" />
+              Scheduled
+            </Badge>
+          )}
           {run?.started_at && (
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Clock className="h-3 w-3" />

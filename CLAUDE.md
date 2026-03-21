@@ -809,6 +809,234 @@ Three tabs: **Display** | **Group** | **Members**
 | HTML Report Inline Editor | ✅ Complete | Edit mode on report viewer: contenteditable injection into iframe DOM, amber hover/focus styles, Save serialises modified HTML and overwrites Storage via PATCH /api/reports/custom/[id]/content |
 | Report Save Fix + Library Improvements | ✅ Complete | WS1: saveReport() exits edit mode + shows success toast; WS2: tags column (migration 023), auto-tagging in agent tools, tag editor on detail page; WS3: library redesign with search, tag/source/sort filters, grid + table views |
 | Phase 8a | ✅ Complete | Marketing Intelligence Foundation — migration 024 (3 tables), 9 platforms, manual entry modal, MetricChart (recharts), group overview + company detail pages, Marketing sidebar nav, IntegrationsTab marketing section, read_marketing_data + summarise_marketing agent tools |
+| Agent Scheduling Cron | ✅ Complete | Migration 025 (scheduled_run_logs), lib/scheduling.ts, /api/cron/scheduled-agents, vercel.json updated, Schedule tab with next-run display + recent logs, Scheduled badge on run pages |
+| Phase 7e — SharePoint Sync | ✅ Complete | lib/sharepoint.ts (Graph API helpers), OAuth connect/callback/status routes, IntegrationsTab SharePoint section, document page Sync button + auto-sync on content save, document_sharepoint_sync table |
+
+---
+
+## Agent Scheduling Cron
+
+### Database (migration 025)
+```sql
+CREATE TABLE IF NOT EXISTS scheduled_run_logs (
+  id          uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id    uuid        NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  run_id      uuid        REFERENCES agent_runs(id) ON DELETE SET NULL,
+  status      text        NOT NULL,  -- 'triggered' | 'skipped' | 'error'
+  notes       text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+```
+Also: `ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS triggered_by text DEFAULT 'manual'`
+
+### lib/scheduling.ts
+```typescript
+export interface ScheduleConfig {
+  frequency:    'daily' | 'weekly' | 'monthly'
+  time:         string   // "HH:MM" in agent's timezone (Australia/Brisbane default)
+  day_of_week?: number   // 0=Sun…6=Sat (weekly)
+  day_of_month?: number  // 1–28 (monthly)
+  timezone:     string   // IANA timezone string
+}
+
+export function getNextRunTime(config: ScheduleConfig): Date
+  // Computes next scheduled run in the given timezone using Intl.DateTimeFormat
+
+export function calculateNextRun(config: ScheduleConfig, from?: Date): Date
+  // Internal helper — next date after 'from' that matches the schedule
+
+export function isDue(config: ScheduleConfig, next_scheduled_run_at: string): boolean
+  // Returns true when now() >= next_scheduled_run_at (with 2-min tolerance)
+
+export function formatNextRun(date: Date): string
+  // Human-readable: "Today at 9:00 AM" / "Tomorrow at 9:00 AM" / "Monday at 9:00 AM"
+```
+
+### API route — `/api/cron/scheduled-agents`
+```
+GET /api/cron/scheduled-agents
+  → Authenticated via Authorization: Bearer {CRON_SECRET}
+  → Queries all agents with schedule_enabled=true AND next_scheduled_run_at <= now()
+  → For each due agent: creates agent_run (triggered_by='schedule'), calls executeAgentRun()
+  → Updates next_scheduled_run_at for each agent (using getNextRunTime)
+  → Logs to scheduled_run_logs (status: 'triggered' | 'error')
+  → Returns { triggered: number, errors: string[] }
+```
+
+### vercel.json — cron entries
+```json
+{
+  "crons": [
+    { "path": "/api/cron/xero-sync",         "schedule": "0 16 * * *"  },
+    { "path": "/api/cron/scheduled-agents",  "schedule": "* * * * *"   }
+  ]
+}
+```
+Scheduled agents cron runs every minute to support hourly+ schedules.
+
+### Agent detail page — Schedule tab (agents/[id]/page.tsx)
+- `nextRunDisplay` — useMemo using `LibScheduleConfig` alias (avoids local ScheduleConfig naming conflict)
+- Shows "Next run: Today at 9:00 AM" below the Save button when schedule is enabled
+- `saveSchedule()` now includes `next_scheduled_run_at: getNextRunTime(config).toISOString()` in the PATCH body
+- `loadAgent()` fetches `/api/agents/${agentId}/schedule-logs` in parallel and sets `scheduledLogs` state
+- "Recent Scheduled Runs" section: status dot (green=triggered, red=error, amber=skipped) + run link + timestamp
+
+### API route — `/api/agents/[id]/schedule-logs`
+```
+GET /api/agents/[id]/schedule-logs
+  → Auth + group check (RLS via server client)
+  → Admin query: scheduled_run_logs WHERE agent_id = id ORDER BY created_at DESC LIMIT 10
+  → Returns { data: ScheduledRunLog[] }
+```
+
+### ScheduledRunLog type (lib/types.ts)
+```typescript
+export interface ScheduledRunLog {
+  id:         string
+  agent_id:   string
+  run_id:     string | null
+  status:     'triggered' | 'skipped' | 'error'
+  notes:      string | null
+  created_at: string
+}
+```
+
+### AgentRun.triggered_by
+`triggered_by: 'manual' | 'schedule' | 'api'` — added to AgentRun interface and agent_runs table.
+Amber "Scheduled" badge shown on runs list page and run stream page when `triggered_by === 'schedule'`.
+
+### Manual setup required
+- Run migration `025_scheduling.sql` in Supabase dashboard
+- Add `CRON_SECRET` to Vercel environment variables (already used by xero-sync cron)
+
+---
+
+## Phase 7e — SharePoint / OneDrive Sync
+
+### Overview
+Connects Microsoft 365 (SharePoint / OneDrive) to NavHub. Documents can be exported as DOCX and synced manually or automatically on content save.
+
+### Database (created via `document_sharepoint_sync` table — assumed in migration 025 or separate)
+```sql
+CREATE TABLE IF NOT EXISTS document_sharepoint_sync (
+  document_id        uuid REFERENCES documents(id) ON DELETE CASCADE PRIMARY KEY,
+  connection_id      uuid REFERENCES sharepoint_connections(id) ON DELETE CASCADE,
+  sharepoint_item_id text,
+  sharepoint_url     text,
+  last_synced_at     timestamptz,
+  sync_status        text DEFAULT 'synced',  -- 'synced' | 'error'
+  error_message      text
+);
+```
+
+Also: `sharepoint_connections` table (created via earlier migration):
+```sql
+CREATE TABLE IF NOT EXISTS sharepoint_connections (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id      uuid NOT NULL REFERENCES groups(id),
+  access_token  text NOT NULL,   -- AES-256-GCM encrypted
+  refresh_token text NOT NULL,   -- AES-256-GCM encrypted
+  expires_at    timestamptz NOT NULL,
+  tenant_id     text,
+  site_url      text,
+  drive_id      text,
+  folder_path   text DEFAULT 'NavHub/Documents',
+  is_active     boolean NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(group_id)
+);
+```
+
+### lib/sharepoint.ts
+```typescript
+export function getSharePointAuthUrl(state: string): string
+  // Builds Microsoft OAuth2 authorization URL with Files.ReadWrite.All + Sites.ReadWrite.All scopes
+
+export async function exchangeSharePointCode(code: string): Promise<{ access_token, refresh_token, expires_in, tenant_id? }>
+  // POST to /token endpoint, returns token data
+
+export async function getValidSharePointToken(connectionId: string): Promise<{ access_token: string }>
+  // Loads connection from DB (admin client), refreshes if expiring within 5 min
+  // Persists refreshed tokens back to DB
+
+export async function ensureSharePointFolder(accessToken: string, driveId: string, folderPath: string): Promise<string>
+  // Creates folder hierarchy in SharePoint, returns folderId
+  // Handles nested paths (e.g. "NavHub/Documents") by creating each level
+
+export async function uploadFileToSharePoint(
+  accessToken: string, driveId: string, folderId: string,
+  filename: string, content: Buffer, mimeType: string
+): Promise<{ id: string; webUrl: string; name: string }>
+  // PUT to Graph API /drives/{driveId}/items/{folderId}:/{filename}:/content
+  // content converted to Uint8Array for fetch BodyInit compatibility
+
+export async function getSharePointDriveInfo(accessToken: string): Promise<{ id: string; webUrl: string; name: string } | null>
+  // GET /me/drive — returns default drive info
+
+export async function listSharePointDrives(accessToken: string, siteId?: string): Promise<DriveInfo[]>
+  // GET /sites/{siteId}/drives or /me/drives
+```
+
+### Environment variables required
+```bash
+SHAREPOINT_CLIENT_ID=      # Azure AD App Registration client ID
+SHAREPOINT_CLIENT_SECRET=  # Azure AD App Registration client secret
+SHAREPOINT_REDIRECT_URI=   # https://app.navhub.co/api/integrations/sharepoint/callback
+```
+
+### API routes
+```
+GET  /api/integrations/sharepoint/connect
+  → Builds auth URL with base64url state (group_id + user_id) → redirects to Microsoft login
+
+GET  /api/integrations/sharepoint/callback
+  → Exchanges code for tokens (exchangeSharePointCode)
+  → Upserts encrypted connection (onConflict: 'group_id')
+  → Redirects to /settings?tab=integrations&sharepoint_connected=1
+
+GET  /api/integrations/sharepoint/status
+  → Returns active connection for active group (id, is_active, site_url, drive_id, folder_path, expires_at)
+
+PATCH /api/integrations/sharepoint/status
+  → Admin only: update folder_path, drive_id, site_url
+
+DELETE /api/integrations/sharepoint/status
+  → Admin only: soft disconnect (is_active = false)
+
+POST /api/integrations/sharepoint/sync
+  → Body: { document_id: string }
+  → Gets valid token, exports document to DOCX (exportToDocx), ensures folder, uploads
+  → Upserts document_sharepoint_sync record (onConflict: 'document_id')
+  → Returns { success, filename, url }
+```
+
+### IntegrationsTab.tsx — SharePoint section
+- Fetches `/api/integrations/sharepoint/status` on load (parallel with Xero + companies)
+- Connected state: shows folder path, "Open SharePoint site" link, Disconnect button
+- Disconnected state: emoji card + Connect button → `/api/integrations/sharepoint/connect`
+
+### Document page — Sync button (`app/(dashboard)/documents/[id]/page.tsx`)
+- `spConnected` state: fetched from `/api/integrations/sharepoint/status` on load
+- "SharePoint" button shown in view-mode toolbar when `spConnected` is true
+- Shows `SyncLoader` (animated Loader2) while syncing, `Cloud` icon otherwise
+- `handleSyncToSharePoint()`: POST `/api/integrations/sharepoint/sync` with `document_id`
+- `spSyncMsg` state: success/error banner shown below lock banners, auto-dismissed after 4s
+
+### Document PATCH auto-sync
+When `content_markdown` changes on `PATCH /api/documents/[id]`, a fire-and-forget async block:
+1. Checks if group has an active SharePoint connection with `drive_id` set
+2. If yes: exports to DOCX, ensures folder, uploads, records sync in `document_sharepoint_sync`
+3. Errors are caught silently (logged to console) — never block the response
+
+### Middleware update
+`/api/integrations/sharepoint/callback` added to `isPublic` — Microsoft redirects back without a session cookie.
+
+### Manual setup required
+1. Create Azure AD App Registration:
+   - Platform: Web, Redirect URI: `https://app.navhub.co/api/integrations/sharepoint/callback`
+   - API Permissions: `Files.ReadWrite.All` + `Sites.ReadWrite.All` (delegated)
+2. Add env vars: `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_REDIRECT_URI`
+3. Create `sharepoint_connections` table and `document_sharepoint_sync` table in Supabase (if not already from prior migrations)
 
 ---
 
@@ -1877,6 +2105,10 @@ Converts ISO timestamp to human-friendly relative string: "just now", "5m ago", 
 22. Add `DEMO_NOTIFICATION_EMAIL` to Vercel env vars (used by demo + contact notification emails)
 23. ~~Keystatic CMS~~ — removed; re-add when GitHub OAuth app is configured (`KEYSTATIC_GITHUB_CLIENT_ID`, `KEYSTATIC_GITHUB_CLIENT_SECRET`, `KEYSTATIC_SECRET`, `KEYSTATIC_GITHUB_TOKEN`)
 24. **Run migration `022_assistant_history.sql`** in Supabase dashboard (Assistant UX Fixes — assistant_conversations table)
+25. **Run migration `025_scheduling.sql`** in Supabase dashboard (Agent Scheduling Cron — scheduled_run_logs table + triggered_by on agent_runs)
+26. **Create `sharepoint_connections` + `document_sharepoint_sync` tables** in Supabase (Phase 7e — see SharePoint Sync section for DDL)
+27. Add SharePoint env vars to Vercel: `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_REDIRECT_URI`
+28. Set up Azure AD App Registration for SharePoint OAuth (Redirect URI: `https://app.navhub.co/api/integrations/sharepoint/callback`, permissions: Files.ReadWrite.All + Sites.ReadWrite.All)
 
 ---
 

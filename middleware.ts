@@ -52,7 +52,9 @@ export async function middleware(request: NextRequest) {
     pathname === '/'                            ||
     pathname === '/demo'                        ||
     pathname === '/contact'                     ||
-    pathname.startsWith('/api/marketing/')
+    pathname.startsWith('/api/marketing/')      ||
+    // SharePoint OAuth callback — Microsoft redirects unauthenticated
+    pathname.startsWith('/api/integrations/sharepoint/callback')
 
   if (isPublic) {
     // Redirect authenticated users away from login

@@ -55,6 +55,8 @@ export async function PATCH(
   const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
 
+  const admin = createAdminClient()
+
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
@@ -124,6 +126,8 @@ export async function DELETE(
   const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
 
+  const admin = createAdminClient()
+  
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })

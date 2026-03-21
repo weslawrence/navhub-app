@@ -22,6 +22,8 @@ export async function GET(
     if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
     if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
 
+    const admin = createAdminClient()
+
     const { data: report, error } = await supabase
       .from('custom_reports')
       .select('id, name, description, file_type, tags, is_shareable, created_at, updated_at')

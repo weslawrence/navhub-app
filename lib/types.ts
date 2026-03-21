@@ -801,6 +801,23 @@ export const MARKETING_METRICS: Record<MarketingPlatform, MarketingMetricDef[]> 
   ],
 }
 
+export interface MarketingConnection {
+  id:                      string
+  group_id:                string
+  company_id:              string | null
+  platform:                MarketingPlatform
+  credentials_encrypted:   string | null
+  config:                  Record<string, unknown> | null
+  is_active:               boolean
+  last_synced_at:          string | null
+  created_at:              string
+  // Phase 8b additions:
+  access_token_expires_at: string | null
+  scope:                   string | null
+  external_account_id:     string | null
+  external_account_name:   string | null
+}
+
 export interface MarketingSnapshot {
   id:           string
   group_id:     string

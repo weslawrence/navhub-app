@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import Link        from 'next/link'
 import { useSearchParams } from 'next/navigation'
-import { ArrowLeft, Plus, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Plus, RefreshCw, Zap, Loader2, CheckCircle2 } from 'lucide-react'
 import { Button }  from '@/components/ui/button'
 import { Badge }   from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -16,6 +16,7 @@ import {
   MARKETING_METRICS,
   type MarketingPlatform,
   type MarketingSnapshot,
+  type MarketingConnection,
 } from '@/lib/types'
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -37,6 +38,15 @@ function formatNum(val: number, type: 'number' | 'percentage' | 'currency'): str
   if (val >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`
   if (val >= 1_000)     return `${(val / 1_000).toFixed(1)}K`
   return val.toLocaleString()
+}
+
+// Platform → sync endpoint
+const SYNC_ENDPOINTS: Partial<Record<MarketingPlatform, string>> = {
+  ga4:            '/api/marketing/google/sync',
+  search_console: '/api/marketing/google/sync',
+  meta:           '/api/marketing/meta/sync',
+  meta_ads:       '/api/marketing/meta/sync',
+  linkedin:       '/api/marketing/linkedin/sync',
 }
 
 // Tab definitions
@@ -64,6 +74,17 @@ function periodLabel(p: string): string {
   return new Date(y, m - 1, 1).toLocaleString('default', { month: 'short', year: 'numeric' })
 }
 
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins  = Math.floor(diff / 60_000)
+  if (mins < 1)    return 'just now'
+  if (mins < 60)   return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24)    return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 export default function MarketingCompanyPage({
@@ -83,23 +104,29 @@ export default function MarketingCompanyPage({
     return 'web'
   })
   const [snapshots,      setSnapshots]      = useState<MarketingSnapshot[]>([])
+  const [connections,    setConnections]    = useState<MarketingConnection[]>([])
   const [loading,        setLoading]        = useState(true)
   const [entryModal,     setEntryModal]     = useState<MarketingPlatform | null>(null)
   const [,        setGroupId]        = useState('')
+  const [syncing,        setSyncing]        = useState<MarketingPlatform | null>(null)
+  const [syncMsg,        setSyncMsg]        = useState<{ platform: MarketingPlatform; ok: boolean; text: string } | null>(null)
   const periodOptions = getPeriodOptions()
   const [selectedPeriod, setSelectedPeriod] = useState(periodOptions[1] ?? periodOptions[0])
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [cRes, gRes] = await Promise.all([
+      const [cRes, gRes, connRes] = await Promise.all([
         fetch(`/api/companies/${params.companyId}`),
         fetch('/api/groups/active'),
+        fetch(`/api/marketing/connections?company_id=${params.companyId}`),
       ])
-      const cJson = await cRes.json() as { data?: Company }
-      const gJson = await gRes.json() as { data?: { group?: { id: string } } }
+      const cJson    = await cRes.json() as { data?: Company }
+      const gJson    = await gRes.json() as { data?: { group?: { id: string } } }
+      const connJson = await connRes.json() as { data?: MarketingConnection[] }
       setCompany(cJson.data ?? null)
       setGroupId(gJson.data?.group?.id ?? '')
+      setConnections(connJson.data ?? [])
     } catch { /* silent */ } finally {
       setLoading(false)
     }
@@ -115,6 +142,13 @@ export default function MarketingCompanyPage({
     void load()
     void loadSnapshots()
   }, [load, loadSnapshots])
+
+  // Auto-dismiss sync message after 4 seconds
+  useEffect(() => {
+    if (!syncMsg) return
+    const t = setTimeout(() => setSyncMsg(null), 4000)
+    return () => clearTimeout(t)
+  }, [syncMsg])
 
   const tabPlatforms = useMemo(() => {
     return TABS.find(t => t.id === activeTab)?.platforms ?? []
@@ -148,6 +182,38 @@ export default function MarketingCompanyPage({
   function getVal(platform: string, key: string): number | null {
     const snap = periodSnapshots.find(s => s.platform === platform && s.metric_key === key)
     return snap?.value_number ?? null
+  }
+
+  function getConnection(platform: MarketingPlatform): MarketingConnection | undefined {
+    return connections.find(c => c.platform === platform && c.is_active)
+  }
+
+  async function handleSync(platform: MarketingPlatform) {
+    const endpoint = SYNC_ENDPOINTS[platform]
+    if (!endpoint) return
+    setSyncing(platform)
+    try {
+      const res  = await fetch(endpoint, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ company_id: params.companyId, period: selectedPeriod }),
+      })
+      const json = await res.json() as { synced?: number; errors?: string[] }
+      if (!res.ok || (json.errors && json.errors.length > 0)) {
+        setSyncMsg({ platform, ok: false, text: json.errors?.[0] ?? 'Sync failed' })
+      } else {
+        setSyncMsg({ platform, ok: true, text: `Synced ${json.synced ?? 0} metric(s)` })
+        void loadSnapshots()
+        // Refresh connections to update last_synced_at
+        const connRes  = await fetch(`/api/marketing/connections?company_id=${params.companyId}`)
+        const connJson = await connRes.json() as { data?: MarketingConnection[] }
+        setConnections(connJson.data ?? [])
+      }
+    } catch (err) {
+      setSyncMsg({ platform, ok: false, text: String(err) })
+    } finally {
+      setSyncing(null)
+    }
   }
 
   if (loading) {
@@ -222,31 +288,85 @@ export default function MarketingCompanyPage({
 
       {/* Platform sections */}
       {tabPlatforms.map(platform => {
-        const metrics   = MARKETING_METRICS[platform]
-        const hasData   = periodSnapshots.some(s => s.platform === platform)
+        const metrics     = MARKETING_METRICS[platform]
+        const hasData     = periodSnapshots.some(s => s.platform === platform)
         const chartMetric = metrics[0]
+        const conn        = getConnection(platform)
+        const isConnected = !!conn
+        const syncEndpoint = SYNC_ENDPOINTS[platform]
+        const isSyncing   = syncing === platform
+        const msg         = syncMsg?.platform === platform ? syncMsg : null
 
         return (
           <div key={platform} className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            {/* Platform header */}
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-base">{MARKETING_PLATFORM_ICONS[platform]}</span>
                 <h2 className="text-base font-semibold text-foreground">
                   {MARKETING_PLATFORM_LABELS[platform]}
                 </h2>
-                <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  Manual entry
-                </Badge>
+
+                {isConnected ? (
+                  <>
+                    <Badge
+                      variant="outline"
+                      className="text-[10px] border-emerald-400/50 text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30"
+                    >
+                      <CheckCircle2 className="h-2.5 w-2.5 mr-1" />
+                      Connected
+                      {conn.external_account_name ? ` · ${conn.external_account_name}` : ''}
+                    </Badge>
+                    {conn.last_synced_at && (
+                      <span className="text-[10px] text-muted-foreground">
+                        Synced {relativeTime(conn.last_synced_at)}
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                    Manual entry
+                  </Badge>
+                )}
+
+                {/* Sync status message */}
+                {msg && (
+                  <span className={cn('text-[11px]', msg.ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-500')}>
+                    {msg.text}
+                  </span>
+                )}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setEntryModal(platform)}
-                className="h-8 text-xs"
-              >
-                <Plus className="h-3.5 w-3.5 mr-1" />
-                Enter Data
-              </Button>
+
+              <div className="flex items-center gap-2">
+                {/* Sync Now button (only for connected platforms with a sync endpoint) */}
+                {isConnected && syncEndpoint && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleSync(platform)}
+                    disabled={isSyncing}
+                    className="h-8 text-xs"
+                  >
+                    {isSyncing ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                    ) : (
+                      <Zap className="h-3.5 w-3.5 mr-1" />
+                    )}
+                    {isSyncing ? 'Syncing…' : 'Sync Now'}
+                  </Button>
+                )}
+
+                {/* Manual entry button */}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEntryModal(platform)}
+                  className="h-8 text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5 mr-1" />
+                  Enter Data
+                </Button>
+              </div>
             </div>
 
             {hasData ? (
@@ -291,15 +411,32 @@ export default function MarketingCompanyPage({
               <Card className="border-border border-dashed">
                 <CardContent className="p-6 flex flex-col items-center justify-center text-center gap-2">
                   <p className="text-sm text-muted-foreground">No data for {periodLabel(selectedPeriod)}</p>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEntryModal(platform)}
-                    className="text-xs"
-                  >
-                    <Plus className="h-3.5 w-3.5 mr-1" />
-                    Add manually
-                  </Button>
+                  {isConnected && syncEndpoint ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleSync(platform)}
+                      disabled={isSyncing}
+                      className="text-xs"
+                    >
+                      {isSyncing ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                      ) : (
+                        <Zap className="h-3.5 w-3.5 mr-1" />
+                      )}
+                      {isSyncing ? 'Syncing…' : 'Sync from API'}
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setEntryModal(platform)}
+                      className="text-xs"
+                    >
+                      <Plus className="h-3.5 w-3.5 mr-1" />
+                      Add manually
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
             )}

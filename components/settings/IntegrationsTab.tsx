@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Plug, ChevronDown, RefreshCw, Check, Link2, Link2Off, ExternalLink, Loader2 } from 'lucide-react'
+import {
+  Plug, ChevronDown, RefreshCw, Check, Link2, Link2Off,
+  ExternalLink, Loader2,
+} from 'lucide-react'
 import { Badge }     from '@/components/ui/badge'
 import { Button }    from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -13,12 +16,7 @@ import {
   type MarketingPlatform,
 } from '@/lib/types'
 
-const MARKETING_PLATFORM_GROUPS: { label: string; platforms: MarketingPlatform[] }[] = [
-  { label: 'Web & Search',  platforms: ['ga4', 'search_console'] },
-  { label: 'Social Media',  platforms: ['meta', 'linkedin'] },
-  { label: 'Paid Ads',      platforms: ['google_ads', 'meta_ads'] },
-  { label: 'Email & CRM',   platforms: ['mailchimp', 'hubspot', 'freshsales'] },
-]
+// ── Types ────────────────────────────────────────────────────────────────────
 
 interface CompanyOption  { id: string; name: string }
 interface DivisionOption { id: string; name: string; company_id: string; company_name: string }
@@ -41,34 +39,83 @@ interface SharePointConnection {
   expires_at:  string
 }
 
+interface MarketingConn {
+  id:                    string
+  platform:              MarketingPlatform
+  company_id:            string | null
+  config:                Record<string, unknown> | null
+  is_active:             boolean
+  last_synced_at:        string | null
+  access_token_expires_at: string | null
+  external_account_id:   string | null
+  external_account_name: string | null
+  scope:                 string | null
+}
+
+// Platforms that have real OAuth integration
+const OAUTH_PLATFORMS: Partial<Record<MarketingPlatform, string>> = {
+  ga4:            '/api/marketing/google/connect',
+  search_console: '/api/marketing/google/connect',
+  meta:           '/api/marketing/meta/connect',
+  meta_ads:       '/api/marketing/meta/connect',
+  linkedin:       '/api/marketing/linkedin/connect',
+}
+
+// Sync endpoints per platform group
+const SYNC_ENDPOINTS: Partial<Record<MarketingPlatform, string>> = {
+  ga4:            '/api/marketing/google/sync',
+  search_console: '/api/marketing/google/sync',
+  meta:           '/api/marketing/meta/sync',
+  meta_ads:       '/api/marketing/meta/sync',
+  linkedin:       '/api/marketing/linkedin/sync',
+}
+
+const MARKETING_PLATFORM_GROUPS: { label: string; platforms: MarketingPlatform[] }[] = [
+  { label: 'Web & Search',  platforms: ['ga4', 'search_console'] },
+  { label: 'Social Media',  platforms: ['meta', 'linkedin']      },
+  { label: 'Paid Ads',      platforms: ['google_ads', 'meta_ads'] },
+  { label: 'Email & CRM',   platforms: ['mailchimp', 'hubspot', 'freshsales'] },
+]
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
 export default function IntegrationsTab() {
-  const [companies,    setCompanies]    = useState<CompanyOption[]>([])
-  const [divisions,    setDivisions]    = useState<DivisionOption[]>([])
-  const [connections,  setConnections]  = useState<XeroConn[]>([])
-  const [loading,      setLoading]      = useState(true)
-  const [linkSaving,   setLinkSaving]   = useState<string | null>(null)
-  const [linkToast,    setLinkToast]    = useState<Record<string, string>>({})
+  const [companies,         setCompanies]         = useState<CompanyOption[]>([])
+  const [divisions,         setDivisions]         = useState<DivisionOption[]>([])
+  const [connections,       setConnections]       = useState<XeroConn[]>([])
+  const [loading,           setLoading]           = useState(true)
+  const [linkSaving,        setLinkSaving]        = useState<string | null>(null)
+  const [linkToast,         setLinkToast]         = useState<Record<string, string>>({})
 
   // SharePoint state
-  const [spConnection,    setSpConnection]    = useState<SharePointConnection | null>(null)
-  const [spDisconnecting, setSpDisconnecting] = useState(false)
+  const [spConnection,      setSpConnection]      = useState<SharePointConnection | null>(null)
+  const [spDisconnecting,   setSpDisconnecting]   = useState(false)
+
+  // Marketing connections state
+  const [mktConnections,    setMktConnections]    = useState<MarketingConn[]>([])
+  const [mktSyncing,        setMktSyncing]        = useState<string | null>(null)   // platform key
+  const [mktDisconnecting,  setMktDisconnecting]  = useState<string | null>(null)  // platform key
+  const [mktToast,          setMktToast]          = useState<Record<string, string>>({})
+
+  // ── Data loading ────────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [cRes, xRes, spRes] = await Promise.all([
+      const [cRes, xRes, spRes, mRes] = await Promise.all([
         fetch('/api/companies?include_inactive=false'),
         fetch('/api/xero/connections'),
         fetch('/api/integrations/sharepoint/status'),
+        fetch('/api/marketing/connections'),
       ])
-      const cJson = await cRes.json()
-      const xJson = await xRes.json()
+      const cJson  = await cRes.json()
+      const xJson  = await xRes.json()
       const spJson = spRes.ok ? await spRes.json() as { data: SharePointConnection | null } : { data: null }
+      const mJson  = mRes.ok  ? await mRes.json() as { data: MarketingConn[] }             : { data: [] }
 
       const companyList: CompanyOption[] = cJson.data ?? []
       setCompanies(companyList)
 
-      // Load divisions for all companies
       if (companyList.length > 0) {
         const divResponses = await Promise.all(
           companyList.map(c => fetch(`/api/divisions?company_id=${c.id}`).then(r => r.json()))
@@ -85,6 +132,7 @@ export default function IntegrationsTab() {
 
       setConnections(xJson.data ?? [])
       setSpConnection(spJson.data)
+      setMktConnections(mJson.data ?? [])
     } catch { /* silent */ } finally {
       setLoading(false)
     }
@@ -99,6 +147,16 @@ export default function IntegrationsTab() {
     const t = setTimeout(() => setLinkToast({}), 3000)
     return () => clearTimeout(t)
   }, [linkToast])
+
+  // Auto-clear marketing toasts
+  useEffect(() => {
+    const ids = Object.keys(mktToast)
+    if (ids.length === 0) return
+    const t = setTimeout(() => setMktToast({}), 3000)
+    return () => clearTimeout(t)
+  }, [mktToast])
+
+  // ── Xero handlers ───────────────────────────────────────────────────────────
 
   async function handleLinkChange(connectionId: string, value: string) {
     setLinkSaving(connectionId)
@@ -118,7 +176,6 @@ export default function IntegrationsTab() {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to update')
 
-      // Update local state
       setConnections(cs => cs.map(c => {
         if (c.id !== connectionId) return c
         if (!value) return { ...c, company_id: null, division_id: null, company: undefined, division: undefined }
@@ -145,7 +202,7 @@ export default function IntegrationsTab() {
     return ''
   }
 
-  const divisionList = divisions.map(d => ({ id: d.id, name: d.name, company_name: d.company_name }))
+  // ── SharePoint handlers ─────────────────────────────────────────────────────
 
   async function disconnectSharePoint() {
     if (!confirm('Disconnect SharePoint? Existing synced files will remain in SharePoint but future syncs will stop.')) return
@@ -157,6 +214,60 @@ export default function IntegrationsTab() {
       setSpDisconnecting(false)
     }
   }
+
+  // ── Marketing handlers ──────────────────────────────────────────────────────
+
+  function getConnectedPlatforms(): Set<MarketingPlatform> {
+    return new Set(mktConnections.filter(c => c.is_active).map(c => c.platform))
+  }
+
+  function getMarketingConn(platform: MarketingPlatform): MarketingConn | undefined {
+    return mktConnections.find(c => c.platform === platform && c.is_active)
+  }
+
+  async function handleMarketingSync(platform: MarketingPlatform) {
+    const endpoint = SYNC_ENDPOINTS[platform]
+    if (!endpoint) return
+    setMktSyncing(platform)
+    try {
+      const res  = await fetch(endpoint, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({}),
+      })
+      const json = await res.json() as { synced?: number; errors?: string[] }
+      if (!res.ok || (json.errors?.length)) {
+        setMktToast(t => ({ ...t, [platform]: json.errors?.[0] ?? 'Sync failed' }))
+      } else {
+        setMktToast(t => ({ ...t, [platform]: `Synced` }))
+        // Reload connections to update last_synced_at
+        void load()
+      }
+    } catch {
+      setMktToast(t => ({ ...t, [platform]: 'Sync failed' }))
+    } finally {
+      setMktSyncing(null)
+    }
+  }
+
+  async function handleMarketingDisconnect(platform: MarketingPlatform) {
+    if (!confirm(`Disconnect ${MARKETING_PLATFORM_LABELS[platform]}? Your historical data will be preserved.`)) return
+    setMktDisconnecting(platform)
+    try {
+      await fetch(`/api/marketing/connections?platform=${platform}`, { method: 'DELETE' })
+      setMktConnections(cs => cs.filter(c => c.platform !== platform))
+      setMktToast(t => ({ ...t, [platform]: 'Disconnected' }))
+    } catch {
+      setMktToast(t => ({ ...t, [platform]: 'Failed to disconnect' }))
+    } finally {
+      setMktDisconnecting(null)
+    }
+  }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
+
+  const divisionList = divisions.map(d => ({ id: d.id, name: d.name, company_name: d.company_name }))
+  const connectedPlatforms = getConnectedPlatforms()
 
   return (
     <div className="space-y-6">
@@ -206,8 +317,6 @@ export default function IntegrationsTab() {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
-
-                  {/* Link to entity */}
                   <div className="space-y-1">
                     <p className="text-xs text-muted-foreground font-medium">Linked to</p>
                     <div className="flex items-center gap-2">
@@ -254,7 +363,6 @@ export default function IntegrationsTab() {
                       Connected {new Date(conn.connected_at).toLocaleDateString('en-AU')}
                     </p>
                   </div>
-
                   <SyncButton connectionId={conn.id} lastSyncedAt={conn.connected_at} />
                 </CardContent>
               </Card>
@@ -262,7 +370,6 @@ export default function IntegrationsTab() {
           </div>
         )}
 
-        {/* Add new connection */}
         {!loading && (
           <ConnectXero companies={companies} divisions={divisionList} />
         )}
@@ -287,25 +394,100 @@ export default function IntegrationsTab() {
                 {group.label}
               </p>
               <div className="space-y-2">
-                {group.platforms.map(platform => (
-                  <div
-                    key={platform}
-                    className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="text-xl">{MARKETING_PLATFORM_ICONS[platform]}</span>
-                      <div>
-                        <p className="text-sm font-medium text-foreground">
-                          {MARKETING_PLATFORM_LABELS[platform]}
-                        </p>
-                        <p className="text-xs text-muted-foreground">Manual entry supported</p>
+                {group.platforms.map(platform => {
+                  const isConnected  = connectedPlatforms.has(platform)
+                  const conn         = getMarketingConn(platform)
+                  const hasOAuth     = platform in OAUTH_PLATFORMS
+                  const connectUrl   = OAUTH_PLATFORMS[platform]
+                  const isSyncing    = mktSyncing === platform
+                  const isDisconning = mktDisconnecting === platform
+                  const toast        = mktToast[platform]
+
+                  return (
+                    <div
+                      key={platform}
+                      className="rounded-lg border border-border bg-card px-4 py-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className="text-xl flex-shrink-0">{MARKETING_PLATFORM_ICONS[platform]}</span>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-foreground">
+                              {MARKETING_PLATFORM_LABELS[platform]}
+                            </p>
+                            {isConnected && conn ? (
+                              <p className="text-xs text-muted-foreground truncate">
+                                {conn.external_account_name
+                                  ? `Connected: ${conn.external_account_name}`
+                                  : 'Connected'}
+                                {conn.last_synced_at && ` · Last synced ${new Date(conn.last_synced_at).toLocaleDateString('en-AU')}`}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground">
+                                {hasOAuth ? 'Not connected' : 'Manual entry supported'}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {/* Toast message */}
+                          {toast && (
+                            <span className={`text-xs ${toast.includes('fail') || toast.includes('error') ? 'text-destructive' : 'text-green-600 dark:text-green-400'}`}>
+                              {toast}
+                            </span>
+                          )}
+
+                          {isConnected ? (
+                            <>
+                              {/* Sync Now */}
+                              {SYNC_ENDPOINTS[platform] && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-xs gap-1"
+                                  onClick={() => void handleMarketingSync(platform)}
+                                  disabled={isSyncing || isDisconning}
+                                >
+                                  {isSyncing
+                                    ? <Loader2 className="h-3 w-3 animate-spin" />
+                                    : <RefreshCw className="h-3 w-3" />
+                                  }
+                                  Sync
+                                </Button>
+                              )}
+                              {/* Disconnect */}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 px-2 text-xs text-red-600 border-red-200 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 gap-1"
+                                onClick={() => void handleMarketingDisconnect(platform)}
+                                disabled={isDisconning || isSyncing}
+                              >
+                                {isDisconning
+                                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                                  : <Link2Off className="h-3 w-3" />
+                                }
+                                Disconnect
+                              </Button>
+                            </>
+                          ) : hasOAuth ? (
+                            <a href={connectUrl}>
+                              <Button size="sm" className="h-7 px-3 text-xs gap-1">
+                                <Link2 className="h-3 w-3" />
+                                Connect
+                              </Button>
+                            </a>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] text-muted-foreground border-border">
+                              Coming soon
+                            </Badge>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <Badge variant="outline" className="text-[10px] text-muted-foreground border-border">
-                      Coming soon
-                    </Badge>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           ))}

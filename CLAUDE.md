@@ -809,6 +809,7 @@ Three tabs: **Display** | **Group** | **Members**
 | HTML Report Inline Editor | ✅ Complete | Edit mode on report viewer: contenteditable injection into iframe DOM, amber hover/focus styles, Save serialises modified HTML and overwrites Storage via PATCH /api/reports/custom/[id]/content |
 | Report Save Fix + Library Improvements | ✅ Complete | WS1: saveReport() exits edit mode + shows success toast; WS2: tags column (migration 023), auto-tagging in agent tools, tag editor on detail page; WS3: library redesign with search, tag/source/sort filters, grid + table views |
 | Phase 8a | ✅ Complete | Marketing Intelligence Foundation — migration 024 (3 tables), 9 platforms, manual entry modal, MetricChart (recharts), group overview + company detail pages, Marketing sidebar nav, IntegrationsTab marketing section, read_marketing_data + summarise_marketing agent tools |
+| Phase 8b+8c | ✅ Complete | Marketing OAuth Integrations + Live Sync — migration 026 (4 token columns on marketing_connections), lib/google-marketing.ts + meta + linkedin, OAuth connect/callback for 3 platforms, sync routes, nightly cron, connections API (GET+DELETE), IntegrationsTab live status + sync, company detail page sync buttons |
 | Agent Scheduling Cron | ✅ Complete | Migration 025 (scheduled_run_logs), lib/scheduling.ts, /api/cron/scheduled-agents, vercel.json updated, Schedule tab with next-run display + recent logs, Scheduled badge on run pages |
 | Phase 7e — SharePoint Sync | ✅ Complete | lib/sharepoint.ts (Graph API helpers), OAuth connect/callback/status routes, IntegrationsTab SharePoint section, document page Sync button + auto-sync on content save, document_sharepoint_sync table |
 
@@ -2109,6 +2110,9 @@ Converts ISO timestamp to human-friendly relative string: "just now", "5m ago", 
 26. **Create `sharepoint_connections` + `document_sharepoint_sync` tables** in Supabase (Phase 7e — see SharePoint Sync section for DDL)
 27. Add SharePoint env vars to Vercel: `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_REDIRECT_URI`
 28. Set up Azure AD App Registration for SharePoint OAuth (Redirect URI: `https://app.navhub.co/api/integrations/sharepoint/callback`, permissions: Files.ReadWrite.All + Sites.ReadWrite.All)
+29. **Run migration `026_marketing_connections.sql`** in Supabase dashboard (Phase 8b+8c — adds access_token_expires_at, scope, external_account_id, external_account_name to marketing_connections)
+30. Set up Google OAuth App, Meta/Facebook App, LinkedIn App for marketing integrations (see Phase 8b+8c section for required scopes and redirect URIs)
+31. Add 9 marketing OAuth env vars to Vercel: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `META_REDIRECT_URI`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`
 
 ---
 
@@ -3916,4 +3920,210 @@ period?:    string   // YYYY-MM; defaults to latest
 
 ### Manual setup required
 Run migration `024_marketing.sql` in Supabase dashboard.
+
+---
+
+## Phase 8b+8c — Marketing OAuth Integrations + Live Sync
+
+### Overview
+Full OAuth2 integration for Google (GA4 + Search Console), Meta (Pages + Ads), and LinkedIn marketing platforms. Each platform supports: OAuth connect flow, token refresh, metric sync to `marketing_snapshots`, and cron-based nightly sync.
+
+### Database (migration 026)
+Extends `marketing_connections` with 4 columns for OAuth token storage:
+```sql
+ALTER TABLE marketing_connections
+  ADD COLUMN IF NOT EXISTS access_token_expires_at  timestamptz,
+  ADD COLUMN IF NOT EXISTS scope                    text,
+  ADD COLUMN IF NOT EXISTS external_account_id      text,
+  ADD COLUMN IF NOT EXISTS external_account_name    text;
+```
+- `external_account_id` — Google property ID, Meta page/ad account ID, LinkedIn org ID
+- `external_account_name` — human-readable name (shown in UI after connection)
+- `credentials_encrypted` — AES-256-GCM encrypted JSON `{ access_token, refresh_token, ... }`
+
+### lib/types.ts — MarketingConnection interface
+```typescript
+export interface MarketingConnection {
+  id:                      string
+  group_id:                string
+  company_id:              string | null
+  platform:                MarketingPlatform
+  config:                  Record<string, unknown>
+  is_active:               boolean
+  last_synced_at:          string | null
+  access_token_expires_at: string | null
+  external_account_id:     string | null
+  external_account_name:   string | null
+  scope:                   string | null
+}
+```
+
+### Platform library files
+
+#### `lib/google-marketing.ts`
+- `exchangeGoogleCode(code)` — exchanges auth code for tokens (access + refresh)
+- `refreshGoogleToken(refreshToken)` — refreshes expired Google token
+- `getGA4Properties(accessToken)` — lists GA4 properties via Analytics Admin API
+- `fetchGA4Metrics(accessToken, propertyId, startDate, endDate)` — runs GA4 report (sessions, users, bounce_rate, avg_session_duration, conversions, revenue_per_user)
+- `getSearchConsoleProperties(accessToken)` — lists SC sites
+- `fetchSearchConsoleMetrics(accessToken, siteUrl, startDate, endDate)` — runs SC query (impressions, clicks, ctr, avg_position)
+
+#### `lib/meta-marketing.ts`
+- `exchangeMetaCode(code, redirectUri)` — exchanges auth code for short-lived token
+- `getLongLivedToken(shortLivedToken)` — exchanges for 60-day long-lived token via `fb_exchange_token`
+- `getMetaPages(accessToken)` — lists pages via Graph API
+- `getAdAccounts(accessToken)` — lists ad accounts
+- `fetchMetaPageInsights(pageToken, pageId, since, until)` — fetches page impressions, reach, engagement, likes, link_clicks
+- `fetchMetaAdInsights(accessToken, adAccountId, since, until)` — fetches spend, impressions, clicks, ctr, conversions, cpa
+
+#### `lib/linkedin-marketing.ts`
+- `exchangeLinkedInCode(code, redirectUri)` — exchanges auth code for tokens
+- `refreshLinkedInToken(refreshToken)` — refreshes token (LinkedIn supports refresh tokens)
+- `getLinkedInOrganizations(accessToken)` — fetches org list via `organizationAcls`
+- `fetchLinkedInOrgFollowers(accessToken, orgId)` — fetches follower count via `networkSizes`
+- `fetchLinkedInShareStatistics(accessToken, orgId, startTime, endTime)` — fetches share stats (millisecond timestamps); returns `{ impressions, clicks, engagement_rate, shares }`
+
+### OAuth connect routes
+
+```
+GET /api/marketing/google/connect?company_id=...
+  → Builds Google OAuth URL with scopes: analytics.readonly, webmasters.readonly, analytics.manage.users.readonly
+  → state = base64url({ group_id, company_id })
+  → Redirects to Google consent page
+
+GET /api/marketing/google/callback
+  → Decodes state, exchanges code via exchangeGoogleCode()
+  → Discovers GA4 properties + SC sites
+  → Upserts 'ga4' connection (first property) + 'search_console' connection (first site)
+  → Redirects to /marketing/{companyId}?google_connected=1 or /settings?tab=integrations&google_connected=1
+
+PATCH /api/marketing/google/config
+  → Admin only; body: { platform: 'ga4'|'search_console', company_id?, property_id?, site_url? }
+  → Updates config field on existing connection
+
+GET /api/marketing/meta/connect?company_id=...
+  → Builds Facebook OAuth URL with scopes: pages_read_engagement, pages_show_list, ads_read, read_insights, business_management
+  → state = base64url({ group_id, company_id })
+
+GET /api/marketing/meta/callback
+  → Exchanges code for short-lived token → getLongLivedToken() → 60-day token
+  → Discovers pages (getMetaPages) + ad accounts (getAdAccounts)
+  → Upserts 'meta' connection (first page, page-level token) + 'meta_ads' connection (first ad account, user-level token)
+  → Redirects to /marketing/{companyId}?meta_connected=1 or /settings?tab=integrations
+
+GET /api/marketing/linkedin/connect?company_id=...
+  → Builds LinkedIn OAuth URL with scopes: r_organization_social rw_organization_admin r_ads_reporting
+  → state = base64url({ group_id, company_id })
+
+GET /api/marketing/linkedin/callback
+  → Exchanges code, discovers organizations via getLinkedInOrganizations()
+  → Upserts 'linkedin' connection (first organization)
+  → Redirects to /marketing/{companyId}?linkedin_connected=1 or /settings?tab=integrations
+```
+
+**OAuth state pattern**: `btoa(JSON.stringify({ group_id, company_id })).replace(+/=, ...)` — encodes multi-tenant context through the OAuth round-trip without requiring a session cookie at callback time.
+
+### Sync routes
+
+```
+POST /api/marketing/google/sync
+  → Body: { company_id?, period?, group_id? }
+  → Supports user session auth + cron Bearer token auth
+  → getValidGoogleToken(): decrypts credentials, refreshes if expiring <5 min, persists back to DB
+  → getPeriodRange(): converts YYYY-MM to start/end date strings; defaults to last 30 days
+  → Syncs GA4 (6 metrics) + Search Console (4 metrics) per connection
+  → Upserts to marketing_snapshots with period_type='monthly'
+  → Returns { synced: number, errors: string[] }
+
+POST /api/marketing/meta/sync
+  → Same auth pattern
+  → Syncs meta connections: fetchMetaPageInsights (5 metrics: impressions, reach, post_engagements, fan_count, link_clicks)
+  → Syncs meta_ads connections: fetchMetaAdInsights (6 metrics: spend, impressions, clicks, ctr, conversions, cpa)
+  → Returns { synced, errors }
+
+POST /api/marketing/linkedin/sync
+  → Same auth pattern
+  → getValidLinkedInToken(): refreshes if expiring <5 min
+  → fetchLinkedInShareStatistics (4 metrics) + fetchLinkedInOrgFollowers (followers count)
+  → 5 metrics total per connection
+  → Returns { synced, errors }
+```
+
+### Connections management API
+
+```
+GET /api/marketing/connections?company_id=...&platform=...
+  → Auth required; active group from cookie
+  → Lists active connections (no credentials_encrypted field)
+  → Returns: id, group_id, company_id, platform, config, is_active, last_synced_at,
+             access_token_expires_at, external_account_id, external_account_name, scope
+
+DELETE /api/marketing/connections?platform=...&company_id=...
+  → Admin only (super_admin / group_admin)
+  → Soft disconnect: sets is_active = false
+  → Handles nullable company_id: .is('company_id', null) when company_id absent
+```
+
+### Nightly cron sync (`/api/cron/sync-marketing`)
+
+```
+GET /api/cron/sync-marketing
+  → Authenticated via Authorization: Bearer {CRON_SECRET}
+  → runtime = 'nodejs', maxDuration = 300 (5 minutes)
+  → Fetches all active marketing_connections grouped by group_id → company_ids
+  → Deduplication: uses plain Record<string, (string|null)[]> (not Map/Set — avoids downlevelIteration TS error)
+  → For each group + company: POST google/sync + meta/sync + linkedin/sync in parallel (Promise.allSettled)
+  → Returns { synced, errors, groups }
+```
+
+Cron schedule in `vercel.json`: `0 16 * * *` (same time as xero-sync — 02:00 AEST).
+
+### IntegrationsTab.tsx — Marketing section
+
+The Marketing Platforms section in `components/settings/IntegrationsTab.tsx` now shows live connection status:
+
+- **Connected**: emerald "Connected" badge + account name + last synced time + Sync button + Disconnect button
+- **Not connected**: platform-specific Connect button (OAuth redirect) for GA4/SC/Meta/LinkedIn, or "Coming soon" badge for others
+- `OAUTH_PLATFORMS` map: `ga4 | search_console` → `/api/marketing/google/connect`, `meta | meta_ads` → `/api/marketing/meta/connect`, `linkedin` → `/api/marketing/linkedin/connect`
+- Connect URL includes `?company_id=...` when a specific company is selected in the entity filter
+- Sync button: POST to platform sync endpoint, reloads connections on success
+- Disconnect: DELETE `/api/marketing/connections?platform=...`, removes from local state
+- Toast messages (3-second auto-dismiss) for sync success/failure and disconnect confirmation
+
+### Company Marketing page — per-platform connection status
+
+`app/(dashboard)/marketing/[companyId]/page.tsx` now loads connections alongside snapshots:
+- Fetches `/api/marketing/connections?company_id={companyId}` in parallel with company + group load
+- Per-platform section header shows:
+  - **Connected**: emerald "Connected · {account name}" badge + "Synced Xm ago" text
+  - **Manual entry**: muted "Manual entry" badge (unchanged)
+- **Sync Now** button (Zap icon): POST to platform sync endpoint → reloads snapshots + refreshes connections
+- **Sync from API** button in empty-state card (when connected but no data) — replaces "Add manually"
+- Sync status messages (4-second auto-dismiss): green on success, red on error
+
+### Environment variables required
+
+```bash
+GOOGLE_CLIENT_ID=        # Google OAuth App client ID
+GOOGLE_CLIENT_SECRET=    # Google OAuth App client secret
+GOOGLE_REDIRECT_URI=     # https://app.navhub.co/api/marketing/google/callback
+
+FACEBOOK_APP_ID=         # Meta/Facebook App ID
+FACEBOOK_APP_SECRET=     # Meta/Facebook App secret
+META_REDIRECT_URI=       # https://app.navhub.co/api/marketing/meta/callback
+
+LINKEDIN_CLIENT_ID=      # LinkedIn App client ID
+LINKEDIN_CLIENT_SECRET=  # LinkedIn App client secret
+LINKEDIN_REDIRECT_URI=   # https://app.navhub.co/api/marketing/linkedin/callback
+```
+
+### Middleware
+All `/api/marketing/` routes are already in the `isPublic` list (for OAuth callbacks). No changes required.
+
+### Manual setup required
+1. Run migration `026_marketing_connections.sql` in Supabase dashboard
+2. Create Google OAuth App (APIs & Services → Credentials) with redirect URI `https://app.navhub.co/api/marketing/google/callback`; enable Analytics Data API + Analytics Admin API + Search Console API
+3. Create Meta/Facebook App with redirect URI; add permissions: `pages_read_engagement`, `pages_show_list`, `ads_read`, `read_insights`, `business_management`
+4. Create LinkedIn App with redirect URI; add scopes: `r_organization_social`, `rw_organization_admin`, `r_ads_reporting`
+5. Add 9 environment variables above to Vercel
 

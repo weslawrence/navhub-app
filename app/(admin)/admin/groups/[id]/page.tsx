@@ -83,9 +83,7 @@ export default function GroupDetailPage() {
   const [loadingMem, setLoadingMem] = useState(false)
   const [loadingAct, setLoadingAct] = useState(false)
   const [showEdit,   setShowEdit]   = useState(false)
-  const [resetLinks, setResetLinks] = useState<Record<string, string>>({})
-  const [resetting,  setResetting]  = useState<Record<string, boolean>>({})
-
+  
   function loadOverview() {
     setLoadingOv(true)
     fetch(`/api/admin/groups/${id}`)

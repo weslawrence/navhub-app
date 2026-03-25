@@ -551,7 +551,7 @@ export default function DocumentPage() {
                 <div className="rounded-xl border bg-muted/30 p-4 space-y-3">
                   <div className="flex items-center gap-3">
                     {doc.file_type?.startsWith('image/') ? (
-                      <Image className="h-8 w-8 text-muted-foreground" />
+                      <Image className="h-8 w-8" alt=""
                     ) : (
                       <FileText className="h-8 w-8 text-muted-foreground" />
                     )}

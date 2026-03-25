@@ -53,8 +53,7 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
   // Attachments
   const [attachments,       setAttachments]       = useState<File[]>([])
   const [attachmentError,   setAttachmentError]   = useState<string | null>(null)
-  const [activeGroupId,     setActiveGroupId]     = useState<string | null>(null)
-
+  
   // ─── Awaiting-input (ask_user) state ───────────────────────────────────────
   const [runId,        setRunId]        = useState<string | null>(null)
   const [awaitingInput, setAwaitingInput] = useState<{ question: string } | null>(null)
@@ -81,18 +80,7 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
       })
       .catch(() => {})
   }, [agent.company_scope])
-
-  // Fetch active group ID for attachment upload path
-  useEffect(() => {
-    fetch('/api/groups/active')
-      .then(r => r.json())
-      .then((j: { data?: { group?: { id?: string } } }) => {
-        const gid = j.data?.group?.id
-        if (gid) setActiveGroupId(gid)
-      })
-      .catch(() => {})
-  }, [])
-
+  
   function handlePeriodToggle() {
     const next = !includePeriod
     setIncludePeriod(next)

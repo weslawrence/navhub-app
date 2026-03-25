@@ -51,6 +51,7 @@ const TOOL_OPTIONS: {
   { value: 'read_marketing_data',      label: 'Marketing Data',        emoji: '📊', description: 'Fetch web, social, ads, and email marketing metrics' },
   { value: 'summarise_marketing',      label: 'Summarise Marketing',   emoji: '📈', description: 'AI-powered marketing performance summary with trends and recommendations' },
   { value: 'ask_user',                 label: 'Ask User',              emoji: '❓', description: 'Pause and ask the user a clarifying question (always enabled)' },
+  { value: 'read_attachment',          label: 'Read Attachment',        emoji: '📎', description: 'Read the content of files attached to a run' },
 ]
 
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [

@@ -284,6 +284,7 @@ export type AgentTool =
   | 'read_marketing_data'
   | 'summarise_marketing'
   | 'ask_user'
+  | 'read_attachment'
 
 export type PersonaPreset =
   | 'executive_analyst'
@@ -652,6 +653,23 @@ export interface Document {
   created_by:             string | null
   created_at:             string
   updated_at:             string
+  // Document upload fields (migration 027)
+  upload_source:          'created' | 'uploaded' | 'agent'
+  file_path:              string | null
+  file_name:              string | null
+  file_size:              number | null
+  file_type:              string | null
+}
+
+export interface AgentRunAttachment {
+  id:           string
+  run_id:       string
+  file_path:    string
+  file_name:    string
+  file_type:    string
+  file_size:    number | null
+  content_text: string | null
+  created_at:   string
 }
 
 export interface DocumentVersion {

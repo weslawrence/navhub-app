@@ -40,6 +40,7 @@ const TOOL_LABELS: Record<AgentTool, string> = {
   read_marketing_data:      'Marketing Data',
   summarise_marketing:      'Summarise Mktg',
   ask_user:                 'Ask User',
+  read_attachment:          'Read Attachment',
 }
 
 // ─── Agent avatar ─────────────────────────────────────────────────────────────

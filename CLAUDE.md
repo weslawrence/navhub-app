@@ -812,6 +812,9 @@ Three tabs: **Display** | **Group** | **Members**
 | Phase 8b+8c | ✅ Complete | Marketing OAuth Integrations + Live Sync — migration 026 (4 token columns on marketing_connections), lib/google-marketing.ts + meta + linkedin, OAuth connect/callback for 3 platforms, sync routes, nightly cron, connections API (GET+DELETE), IntegrationsTab live status + sync, company detail page sync buttons |
 | Agent Scheduling Cron | ✅ Complete | Migration 025 (scheduled_run_logs), lib/scheduling.ts, /api/cron/scheduled-agents, vercel.json updated, Schedule tab with next-run display + recent logs, Scheduled badge on run pages |
 | Phase 7e — SharePoint Sync | ✅ Complete | lib/sharepoint.ts (Graph API helpers), OAuth connect/callback/status routes, IntegrationsTab SharePoint section, document page Sync button + auto-sync on content save, document_sharepoint_sync table |
+| Document Upload (WS1) | ✅ Complete | Migration 027 (file columns on documents + agent_run_attachments table), /api/documents/upload, /api/documents/[id]/file-url, /api/documents/[id]/extract, UploadDropzone component, file viewer + AI extraction in document page |
+| Agent File Input (WS2) | ✅ Complete | /api/agents/runs/[runId]/attachments (GET+POST), agent-runs storage bucket, read_attachment tool, RunModal file upload UI, run page attachment display |
+| Admin Password Reset (WS3) | ✅ Complete | POST /api/admin/users/[id]/reset-password — generates Supabase recovery link; super_admin only; reset link shown in admin Users page |
 
 ---
 
@@ -4126,4 +4129,143 @@ All `/api/marketing/` routes are already in the `isPublic` list (for OAuth callb
 3. Create Meta/Facebook App with redirect URI; add permissions: `pages_read_engagement`, `pages_show_list`, `ads_read`, `read_insights`, `business_management`
 4. Create LinkedIn App with redirect URI; add scopes: `r_organization_social`, `rw_organization_admin`, `r_ads_reporting`
 5. Add 9 environment variables above to Vercel
+
+---
+
+## Document Upload (WS1)
+
+### Database (migration 027)
+```sql
+ALTER TABLE documents
+  ADD COLUMN IF NOT EXISTS file_path      text,
+  ADD COLUMN IF NOT EXISTS file_name      text,
+  ADD COLUMN IF NOT EXISTS file_size      bigint,
+  ADD COLUMN IF NOT EXISTS file_type      text,
+  ADD COLUMN IF NOT EXISTS upload_source  text DEFAULT 'created'
+    CHECK (upload_source IN ('created','uploaded','agent'));
+
+CREATE TABLE IF NOT EXISTS agent_run_attachments (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  run_id        uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  file_path     text NOT NULL,
+  file_name     text NOT NULL,
+  file_type     text NOT NULL,
+  file_size     bigint,
+  content_text  text,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+```
+
+### API routes
+```
+POST /api/documents/upload
+  → multipart: file + folder_id? + title? (optional)
+  → Uploads to Storage bucket 'documents' at {group_id}/documents/{docId}/{filename}
+  → Inserts document record with upload_source='uploaded', file_path, file_name, file_size, file_type
+  → Accepted types: .pdf, .docx, .doc, .txt, .md, .png, .jpg, .jpeg, .xlsx, .xls, .csv, .pptx, .ppt, .html
+  → Returns { document_id, title, file_path, document }
+
+GET  /api/documents/[id]/file-url
+  → Returns 1-hour signed URL for the document's uploaded file
+  → Returns { url, file_name, file_type }
+
+POST /api/documents/[id]/extract
+  → Uses Claude Haiku to extract content from the uploaded file
+  → Images: base64 vision extraction; text files (txt/md/html/csv): direct decode; PDF/DOCX/XLSX/PPTX: base64 document API
+  → Saves extracted text to content_markdown
+  → Returns { success: true }
+```
+
+### components/documents/UploadDropzone.tsx
+Client component for drag-and-drop or click-to-select file upload.
+- Accepts multi-file input; `ACCEPTED_TYPES` matches server allowlist
+- Props: `onUpload(files)`, `uploading`, `progress` (per-filename 0–100), `errors` (per-filename), `compact`
+- Shows drag-over state; displays per-file progress bars and error messages
+
+### Document page changes
+`app/(dashboard)/documents/[id]/page.tsx` extended:
+- "Upload File" button when document has no file (opens file picker via hidden input)
+- File metadata bar: shows `file_name`, human-readable size, "Download" link, "Extract Content" button
+- "Extract Content" calls `POST /api/documents/[id]/extract` then reloads document
+- File viewer tab for image documents (renders `<img>` from signed URL)
+
+### Document library changes
+`app/(dashboard)/documents/page.tsx` extended:
+- "Upload File" option in "New Document" menu — opens file picker, auto-uploads via `/api/documents/upload`, then navigates to new document
+
+### Manual setup required
+1. Run migration `027_document_uploads.sql` in Supabase dashboard
+2. Create Storage bucket **`documents`** — private (not public), with RLS policies matching `report-files` pattern
+3. Create Storage bucket **`agent-runs`** — private, with RLS for group members (read) and admins (all)
+
+---
+
+## Agent File Input (WS2)
+
+### Overview
+Allows users to attach files to an agent run before launching. The agent can read attached files via the `read_attachment` tool.
+
+### API routes
+```
+GET  /api/agents/runs/[runId]/attachments
+  → List attachments for a run (group ownership verified)
+  → Returns { id, run_id, file_name, file_type, file_size, created_at }[]
+
+POST /api/agents/runs/[runId]/attachments
+  → multipart: file
+  → Uploads to Storage bucket 'agent-runs' at {group_id}/agent-runs/{runId}/attachments/{filename}
+  → Inserts into agent_run_attachments (run_id, file_path, file_name, file_type, file_size)
+  → Returns inserted attachment record
+```
+
+### read_attachment tool (`lib/agent-tools.ts`)
+- Tool name: `read_attachment`; accepts `{ file_name: string }`
+- Fetches the attachment record from `agent_run_attachments` by `run_id` + `file_name`
+- Gets a signed URL from Storage bucket `agent-runs`, downloads the file
+- Text files (txt/md/html/csv): returns raw content
+- Images: base64 vision call to Claude Haiku, returns description
+- PDF/DOCX/XLSX/PPTX: base64 document call to Claude Haiku, returns extracted text
+- Returns `JSON.stringify({ success: true, data: { file_name, content, file_type } })`
+
+### Agent runner changes (`lib/agent-runner.ts`)
+- `read_attachment` added to `ALL_TOOL_DEFS` with input schema `{ file_name: string }`
+- `case 'read_attachment'` added to `executeTool()` dispatcher
+- System prompt extended: when `attachments` are present, lists attached files and instructs the agent to use `read_attachment` before referencing them
+- `AgentRunContext` extended with `attachments?: { file_name: string; file_type: string }[]`
+
+### RunModal changes (`components/agents/RunModal.tsx`)
+- File attachment section: drag-drop or click-to-add files (up to 10 files, 20 MB total)
+- Files are uploaded to `/api/agents/runs/[runId]/attachments` after the run is created
+- Attachment list shown with remove button before launching
+
+### Run stream page changes (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+- Attachments fetched from `GET /api/agents/runs/[runId]/attachments` on page load
+- Brief section shows attached file pills when attachments are present
+- `toolEmoji` extended: `read_attachment: '📎'`
+
+### lib/types.ts additions
+```typescript
+| 'read_attachment'  // added to AgentTool union
+```
+
+---
+
+## Admin Password Reset (WS3)
+
+### API route
+```
+POST /api/admin/users/[id]/reset-password
+  → super_admin only (verified via user_groups role check)
+  → Calls admin.auth.admin.generateLink({ type: 'recovery', email })
+  → Returns { reset_link, email }
+  → reset_link is a Supabase magic-link URL the admin can send to the user
+```
+
+### Admin Users page changes (`app/(admin)/admin/users/page.tsx`)
+- "Reset Password" action added to each user row's action menu
+- Calls `POST /api/admin/users/[id]/reset-password`, displays the recovery link in a copyable modal
+- Link is shown once — admin copies and sends to the user out-of-band
+
+### Admin Group Detail page changes (`app/(admin)/admin/groups/[id]/page.tsx`)
+- Member rows in the Users tab also include a "Reset Password" action consistent with the Users page
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
   Plus, FolderOpen, FileText, Sparkles, Lock, Share2, MoreHorizontal,
-  Folder, Trash2, MoveRight, Search, SlidersHorizontal,
+  Folder, Trash2, MoveRight, Search, SlidersHorizontal, Upload,
 } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { cn }       from '@/lib/utils'
@@ -16,7 +16,8 @@ import {
   type DocumentType,
   type Company,
 } from '@/lib/types'
-import NewDocumentModal from '@/components/documents/NewDocumentModal'
+import NewDocumentModal    from '@/components/documents/NewDocumentModal'
+import UploadDropzone      from '@/components/documents/UploadDropzone'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -198,6 +199,11 @@ export default function DocumentsPage() {
   const [isAdmin,    setIsAdmin]    = useState(false)
   const [showModal,  setShowModal]  = useState(false)
 
+  // Upload state
+  const [uploading,       setUploading]       = useState(false)
+  const [uploadProgress,  setUploadProgress]  = useState<Record<string, number>>({})
+  const [uploadErrors,    setUploadErrors]    = useState<Record<string, string>>({})
+
   // Filter state
   const [activeFolder,  setActiveFolder]  = useState<string | null>(null) // null=all, 'unfiled'=unfiled, <id>=folder
   const [filterType,    setFilterType]    = useState('')
@@ -266,6 +272,34 @@ export default function DocumentsPage() {
     } finally {
       setFolderLoading(false)
     }
+  }
+
+  async function handleUpload(files: File[]) {
+    setUploading(true)
+    setUploadErrors({})
+    const newProgress: Record<string, number> = {}
+    files.forEach(f => { newProgress[f.name] = 0 })
+    setUploadProgress(newProgress)
+
+    for (const file of files) {
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res  = await fetch('/api/documents/upload', { method: 'POST', body: formData })
+        const json = await res.json() as { data?: { document: DocWithMeta }; error?: string }
+        if (!res.ok) {
+          setUploadErrors(prev => ({ ...prev, [file.name]: json.error ?? 'Upload failed' }))
+        } else if (json.data?.document) {
+          setDocuments(prev => [json.data!.document, ...prev])
+          setUploadProgress(prev => ({ ...prev, [file.name]: 100 }))
+        }
+      } catch {
+        setUploadErrors(prev => ({ ...prev, [file.name]: 'Network error' }))
+      }
+    }
+    setUploading(false)
+    // Clear progress after a moment
+    setTimeout(() => setUploadProgress({}), 2000)
   }
 
   // Apply filters
@@ -417,14 +451,45 @@ export default function DocumentsPage() {
             )}
           </div>
 
-          <Button size="sm" onClick={() => setShowModal(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" /> New Document
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => {
+              const input = document.createElement('input')
+              input.type = 'file'
+              input.multiple = true
+              input.accept = '.pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.xlsx,.xls,.csv,.pptx,.ppt,.html'
+              input.onchange = () => { if (input.files) void handleUpload(Array.from(input.files)) }
+              input.click()
+            }} className="gap-1.5" disabled={uploading}>
+              <Upload className="h-4 w-4" /> Upload
+            </Button>
+            <Button size="sm" onClick={() => setShowModal(true)} className="gap-1.5">
+              <Plus className="h-4 w-4" /> New Document
+            </Button>
+          </div>
         </div>
+
+        {/* Upload dropzone — compact strip when docs exist */}
+        {documents.length > 0 && (
+          <UploadDropzone
+            onUpload={handleUpload}
+            uploading={uploading}
+            progress={uploadProgress}
+            errors={uploadErrors}
+            compact
+          />
+        )}
 
         {/* Document grid */}
         {loading ? (
           <div className="flex items-center justify-center min-h-48 text-sm text-muted-foreground">Loading…</div>
+        ) : filtered.length === 0 && documents.length === 0 ? (
+          <UploadDropzone
+            onUpload={handleUpload}
+            uploading={uploading}
+            progress={uploadProgress}
+            errors={uploadErrors}
+            compact={false}
+          />
         ) : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-48 text-center space-y-3">
             <FileText className="h-10 w-10 text-muted-foreground/40" />

@@ -21,12 +21,14 @@ function fmtDate(s: string | null) {
 const ROLES = ['all', 'super_admin', 'group_admin', 'company_viewer', 'division_viewer']
 
 export default function AdminUsersPage() {
-  const [users,     setUsers]     = useState<UserRow[]>([])
-  const [search,    setSearch]    = useState('')
-  const [role,      setRole]      = useState('all')
-  const [loading,   setLoading]   = useState(true)
-  const [showModal, setShowModal] = useState(false)
-  const [editUser,  setEditUser]  = useState<{ id: string; email: string; group_id: string; role: string } | undefined>()
+  const [users,       setUsers]       = useState<UserRow[]>([])
+  const [search,      setSearch]      = useState('')
+  const [role,        setRole]        = useState('all')
+  const [loading,     setLoading]     = useState(true)
+  const [showModal,   setShowModal]   = useState(false)
+  const [editUser,    setEditUser]    = useState<{ id: string; email: string; group_id: string; role: string } | undefined>()
+  const [resetLinks,  setResetLinks]  = useState<Record<string, string>>({})
+  const [resetting,   setResetting]   = useState<Record<string, boolean>>({})
 
   function loadUsers() {
     setLoading(true)
@@ -64,6 +66,20 @@ export default function AdminUsersPage() {
   function handleSaved() {
     setShowModal(false)
     loadUsers()
+  }
+
+  async function sendResetLink(userId: string) {
+    setResetting(prev => ({ ...prev, [userId]: true }))
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/reset-password`, { method: 'POST' })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed')
+      setResetLinks(prev => ({ ...prev, [userId]: json.data?.reset_link ?? '' }))
+    } catch (err) {
+      alert((err as Error).message)
+    } finally {
+      setResetting(prev => ({ ...prev, [userId]: false }))
+    }
   }
 
   return (
@@ -142,12 +158,33 @@ export default function AdminUsersPage() {
                 <td className="px-5 py-3 text-zinc-400">{fmtDate(u.created_at)}</td>
                 <td className="px-5 py-3 text-zinc-400">{fmtDate(u.last_sign_in_at)}</td>
                 <td className="px-5 py-3 text-right">
-                  <button
-                    onClick={() => openEdit(u)}
-                    className="text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-2.5 py-1 rounded transition-colors"
-                  >
-                    Edit
-                  </button>
+                  <div className="flex items-center justify-end gap-2 flex-wrap">
+                    {resetLinks[u.id] ? (
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs text-green-400">Link ready</span>
+                        <button
+                          onClick={() => { navigator.clipboard.writeText(resetLinks[u.id]); }}
+                          className="text-xs text-amber-400 hover:text-amber-300 border border-amber-700/50 hover:border-amber-500 px-2.5 py-1 rounded transition-colors"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => sendResetLink(u.id)}
+                        disabled={resetting[u.id]}
+                        className="text-xs text-zinc-400 hover:text-amber-300 border border-zinc-700 hover:border-amber-700/50 px-2.5 py-1 rounded transition-colors disabled:opacity-50"
+                      >
+                        {resetting[u.id] ? 'Sending…' : 'Reset Password'}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => openEdit(u)}
+                      className="text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-2.5 py-1 rounded transition-colors"
+                    >
+                      Edit
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

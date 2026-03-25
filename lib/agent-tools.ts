@@ -83,6 +83,10 @@ export interface AnalyseDocumentParams {
   instructions?: string
 }
 
+export interface ReadAttachmentParams {
+  file_name: string
+}
+
 export interface ReadMarketingDataParams {
   company_id?:  string        // optional — if omitted, returns group-level rollup
   platforms?:   MarketingPlatform[]  // optional filter
@@ -1783,4 +1787,65 @@ Be concise and direct. Format as plain text with clear headings.`,
       error: `Summarisation failed: ${err instanceof Error ? err.message : String(err)}`,
     })
   }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// read_attachment
+// ────────────────────────────────────────────────────────────────────────────
+
+export async function readAttachment(
+  params:  ReadAttachmentParams,
+  context: ToolContext
+): Promise<string> {
+  const admin = createAdminClient()
+
+  const { data: attachment } = await admin
+    .from('agent_run_attachments')
+    .select('*')
+    .eq('run_id', context.runId)
+    .eq('file_name', params.file_name)
+    .single()
+
+  if (!attachment) {
+    return JSON.stringify({ success: false, error: `Attachment "${params.file_name}" not found for this run` })
+  }
+
+  const { data: urlData } = await admin.storage
+    .from('agent-runs')
+    .createSignedUrl((attachment as { file_path: string }).file_path, 300)
+
+  if (!urlData?.signedUrl) {
+    return JSON.stringify({ success: false, error: 'Could not access file' })
+  }
+
+  const response = await fetch(urlData.signedUrl)
+  if (!response.ok) {
+    return JSON.stringify({ success: false, error: 'Failed to download attachment' })
+  }
+
+  const fileName = (attachment as { file_name: string }).file_name
+  const fileType = (attachment as { file_type: string }).file_type ?? ''
+  const isImage  = /\.(png|jpg|jpeg|gif|webp)$/i.test(fileName) || fileType.startsWith('image/')
+
+  if (isImage) {
+    const buffer    = await response.arrayBuffer()
+    const base64    = Buffer.from(buffer).toString('base64')
+    const mediaType = fileType.startsWith('image/') ? fileType : 'image/jpeg'
+    return JSON.stringify({
+      success:    true,
+      type:       'image',
+      base64,
+      media_type: mediaType,
+      file_name:  fileName,
+    })
+  }
+
+  // Text-based files
+  const text = await response.text()
+  return JSON.stringify({
+    success:   true,
+    type:      'text',
+    content:   text.slice(0, 50000),
+    file_name: fileName,
+  })
 }

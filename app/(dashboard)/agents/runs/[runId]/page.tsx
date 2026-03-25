@@ -34,6 +34,7 @@ const TOOL_EMOJI: Record<string, string> = {
   create_document:        '📝',
   update_document:        '✍️',
   ask_user:               '❓',
+  read_attachment:        '📎',
 }
 
 const TOOL_LABEL: Record<string, string> = {
@@ -53,6 +54,7 @@ const TOOL_LABEL: Record<string, string> = {
   create_document:        'Create Document',
   update_document:        'Update Document',
   ask_user:               'Ask User',
+  read_attachment:        'Read Attachment',
 }
 
 // ─── Status config ─────────────────────────────────────────────────────────────
@@ -129,6 +131,10 @@ function summariseTool(tool: string, output: string): string {
         return 'Analysis complete'
       case 'ask_user':
         return 'User replied'
+      case 'read_attachment': {
+        const d = parsed as { file_name?: string; type?: string }
+        return `Read: ${d?.file_name ?? 'attachment'}`
+      }
       default: {
         const safe = output ?? ''
         return safe.length > 60 ? safe.slice(0, 57) + '…' : safe
@@ -343,6 +349,7 @@ export default function RunStreamPage() {
   const [replyText,      setReplyText]      = useState('')
   const [sendingReply,   setSendingReply]   = useState(false)
   const [replyError,     setReplyError]     = useState<string | null>(null)
+  const [attachments,    setAttachments]    = useState<Array<{ file_name: string; file_type: string; file_size: number | null }>>([])
 
   const topRef = useRef<HTMLDivElement>(null)
 
@@ -350,6 +357,17 @@ export default function RunStreamPage() {
   useEffect(() => {
     topRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }, [])   // only on mount — we don't want to keep jumping to top on every chunk
+
+  // Fetch attachments for this run
+  useEffect(() => {
+    fetch(`/api/agents/runs/${params.runId}/attachments`)
+      .then(r => r.json())
+      .then((j: { data?: Array<{ file_name: string; file_type: string; file_size: number | null }> }) => {
+        if (j.data) setAttachments(j.data)
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.runId])
 
   const loadMetaAndStream = useCallback(async () => {
     const infoRes = await fetch(`/api/agents/runs/${params.runId}/info`).catch(() => null)
@@ -781,6 +799,26 @@ export default function RunStreamPage() {
             <div className="flex items-center gap-2">
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Period</p>
               <span className="text-sm">{run.input_context.period}</span>
+            </div>
+          )}
+
+          {/* Attachments */}
+          {attachments.length > 0 && (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Attachments</p>
+              <div className="flex flex-wrap gap-1.5">
+                {attachments.map(att => (
+                  <span
+                    key={att.file_name}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] bg-muted text-muted-foreground border border-border"
+                  >
+                    📎 {att.file_name}
+                    {att.file_size != null && (
+                      <span className="opacity-60">({(att.file_size / 1024).toFixed(0)} KB)</span>
+                    )}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
         </div>

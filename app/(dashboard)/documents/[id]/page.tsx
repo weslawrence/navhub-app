@@ -8,6 +8,7 @@ import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
   History, RotateCcw, Share2, Download, Cloud, Loader2 as SyncLoader,
+  FileText, Image, Sparkles, ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -147,6 +148,23 @@ function SharePopover({ docId, isAdmin, onClose }: { docId: string; isAdmin: boo
   )
 }
 
+// ─── Image Preview ──────────────────────────────────────────────────────────
+
+function ImagePreview({ docId }: { docId: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  useEffect(() => {
+    fetch(`/api/documents/${docId}/file-url`)
+      .then(r => r.json())
+      .then((j: { data?: { url: string } }) => { if (j.data?.url) setSrc(j.data.url) })
+      .catch(() => {})
+  }, [docId])
+  if (!src) return null
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img src={src} alt="Uploaded file" className="max-w-full rounded-lg border" style={{ maxHeight: 400 }} />
+  )
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DocumentPage() {
@@ -171,6 +189,10 @@ export default function DocumentPage() {
   const [spConnected, setSpConnected] = useState(false)
   const [spSyncing,   setSpSyncing]   = useState(false)
   const [spSyncMsg,   setSpSyncMsg]   = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  // File extraction state
+  const [extracting,    setExtracting]    = useState(false)
+  const [extractError,  setExtractError]  = useState<string | null>(null)
 
   // Lock keepalive interval
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -277,6 +299,24 @@ export default function DocumentPage() {
     // Release lock
     await fetch(`/api/documents/${docId}/lock`, { method: 'DELETE' }).catch(() => {})
     setEditing(false)
+  }
+
+  async function handleExtract() {
+    setExtracting(true)
+    setExtractError(null)
+    try {
+      const res  = await fetch(`/api/documents/${docId}/extract`, { method: 'POST' })
+      const json = await res.json() as { error?: string }
+      if (!res.ok) {
+        setExtractError(json.error ?? 'Extraction failed')
+      } else {
+        await loadDoc()
+      }
+    } catch {
+      setExtractError('Network error')
+    } finally {
+      setExtracting(false)
+    }
   }
 
   async function handleExport(format: 'docx' | 'pptx' | 'pdf') {
@@ -505,7 +545,71 @@ export default function DocumentPage() {
               )}
             </>
           ) : (
-            <div className="p-8 max-w-4xl">
+            <div className="p-8 max-w-4xl space-y-6">
+              {/* Uploaded file info card */}
+              {doc.upload_source === 'uploaded' && doc.file_path && (
+                <div className="rounded-xl border bg-muted/30 p-4 space-y-3">
+                  <div className="flex items-center gap-3">
+                    {doc.file_type?.startsWith('image/') ? (
+                      <Image className="h-8 w-8 text-muted-foreground" />
+                    ) : (
+                      <FileText className="h-8 w-8 text-muted-foreground" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">{doc.file_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {doc.file_type ?? 'Unknown type'}
+                        {doc.file_size ? ` · ${(doc.file_size / 1024).toFixed(0)} KB` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          const res  = await fetch(`/api/documents/${docId}/file-url`)
+                          const json = await res.json() as { data?: { url: string } }
+                          if (json.data?.url) window.open(json.data.url, '_blank')
+                        }}
+                        className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" />
+                        {doc.file_type?.startsWith('image/') || doc.file_type === 'application/pdf'
+                          ? 'Preview'
+                          : 'Download'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Image inline preview */}
+                  {doc.file_type?.startsWith('image/') && (
+                    <ImagePreview docId={docId} />
+                  )}
+
+                  {/* Extract text button */}
+                  {!doc.content_markdown && (
+                    <div className="flex items-center gap-3 pt-1">
+                      <button
+                        onClick={() => void handleExtract()}
+                        disabled={extracting}
+                        className="inline-flex items-center gap-1.5 text-xs rounded-md border border-primary/40 bg-primary/5 text-primary hover:bg-primary/10 px-3 py-1.5 transition-colors disabled:opacity-50"
+                      >
+                        {extracting
+                          ? <><SyncLoader className="h-3.5 w-3.5 animate-spin" /> Extracting…</>
+                          : <><Sparkles className="h-3.5 w-3.5" /> Extract Text with AI</>}
+                      </button>
+                      {extractError && (
+                        <p className="text-xs text-destructive">{extractError}</p>
+                      )}
+                    </div>
+                  )}
+                  {doc.content_markdown && (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                      Text extracted — scroll down to read
+                    </div>
+                  )}
+                </div>
+              )}
+
               <MarkdownView content={doc.content_markdown} />
             </div>
           )}

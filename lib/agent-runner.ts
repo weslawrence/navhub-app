@@ -31,6 +31,7 @@ import {
   summariseCashflow,
   readMarketingData,
   summariseMarketing,
+  readAttachment,
 } from '@/lib/agent-tools'
 import type {
   Agent,
@@ -401,6 +402,17 @@ const ALL_TOOL_DEFS: Record<string, object> = {
       required: ['question'],
     },
   },
+  read_attachment: {
+    name:        'read_attachment',
+    description: 'Read the content of a file attached to this agent run. For images, returns vision data. For text files, returns content. Use the file_name exactly as listed in the system prompt.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        file_name: { type: 'string', description: 'The exact filename of the attachment as listed in the run context.' },
+      },
+      required: ['file_name'],
+    },
+  },
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -411,7 +423,8 @@ async function buildSystemPrompt(
   agent:        Agent,
   groupName:    string,
   context:      RunContext,
-  groupId:      string
+  groupId:      string,
+  attachments?: Array<{ file_name: string; file_type: string }>
 ): Promise<string> {
   const admin   = createAdminClient()
   const today   = new Date().toISOString().split('T')[0]
@@ -484,6 +497,9 @@ async function buildSystemPrompt(
     '\nAvailable data:',
     `* Financial periods available: ${periodList}`,
     context.extra_instructions ? `\nAdditional instructions: ${context.extra_instructions}` : '',
+    attachments && attachments.length > 0
+      ? `\nAttached files for this run:\n${attachments.map(a => `• ${a.file_name} (${a.file_type})`).join('\n')}\nUse the read_attachment tool to read the content of any attached file before referencing it.`
+      : '',
     '\nCRITICAL TOOL SEQUENCING RULES:',
     '* NEVER call read_report_template without first calling list_report_templates to obtain the template_id',
     '* NEVER call render_report without first calling list_report_templates AND read_report_template',
@@ -930,6 +946,8 @@ async function executeTool(
       return readMarketingData(input as unknown as Parameters<typeof readMarketingData>[0], context)
     case 'summarise_marketing':
       return summariseMarketing(input as unknown as Parameters<typeof summariseMarketing>[0], context)
+    case 'read_attachment':
+      return readAttachment(input as unknown as Parameters<typeof readAttachment>[0], context)
     case 'ask_user':
       // Handled specially in executeAgentRun — should never reach executeTool
       return 'ask_user is handled by the runner directly.'
@@ -963,8 +981,15 @@ export async function executeAgentRun(
     // Load credentials
     const credentials = await loadCredentials(agent.id)
 
-    // Build system prompt
-    const systemPrompt = await buildSystemPrompt(agent, groupName, context, groupId)
+    // Fetch attachments for this run
+    const { data: runAttachments } = await admin
+      .from('agent_run_attachments')
+      .select('file_name, file_type')
+      .eq('run_id', runId)
+    const attachments = (runAttachments ?? []) as Array<{ file_name: string; file_type: string }>
+
+    // Build system prompt (includes attachment context if any)
+    const systemPrompt = await buildSystemPrompt(agent, groupName, context, groupId, attachments)
 
     // Build tool list — ask_user is always included regardless of agent.tools setting
     const enabledTools = (agent.tools ?? []) as AgentTool[]

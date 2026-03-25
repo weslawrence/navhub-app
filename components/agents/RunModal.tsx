@@ -1,12 +1,15 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter }  from 'next/navigation'
-import { Play, X, Loader2, FileText, MessageSquare, Send } from 'lucide-react'
+import { Play, X, Loader2, FileText, MessageSquare, Send, Paperclip } from 'lucide-react'
 import { Button }    from '@/components/ui/button'
 import { Label }     from '@/components/ui/label'
 import { cn }        from '@/lib/utils'
 import type { Agent, Company } from '@/lib/types'
+
+const ACCEPTED_TYPES = '.pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.xlsx,.xls,.csv,.pptx,.ppt,.html'
+const MAX_ATTACHMENTS = 5
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -34,8 +37,9 @@ interface RunModalProps {
 }
 
 export default function RunModal({ agent, onClose, initialInstructions = '' }: RunModalProps) {
-  const router  = useRouter()
-  const periods = getLastNMonths(12)
+  const router     = useRouter()
+  const periods    = getLastNMonths(12)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Period toggle — persisted per agent in localStorage (default: off)
   const [includePeriod,      setIncludePeriod]      = useState(false)
@@ -45,6 +49,11 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
   const [extraInstructions,  setExtraInstructions]  = useState(initialInstructions)
   const [submitting,         setSubmitting]         = useState(false)
   const [error,              setError]              = useState<string | null>(null)
+
+  // Attachments
+  const [attachments,       setAttachments]       = useState<File[]>([])
+  const [attachmentError,   setAttachmentError]   = useState<string | null>(null)
+  const [activeGroupId,     setActiveGroupId]     = useState<string | null>(null)
 
   // ─── Awaiting-input (ask_user) state ───────────────────────────────────────
   const [runId,        setRunId]        = useState<string | null>(null)
@@ -73,10 +82,52 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
       .catch(() => {})
   }, [agent.company_scope])
 
+  // Fetch active group ID for attachment upload path
+  useEffect(() => {
+    fetch('/api/groups/active')
+      .then(r => r.json())
+      .then((j: { data?: { group?: { id?: string } } }) => {
+        const gid = j.data?.group?.id
+        if (gid) setActiveGroupId(gid)
+      })
+      .catch(() => {})
+  }, [])
+
   function handlePeriodToggle() {
     const next = !includePeriod
     setIncludePeriod(next)
     localStorage.setItem(periodKey(agent.id), next ? 'true' : 'false')
+  }
+
+  function addAttachments(files: File[]) {
+    setAttachmentError(null)
+    setAttachments(prev => {
+      const combined = [...prev, ...files]
+      if (combined.length > MAX_ATTACHMENTS) {
+        setAttachmentError(`Maximum ${MAX_ATTACHMENTS} files allowed`)
+        return prev.slice(0, MAX_ATTACHMENTS)
+      }
+      return combined
+    })
+  }
+
+  function removeAttachment(index: number) {
+    setAttachments(prev => prev.filter((_, i) => i !== index))
+    setAttachmentError(null)
+  }
+
+  function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (e.target.files) addAttachments(Array.from(e.target.files))
+    e.target.value = ''
+  }
+
+  function handlePaste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    const items = Array.from(e.clipboardData.items)
+    const imageItems = items.filter(item => item.type.startsWith('image/'))
+    const imageFiles = imageItems
+      .map(item => item.getAsFile())
+      .filter((f): f is File => f !== null)
+    if (imageFiles.length > 0) addAttachments(imageFiles)
   }
 
   function toggleCompany(id: string) {
@@ -116,6 +167,20 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
 
       const id = json.data.run_id as string
       setRunId(id)
+
+      // Upload attachments if any
+      if (attachments.length > 0) {
+        for (const file of attachments) {
+          try {
+            const fd = new FormData()
+            fd.append('file', file)
+            fd.append('run_id', id)
+            await fetch(`/api/agents/runs/${id}/attachments`, { method: 'POST', body: fd })
+          } catch {
+            // Non-fatal — continue
+          }
+        }
+      }
 
       // Poll for up to 5 seconds to detect if the agent immediately asks a question
       const deadline = Date.now() + 5_000
@@ -347,10 +412,62 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
               <textarea
                 value={extraInstructions}
                 onChange={e => setExtraInstructions(e.target.value)}
+                onPaste={handlePaste}
                 placeholder="Any additional context for this run..."
                 rows={3}
                 className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
               />
+            </div>
+
+            {/* Attachments */}
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">
+                  Attachments
+                  <span className="ml-1 font-normal">({attachments.length}/{MAX_ATTACHMENTS})</span>
+                </Label>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex items-center gap-1 text-xs text-primary hover:underline"
+                >
+                  <Paperclip className="h-3 w-3" /> Attach files
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept={ACCEPTED_TYPES}
+                  onChange={handleFileInputChange}
+                  className="hidden"
+                />
+              </div>
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {attachments.map((f, i) => (
+                    <div
+                      key={`${f.name}-${i}`}
+                      className="flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs bg-muted/50"
+                    >
+                      <Paperclip className="h-3 w-3 text-muted-foreground shrink-0" />
+                      <span className="max-w-[140px] truncate">{f.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(i)}
+                        className="ml-0.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {attachmentError && (
+                <p className="text-xs text-destructive">{attachmentError}</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                Paste images directly into the instructions field. Files are available to the agent via read_attachment.
+              </p>
             </div>
 
             {/* render_report note */}

@@ -27,16 +27,17 @@ export async function GET() {
 
   const { data: allMemberships } = await admin
     .from('user_groups')
-    .select('user_id, group_id, role, group:groups(name)')
+    .select('user_id, group_id, role, is_default, group:groups(name)')
 
   type MembershipRow = {
-    user_id:  string
-    group_id: string
-    role:     string
-    group:    { name: string }[] | { name: string } | null
+    user_id:    string
+    group_id:   string
+    role:       string
+    is_default: boolean
+    group:      { name: string }[] | { name: string } | null
   }
 
-  const memberMap: Record<string, { group_id: string; group_name: string; role: string }[]> = {}
+  const memberMap: Record<string, { group_id: string; group_name: string; role: string; is_default: boolean }[]> = {}
   for (const m of (allMemberships ?? []) as unknown as MembershipRow[]) {
     if (!memberMap[m.user_id]) memberMap[m.user_id] = []
     const groupName = Array.isArray(m.group)
@@ -46,6 +47,7 @@ export async function GET() {
       group_id:   m.group_id,
       group_name: groupName,
       role:       m.role,
+      is_default: m.is_default ?? false,
     })
   }
 

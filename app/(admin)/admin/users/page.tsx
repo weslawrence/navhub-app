@@ -10,7 +10,7 @@ interface UserRow {
   email:           string
   created_at:      string
   last_sign_in_at: string | null
-  groups:          { group_id: string; group_name: string; role: string }[]
+  groups:          { group_id: string; group_name: string; role: string; is_default: boolean }[]
 }
 
 function fmtDate(s: string | null) {
@@ -26,7 +26,7 @@ export default function AdminUsersPage() {
   const [role,        setRole]        = useState('all')
   const [loading,     setLoading]     = useState(true)
   const [showModal,   setShowModal]   = useState(false)
-  const [editUser,    setEditUser]    = useState<{ id: string; email: string; group_id: string; role: string } | undefined>()
+  const [editUser,    setEditUser]    = useState<{ id: string; email: string; group_id: string; role: string; memberships?: { group_id: string; group_name: string; role: string; is_default: boolean }[] } | undefined>()
   const [resetLinks,  setResetLinks]  = useState<Record<string, string>>({})
   const [resetting,   setResetting]   = useState<Record<string, boolean>>({})
 
@@ -59,7 +59,13 @@ export default function AdminUsersPage() {
 
   function openEdit(u: UserRow) {
     const first = u.groups[0]
-    setEditUser(first ? { id: u.id, email: u.email, group_id: first.group_id, role: first.role } : undefined)
+    setEditUser({
+      id: u.id,
+      email: u.email,
+      group_id: first?.group_id ?? '',
+      role: first?.role ?? 'company_viewer',
+      memberships: u.groups,
+    })
     setShowModal(true)
   }
 

@@ -841,6 +841,8 @@ Three tabs: **Display** | **Group** | **Members**
 | Document Upload (WS1) | ✅ Complete | Migration 027 (file columns on documents + agent_run_attachments table), /api/documents/upload, /api/documents/[id]/file-url, /api/documents/[id]/extract, UploadDropzone component, file viewer + AI extraction in document page |
 | Agent File Input (WS2) | ✅ Complete | /api/agents/runs/[runId]/attachments (GET+POST), agent-runs storage bucket, read_attachment tool, RunModal file upload UI, run page attachment display |
 | Admin Password Reset (WS3) | ✅ Complete | POST /api/admin/users/[id]/reset-password — generates Supabase recovery link; super_admin only; reset link shown in admin Users page |
+| Admin Multi-Group Management | ✅ Complete | POST /api/admin/users/[id]/groups (add to group + Resend notification), PATCH/DELETE /api/admin/users/[id]/groups/[groupId] (role change, set default, remove); UserFormModal rebuilt for multi-group table (role select, set default star, remove per membership, add-to-group inline form); GET /api/admin/users now returns is_default per membership |
+| NavHub Landing Page | ✅ Complete | app/landing/page.tsx — auth-aware group picker (client component); Enter Group button per membership; Create Group inline form; feature overview cards; How to Get Started steps; POST /api/groups/switch route for cookie-safe group switching; dashboard layout + /no-group redirect to /landing; middleware updated with /landing and /api/groups/switch as public paths |
 
 ---
 

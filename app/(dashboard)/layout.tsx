@@ -36,8 +36,8 @@ export default async function DashboardLayout({
     .order('is_default', { ascending: false })
 
   if (!userGroups || userGroups.length === 0) {
-    // Logged in but no group memberships — show friendly message
-    redirect('/no-group')
+    // Logged in but no group memberships — redirect to landing page
+    redirect('/landing')
   }
 
   // Determine active group from cookie

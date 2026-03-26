@@ -130,7 +130,7 @@ const STORY_STEPS = [
 
 // ─── Page ────────────────────────────────────────────────────────────────────
 
-export default function Home() {
+export default function MarketingHomepage() {
   return (
     <div
       className={`${dmSans.variable} ${dmMono.variable} min-h-screen bg-[#080c14] text-white`}

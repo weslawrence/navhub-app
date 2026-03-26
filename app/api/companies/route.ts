@@ -108,14 +108,26 @@ export async function GET(request: Request) {
 // Creates a new company under the active group.
 // Body: { name, description?, industry? }
 export async function POST(request: Request) {
-  const supabase      = createClient()
-  const cookieStore   = cookies()
-  const activeGroupId = cookieStore.get('active_group_id')?.value
+  const supabase    = createClient()
+  const cookieStore = cookies()
 
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) {
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   }
+
+  // Read cookie — fall back to default group if cookie not set (e.g. manually-added users)
+  let activeGroupId = cookieStore.get('active_group_id')?.value
+  if (!activeGroupId) {
+    const { data: defaultGroup } = await supabase
+      .from('user_groups')
+      .select('group_id')
+      .eq('user_id', session.user.id)
+      .eq('is_default', true)
+      .single()
+    if (defaultGroup) activeGroupId = defaultGroup.group_id
+  }
+
   if (!activeGroupId) {
     return NextResponse.json({ error: 'No active group' }, { status: 400 })
   }

@@ -484,6 +484,32 @@ This is safe because the ownership check already ran.
 Divisions don't have a `group_id` column — ownership is through `companies.group_id`.
 Use `companies!inner(group_id)` in Supabase join and filter by `companies.group_id`.
 
+### 11. active_group_id cookie auto-repair for manually-added users
+The `active_group_id` cookie is normally set during login (`signIn` server action) or group switch (`switchGroup`). When an admin manually adds a user to a group via the Members tab, the user's session already exists but the cookie may be missing or stale — causing "No active group" errors in API routes.
+
+**Two-layer fix:**
+
+1. **`app/(dashboard)/layout.tsx`** — already detects when the cookie is missing or points to an unknown group and repairs it by setting the cookie to the user's default or first group. This fires on every page render, so the cookie is always present for subsequent API requests in the *next* request cycle.
+
+2. **API routes that read `active_group_id` in write handlers** (`POST /api/companies`, `POST /api/divisions`) — include an in-request fallback: if the cookie is absent, query `user_groups` for the user's `is_default` group and use that value. This catches the case where a client component makes an API call on the same page load before the layout's cookie write is visible to the browser.
+
+**Pattern for any new write-handler that needs `active_group_id`:**
+```typescript
+let activeGroupId = cookieStore.get('active_group_id')?.value
+if (!activeGroupId) {
+  const { data: defaultGroup } = await supabase
+    .from('user_groups')
+    .select('group_id')
+    .eq('user_id', session.user.id)
+    .eq('is_default', true)
+    .single()
+  if (defaultGroup) activeGroupId = defaultGroup.group_id
+}
+if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
+```
+
+**`is_default` on invite upsert** (`POST /api/groups/[id]/invites`): when an existing Supabase user is added to a group, `is_default` is set to `true` only when the user has **no existing default group** (checked via `.eq('is_default', true)`). This avoids overwriting the default for users who already belong to other groups.
+
 ---
 
 ## Phase 2b — Number Formatting Convention

@@ -161,18 +161,24 @@ export async function POST(
   } else {
     // ── EXISTING user — add immediately + send notification ───────────────────
 
-    // Determine is_default (first group for this user)
-    const { count } = await admin
+    // Determine is_default: make this group the default only if the user has no
+    // existing default group. This handles the case where a user is added to a
+    // second (or later) group — their original default must not be overwritten.
+    const { data: existingDefault } = await admin
       .from('user_groups')
-      .select('*', { count: 'exact', head: true })
+      .select('id')
       .eq('user_id', existingUser.id)
+      .eq('is_default', true)
+      .single()
+
+    const isDefault = !existingDefault
 
     await admin.from('user_groups').upsert(
       {
         user_id:    existingUser.id,
         group_id:   params.id,
         role,
-        is_default: (count ?? 0) === 0,
+        is_default: isDefault,
       },
       { onConflict: 'user_id,group_id' }
     )

@@ -2,6 +2,14 @@ import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest }          from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  const hostname = request.headers.get('host') ?? ''
+  const isMarketingSite = hostname.startsWith('www.') || hostname === 'navhub.co'
+
+  // Marketing site — serve marketing pages, no auth required
+  if (isMarketingSite) {
+    return NextResponse.next()
+  }
+
   let response = NextResponse.next({
     request: { headers: request.headers },
   })

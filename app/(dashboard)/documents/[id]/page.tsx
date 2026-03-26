@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
   History, RotateCcw, Share2, Download, Cloud, Loader2 as SyncLoader,
-  FileText, Image, Sparkles, ExternalLink,
+  FileText, ImageIcon, Sparkles, ExternalLink,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {

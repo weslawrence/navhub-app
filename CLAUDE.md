@@ -969,7 +969,7 @@ CREATE TABLE IF NOT EXISTS sharepoint_connections (
   access_token  text NOT NULL,   -- AES-256-GCM encrypted
   refresh_token text NOT NULL,   -- AES-256-GCM encrypted
   expires_at    timestamptz NOT NULL,
-  tenant_id     text,
+  tenant_id     text,            -- extracted from id_token JWT (tid claim) during OAuth callback
   site_url      text,
   drive_id      text,
   folder_path   text DEFAULT 'NavHub/Documents',
@@ -979,16 +979,37 @@ CREATE TABLE IF NOT EXISTS sharepoint_connections (
 );
 ```
 
+**Migration 029 — `folder_sharepoint_mappings`** (per-folder SharePoint path overrides):
+```sql
+CREATE TABLE IF NOT EXISTS folder_sharepoint_mappings (
+  id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  folder_id        uuid REFERENCES document_folders(id) ON DELETE CASCADE,  -- null = default for all
+  group_id         uuid NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  sharepoint_path  text NOT NULL DEFAULT '/NavHub',
+  auto_sync        boolean NOT NULL DEFAULT false,
+  created_at       timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(folder_id, group_id)
+);
+```
+API: `GET /api/integrations/sharepoint/mappings` (list), `POST /api/integrations/sharepoint/mappings` (upsert by folder_id+group_id).
+Sync route looks up folder-specific path before uploading; falls back to `/NavHub` if no mapping found.
+
+**SharePoint multi-tenant note**: The Azure AD app registration MUST be configured as multi-tenant ("Accounts in any organizational directory"). The connect route uses the `common` endpoint; the callback extracts the user's actual `tenant_id` from the `tid` claim of the `id_token` JWT. The `refreshAccessToken(refreshToken, tenantId)` function uses the tenant-specific endpoint for subsequent refreshes.
+
 ### lib/sharepoint.ts
 ```typescript
 export function getSharePointAuthUrl(state: string): string
   // Builds Microsoft OAuth2 authorization URL with Files.ReadWrite.All + Sites.ReadWrite.All scopes
 
-export async function exchangeSharePointCode(code: string): Promise<{ access_token, refresh_token, expires_in, tenant_id? }>
-  // POST to /token endpoint, returns token data
+export async function exchangeSharePointCode(code: string): Promise<{ access_token, refresh_token, expires_in, scope }>
+  // POST to common/oauth2/v2.0/token endpoint, returns token data
+
+export async function refreshAccessToken(refreshToken: string, tenantId: string): Promise<SharePointTokens>
+  // Refreshes using the tenant-specific endpoint (/{tenantId}/oauth2/v2.0/token)
+  // tenantId comes from sharepoint_connections.tenant_id (extracted from id_token.tid during connect)
 
 export async function getValidSharePointToken(connectionId: string): Promise<{ access_token: string }>
-  // Loads connection from DB (admin client), refreshes if expiring within 5 min
+  // Loads connection from DB (admin client), refreshes via refreshAccessToken(decryptedRefresh, conn.tenant_id) if expiring within 5 min
   // Persists refreshed tokens back to DB
 
 export async function ensureSharePointFolder(accessToken: string, driveId: string, folderPath: string): Promise<string>
@@ -2140,10 +2161,11 @@ Converts ISO timestamp to human-friendly relative string: "just now", "5m ago", 
 25. **Run migration `025_scheduling.sql`** in Supabase dashboard (Agent Scheduling Cron — scheduled_run_logs table + triggered_by on agent_runs)
 26. **Create `sharepoint_connections` + `document_sharepoint_sync` tables** in Supabase (Phase 7e — see SharePoint Sync section for DDL)
 27. Add SharePoint env vars to Vercel: `SHAREPOINT_CLIENT_ID`, `SHAREPOINT_CLIENT_SECRET`, `SHAREPOINT_REDIRECT_URI`
-28. Set up Azure AD App Registration for SharePoint OAuth (Redirect URI: `https://app.navhub.co/api/integrations/sharepoint/callback`, permissions: Files.ReadWrite.All + Sites.ReadWrite.All)
+28. Set up Azure AD App Registration for SharePoint OAuth — **MUST be registered as Multi-tenant** (Redirect URI: `https://app.navhub.co/api/integrations/sharepoint/callback`, permissions: Files.ReadWrite.All + Sites.ReadWrite.All, Supported account types: Accounts in any organizational directory)
 29. **Run migration `026_marketing_connections.sql`** in Supabase dashboard (Phase 8b+8c — adds access_token_expires_at, scope, external_account_id, external_account_name to marketing_connections)
 30. Set up Google OAuth App, Meta/Facebook App, LinkedIn App for marketing integrations (see Phase 8b+8c section for required scopes and redirect URIs)
 31. Add 9 marketing OAuth env vars to Vercel: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`, `FACEBOOK_APP_ID`, `FACEBOOK_APP_SECRET`, `META_REDIRECT_URI`, `LINKEDIN_CLIENT_ID`, `LINKEDIN_CLIENT_SECRET`, `LINKEDIN_REDIRECT_URI`
+32. **Run migration `029_sharepoint_folder_mappings.sql`** in Supabase dashboard (folder-specific SharePoint path overrides per document folder)
 
 ---
 

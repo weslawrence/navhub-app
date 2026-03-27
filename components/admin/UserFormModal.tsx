@@ -79,6 +79,27 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Load fresh memberships from server for edit mode
+  async function loadMemberships() {
+    if (!user) return
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}/groups`)
+      const json = await res.json() as { data?: GroupMembership[] }
+      if (json.data) {
+        setMemberships(json.data.map(m => ({
+          ...m,
+          group_name: groups.find(g => g.id === m.group_id)?.name ?? m.group_name,
+        })))
+      }
+    } catch { /* ignore */ }
+  }
+
+  // Load memberships on mount for edit mode
+  useEffect(() => {
+    if (isEdit && user?.id) void loadMemberships()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEdit, user?.id])
+
   async function handleSave() {
     if (!isEdit && !email.trim()) { setError('Email is required.'); return }
     if (!isEdit && !password.trim()) { setError('Password is required for new users.'); return }
@@ -112,6 +133,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
       })
       if (res.ok) {
         setMemberships(prev => prev.map(m => m.group_id === groupId ? { ...m, role: newRole } : m))
+        void loadMemberships()
       }
     } catch {
       // ignore
@@ -131,6 +153,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
       })
       if (res.ok) {
         setMemberships(prev => prev.map(m => ({ ...m, is_default: m.group_id === targetGroupId })))
+        void loadMemberships()
       }
     } catch {
       // ignore
@@ -149,6 +172,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
       })
       if (res.ok) {
         setMemberships(prev => prev.filter(m => m.group_id !== targetGroupId))
+        void loadMemberships()
       }
     } catch {
       // ignore
@@ -182,6 +206,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
         setShowAddGroup(false)
         setAddGroupId(availableGroups.filter(g => g.id !== addGroupId)[0]?.id ?? '')
         setAddRole('company_viewer')
+        void loadMemberships()
       }
     } catch {
       // ignore

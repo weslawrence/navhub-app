@@ -90,7 +90,6 @@ export async function POST(request: Request) {
       file_name:        file.name,
       file_size:        file.size,
       file_type:        contentType,
-      is_active:        true,
       created_by:       user.id,
     })
     .select()

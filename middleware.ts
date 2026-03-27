@@ -111,8 +111,11 @@ export async function middleware(request: NextRequest) {
     ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) &&
     pathname.startsWith('/api/')
   ) {
-    // Always allow exiting impersonation
-    if (pathname === '/api/admin/impersonate' && method === 'DELETE') {
+    // Allow admin routes and exiting impersonation
+    if (
+      pathname.startsWith('/api/admin/') ||
+      (pathname === '/api/admin/impersonate' && method === 'DELETE')
+    ) {
       return response
     }
 

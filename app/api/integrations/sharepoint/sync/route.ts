@@ -59,6 +59,18 @@ export async function POST(req: Request) {
 
   const groupName = group?.name ?? 'NavHub'
 
+  // Look up folder-specific SharePoint path before uploading
+  const { data: mapping } = await admin
+    .from('folder_sharepoint_mappings')
+    .select('sharepoint_path')
+    .eq('group_id', activeGroupId)
+    .or(`folder_id.eq.${doc.folder_id ?? 'null'},folder_id.is.null`)
+    .order('folder_id', { ascending: false, nullsFirst: false })
+    .limit(1)
+    .maybeSingle()
+
+  const targetPath = mapping?.sharepoint_path ?? '/NavHub'
+
   try {
     // Get valid access token (refreshes if needed)
     const { access_token } = await getValidSharePointToken(conn.id)
@@ -66,9 +78,9 @@ export async function POST(req: Request) {
     // Export document to DOCX buffer
     const docxBuffer = await exportToDocx(doc as Document, groupName)
 
-    // Ensure folder exists
+    // Ensure folder exists using the folder-specific path
     const driveId    = conn.drive_id
-    const folderPath = conn.folder_path ?? 'NavHub/Documents'
+    const folderPath = targetPath
 
     if (!driveId) {
       return NextResponse.json({ error: 'SharePoint drive not configured. Update connection settings.' }, { status: 422 })

@@ -80,6 +80,35 @@ export interface SharePointConnection {
   is_active:       boolean
 }
 
+export interface SharePointTokens {
+  access_token:   string
+  refresh_token?: string
+  expires_in:     number
+}
+
+/**
+ * Refresh an access token using the tenant-specific endpoint.
+ * tenantId should come from the sharepoint_connections.tenant_id DB column.
+ */
+export async function refreshAccessToken(refreshToken: string, tenantId: string): Promise<SharePointTokens> {
+  const res = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     process.env.SHAREPOINT_CLIENT_ID!,
+      client_secret: process.env.SHAREPOINT_CLIENT_SECRET!,
+      refresh_token: refreshToken,
+      grant_type:    'refresh_token',
+      scope:         SHAREPOINT_SCOPES,
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`SharePoint token refresh failed: ${text}`)
+  }
+  return res.json() as Promise<SharePointTokens>
+}
+
 export async function getValidSharePointToken(connectionId: string): Promise<{
   access_token: string
 }> {
@@ -100,26 +129,9 @@ export async function getValidSharePointToken(connectionId: string): Promise<{
 
   // Refresh if expires within 5 minutes
   if (expiresAt.getTime() - now.getTime() < 5 * 60 * 1000) {
-    const clientId     = process.env.SHAREPOINT_CLIENT_ID     ?? ''
-    const clientSecret = process.env.SHAREPOINT_CLIENT_SECRET ?? ''
-
-    const res = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body:    new URLSearchParams({
-        client_id:     clientId,
-        client_secret: clientSecret,
-        grant_type:    'refresh_token',
-        refresh_token: decryptedRefresh,
-        scope:         SHAREPOINT_SCOPES,
-      }).toString(),
-    })
-
-    if (!res.ok) throw new Error('SharePoint token refresh failed')
-
-    const tokens = await res.json() as {
-      access_token: string; refresh_token?: string; expires_in: number
-    }
+    // Use the tenant-specific endpoint via the tenant_id stored on the connection
+    const tenantId = (conn.tenant_id as string | null) ?? 'common'
+    const tokens = await refreshAccessToken(decryptedRefresh, tenantId)
 
     const newExpiry = new Date(Date.now() + tokens.expires_in * 1000)
 

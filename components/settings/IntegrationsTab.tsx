@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Plug, ChevronDown, RefreshCw, Check, Link2, Link2Off,
-  ExternalLink, Loader2,
+  ExternalLink, Loader2, Save,
 } from 'lucide-react'
 import { Badge }     from '@/components/ui/badge'
 import { Button }    from '@/components/ui/button'
@@ -37,6 +37,15 @@ interface SharePointConnection {
   drive_id:    string | null
   folder_path: string | null
   expires_at:  string
+}
+
+interface FolderMapping {
+  id:              string
+  folder_id:       string | null
+  group_id:        string
+  sharepoint_path: string
+  auto_sync:       boolean
+  document_folders?: { name: string } | null
 }
 
 interface MarketingConn {
@@ -90,6 +99,10 @@ export default function IntegrationsTab() {
   // SharePoint state
   const [spConnection,      setSpConnection]      = useState<SharePointConnection | null>(null)
   const [spDisconnecting,   setSpDisconnecting]   = useState(false)
+  const [spMappings,        setSpMappings]        = useState<FolderMapping[]>([])
+  const [spMappingSaving,   setSpMappingSaving]   = useState<string | null>(null)  // folder_id or 'default'
+  // Local editable copies of sharepoint paths
+  const [spPathEdits,       setSpPathEdits]       = useState<Record<string, string>>({})  // folder_id|'default' -> path
 
   // Marketing connections state
   const [mktConnections,    setMktConnections]    = useState<MarketingConn[]>([])
@@ -99,19 +112,38 @@ export default function IntegrationsTab() {
 
   // ── Data loading ────────────────────────────────────────────────────────────
 
+  const loadSharePointStatus = useCallback(async () => {
+    try {
+      const [spRes, mapRes] = await Promise.all([
+        fetch('/api/integrations/sharepoint/status'),
+        fetch('/api/integrations/sharepoint/mappings'),
+      ])
+      const spJson  = spRes.ok  ? await spRes.json() as { data: SharePointConnection | null } : { data: null }
+      const mapJson = mapRes.ok ? await mapRes.json() as { data: FolderMapping[] }             : { data: [] }
+      setSpConnection(spJson.data)
+      const mappings = mapJson.data ?? []
+      setSpMappings(mappings)
+      // Initialise path edits from DB
+      const edits: Record<string, string> = {}
+      mappings.forEach(m => {
+        const key = m.folder_id ?? 'default'
+        edits[key] = m.sharepoint_path
+      })
+      setSpPathEdits(edits)
+    } catch { /* silent */ }
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const [cRes, xRes, spRes, mRes] = await Promise.all([
+      const [cRes, xRes, mRes] = await Promise.all([
         fetch('/api/companies?include_inactive=false'),
         fetch('/api/xero/connections'),
-        fetch('/api/integrations/sharepoint/status'),
         fetch('/api/marketing/connections'),
       ])
       const cJson  = await cRes.json()
       const xJson  = await xRes.json()
-      const spJson = spRes.ok ? await spRes.json() as { data: SharePointConnection | null } : { data: null }
-      const mJson  = mRes.ok  ? await mRes.json() as { data: MarketingConn[] }             : { data: [] }
+      const mJson  = mRes.ok  ? await mRes.json() as { data: MarketingConn[] } : { data: [] }
 
       const companyList: CompanyOption[] = cJson.data ?? []
       setCompanies(companyList)
@@ -131,14 +163,25 @@ export default function IntegrationsTab() {
       }
 
       setConnections(xJson.data ?? [])
-      setSpConnection(spJson.data)
       setMktConnections(mJson.data ?? [])
+      await loadSharePointStatus()
     } catch { /* silent */ } finally {
       setLoading(false)
     }
-  }, [])
+  }, [loadSharePointStatus])
 
   useEffect(() => { void load() }, [load])
+
+  // Listen for SharePoint popup messages
+  useEffect(() => {
+    function handleMessage(e: MessageEvent) {
+      if (e.data?.type === 'sharepoint-connected') {
+        void loadSharePointStatus()
+      }
+    }
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [loadSharePointStatus])
 
   // Auto-clear link toasts
   useEffect(() => {
@@ -203,6 +246,30 @@ export default function IntegrationsTab() {
   }
 
   // ── SharePoint handlers ─────────────────────────────────────────────────────
+
+  function connectSharePoint() {
+    window.open(
+      '/api/integrations/sharepoint/connect',
+      'sharepoint-auth',
+      'width=600,height=700,left=200,top=100'
+    )
+  }
+
+  async function handleSaveMapping(folderId: string | null, autoSync: boolean) {
+    const key = folderId ?? 'default'
+    const path = spPathEdits[key] ?? '/NavHub'
+    setSpMappingSaving(key)
+    try {
+      await fetch('/api/integrations/sharepoint/mappings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder_id: folderId, sharepoint_path: path, auto_sync: autoSync }),
+      })
+      await loadSharePointStatus()
+    } catch { /* silent */ } finally {
+      setSpMappingSaving(null)
+    }
+  }
 
   async function disconnectSharePoint() {
     if (!confirm('Disconnect SharePoint? Existing synced files will remain in SharePoint but future syncs will stop.')) return
@@ -506,46 +573,130 @@ export default function IntegrationsTab() {
         </div>
 
         {spConnection ? (
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  <Link2 className="h-4 w-4 text-green-500" />
-                  Connected
-                </CardTitle>
-                <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">Active</Badge>
-              </div>
-              <CardDescription className="text-xs">
-                Sync folder: <span className="font-mono text-foreground">{spConnection.folder_path ?? 'NavHub/Documents'}</span>
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {spConnection.site_url && (
-                <a
-                  href={spConnection.site_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+          <>
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm font-medium flex items-center gap-2">
+                    <Link2 className="h-4 w-4 text-green-500" />
+                    Connected
+                  </CardTitle>
+                  <Badge className="bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300 text-xs">Active</Badge>
+                </div>
+                <CardDescription className="text-xs">
+                  Sync folder: <span className="font-mono text-foreground">{spConnection.folder_path ?? 'NavHub/Documents'}</span>
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {spConnection.site_url && (
+                  <a
+                    href={spConnection.site_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Open SharePoint site
+                  </a>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 gap-1.5"
+                  onClick={() => void disconnectSharePoint()}
+                  disabled={spDisconnecting}
                 >
-                  <ExternalLink className="h-3 w-3" />
-                  Open SharePoint site
-                </a>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 gap-1.5"
-                onClick={() => void disconnectSharePoint()}
-                disabled={spDisconnecting}
-              >
-                {spDisconnecting
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : <Link2Off className="h-3.5 w-3.5" />
-                }
-                Disconnect
-              </Button>
-            </CardContent>
-          </Card>
+                  {spDisconnecting
+                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    : <Link2Off className="h-3.5 w-3.5" />
+                  }
+                  Disconnect
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Folder Sync Settings */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium">Folder Sync Settings</CardTitle>
+                <CardDescription className="text-xs">
+                  Configure which SharePoint path each document folder syncs to.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Default path */}
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground mb-1.5">Default path (all folders)</p>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={spPathEdits['default'] ?? '/NavHub'}
+                      onChange={e => setSpPathEdits(prev => ({ ...prev, default: e.target.value }))}
+                      placeholder="/NavHub"
+                      className="flex-1 h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2 gap-1"
+                      disabled={spMappingSaving === 'default'}
+                      onClick={() => void handleSaveMapping(null, spMappings.find(m => m.folder_id === null)?.auto_sync ?? false)}
+                    >
+                      {spMappingSaving === 'default'
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <Save className="h-3 w-3" />
+                      }
+                      Save
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Per-folder paths */}
+                {companies.length > 0 || divisions.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-muted-foreground">Per-folder overrides</p>
+                    {spMappings.filter(m => m.folder_id !== null).map(m => {
+                      const folderName = m.document_folders?.name ?? m.folder_id ?? 'Unknown folder'
+                      const key = m.folder_id!
+                      return (
+                        <div key={key} className="flex items-center gap-2">
+                          <span className="text-xs text-foreground min-w-[120px] truncate">{folderName}</span>
+                          <input
+                            type="text"
+                            value={spPathEdits[key] ?? m.sharepoint_path}
+                            onChange={e => setSpPathEdits(prev => ({ ...prev, [key]: e.target.value }))}
+                            placeholder="/NavHub"
+                            className="flex-1 h-7 rounded-md border border-input bg-background px-2 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+                          />
+                          <label className="flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={m.auto_sync}
+                              onChange={e => void handleSaveMapping(m.folder_id, e.target.checked)}
+                              className="h-3.5 w-3.5"
+                            />
+                            Auto-sync
+                          </label>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 gap-1"
+                            disabled={spMappingSaving === key}
+                            onClick={() => void handleSaveMapping(m.folder_id, m.auto_sync)}
+                          >
+                            {spMappingSaving === key
+                              ? <Loader2 className="h-3 w-3 animate-spin" />
+                              : <Save className="h-3 w-3" />
+                            }
+                          </Button>
+                        </div>
+                      )
+                    })}
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </>
         ) : (
           <div className="rounded-lg border border-border bg-card px-4 py-4 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -555,12 +706,10 @@ export default function IntegrationsTab() {
                 <p className="text-xs text-muted-foreground">Not connected</p>
               </div>
             </div>
-            <a href="/api/integrations/sharepoint/connect">
-              <Button size="sm" className="gap-1.5">
-                <Link2 className="h-3.5 w-3.5" />
-                Connect
-              </Button>
-            </a>
+            <Button size="sm" className="gap-1.5" onClick={connectSharePoint}>
+              <Link2 className="h-3.5 w-3.5" />
+              Connect
+            </Button>
           </div>
         )}
       </div>

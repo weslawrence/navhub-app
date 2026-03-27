@@ -2,6 +2,40 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const supabase = createClient()
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const admin = createAdminClient()
+  const { data: superCheck } = await admin
+    .from('user_groups')
+    .select('role')
+    .eq('user_id', session.user.id)
+    .eq('role', 'super_admin')
+    .limit(1)
+  if (!superCheck?.length) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+
+  const { data, error } = await admin
+    .from('user_groups')
+    .select('group_id, role, is_default, groups(name)')
+    .eq('user_id', params.id)
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  return NextResponse.json({
+    data: (data ?? []).map(m => ({
+      group_id:   m.group_id,
+      group_name: (m.groups as unknown as { name: string } | null)?.name ?? '',
+      role:       m.role,
+      is_default: m.is_default,
+    }))
+  })
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: { id: string } }

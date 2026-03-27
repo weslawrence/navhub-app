@@ -22,8 +22,24 @@ export async function POST(
       .limit(1)
     if (!callerRole?.length) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-    const { group_id, role } = await request.json() as { group_id: string; role: string }
+    const body = await request.json() as { group_id: string; role: string }
+    const { group_id, role } = body
     if (!group_id || !role) return NextResponse.json({ error: 'group_id and role required' }, { status: 400 })
+
+    // Fetch user email before upsert
+    const { data: { user } } = await admin.auth.admin.getUserById(params.id)
+    const userEmail = user?.email
+    if (!userEmail) {
+      return NextResponse.json({ error: 'User email not found' }, { status: 404 })
+    }
+
+    // Fetch group name before upsert
+    const { data: group } = await admin
+      .from('groups')
+      .select('name')
+      .eq('id', group_id)
+      .single()
+    const groupName = group?.name ?? 'a new group'
 
     // Upsert into user_groups
     const { data: membership, error } = await admin
@@ -39,34 +55,27 @@ export async function POST(
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    // Get group name for notification
-    const { data: group } = await admin
-      .from('groups')
-      .select('name')
-      .eq('id', group_id)
-      .single()
-
-    // Get user email for notification
-    const { data: { user } } = await admin.auth.admin.getUserById(params.id)
-
-    // Send Resend notification if configured
-    if (user?.email && process.env.RESEND_API_KEY) {
+    // Send email via Resend SDK
+    if (process.env.RESEND_API_KEY) {
       try {
-        await fetch('https://api.resend.com/emails', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${process.env.RESEND_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            from: `NavHub <invites@${process.env.RESEND_FROM_DOMAIN ?? 'navhub.co'}>`,
-            to: user.email,
-            subject: `You've been added to a new group on NavHub`,
-            html: `<h2>You've been added to a new group</h2><p>You now have access to <strong>${group?.name ?? 'a new group'}</strong> as <strong>${role}</strong>.</p><p>Log in to NavHub and use the group switcher to access this group.</p><p><a href="${process.env.NEXT_PUBLIC_APP_URL}/landing">Open NavHub</a></p>`,
-          }),
+        const { Resend } = await import('resend')
+        const resend = new Resend(process.env.RESEND_API_KEY)
+        await resend.emails.send({
+          from:    `NavHub <invites@navhub.co>`,
+          to:      userEmail,
+          subject: `You've been added to ${groupName} on NavHub`,
+          html: `
+            <h2>You've been added to a new group</h2>
+            <p>Hi,</p>
+            <p>You now have access to <strong>${groupName}</strong> on NavHub with the role <strong>${role}</strong>.</p>
+            <p>Log in to NavHub and use the group switcher in the top right to access this group.</p>
+            <p><a href="${process.env.NEXT_PUBLIC_APP_URL}/landing">Open NavHub</a></p>
+            <p>If you have any questions, contact your administrator.</p>
+          `
         })
-      } catch {
-        // Email failure is non-fatal
+      } catch (emailErr) {
+        console.error('Failed to send group addition email:', emailErr)
+        // Don't fail the request if email fails
       }
     }
 

@@ -205,7 +205,7 @@ export default function AdminUsersPage() {
       {showModal && (
         <UserFormModal
           user={editUser}
-          onClose={() => setShowModal(false)}
+          onClose={() => { setShowModal(false); loadUsers() }}
           onSaved={handleSaved}
         />
       )}

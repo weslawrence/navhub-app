@@ -167,14 +167,21 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
         body: JSON.stringify({ group_id: addGroupId, role: addRole }),
       })
       if (res.ok) {
-        const groupName = groups.find(g => g.id === addGroupId)?.name ?? addGroupId
+        const newMembership: GroupMembership = {
+          group_id:   addGroupId,
+          group_name: groups.find(g => g.id === addGroupId)?.name ?? '',
+          role:       addRole,
+          is_default: false,
+        }
         setMemberships(prev => {
-          // Avoid duplicates
+          // Avoid duplicates — update role if already present
           const existing = prev.find(m => m.group_id === addGroupId)
           if (existing) return prev.map(m => m.group_id === addGroupId ? { ...m, role: addRole } : m)
-          return [...prev, { group_id: addGroupId, group_name: groupName, role: addRole, is_default: false }]
+          return [...prev, newMembership]
         })
         setShowAddGroup(false)
+        setAddGroupId(availableGroups.filter(g => g.id !== addGroupId)[0]?.id ?? '')
+        setAddRole('company_viewer')
       }
     } catch {
       // ignore

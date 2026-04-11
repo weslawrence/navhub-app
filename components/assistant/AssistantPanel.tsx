@@ -116,8 +116,22 @@ function QuestionCard({
 // ─── Agent Brief Card ─────────────────────────────────────────────────────────
 
 function extractAgentName(text: string): string | null {
-  const match = text.match(/(?:brief|use|ask|agent[:\s]+)\s+([A-Z][a-z]+ (?:[A-Z][a-z]+ )?[A-Z][a-z]+)/i)
-  return match?.[1] ?? null
+  // Match patterns like:
+  // "I'll brief Report Builder Bob"
+  // "Agent: HR Officer Jenny"
+  // "briefing HR Officer Jenny"
+  // "use Report Builder Bob"
+  // "sending to Finance Analyst"
+  // **Agent Name** in markdown bold
+  const patterns = [
+    /(?:brief|briefing|use|ask|sending to|agent[:\s]+)\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)/,
+    /\*\*([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)\*\*/,
+  ]
+  for (const pattern of patterns) {
+    const match = text.match(pattern)
+    if (match?.[1] && match[1].length > 2) return match[1]
+  }
+  return null
 }
 
 function AgentBriefCard({

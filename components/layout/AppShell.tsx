@@ -489,15 +489,21 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
           </nav>
 
           {/* Assistant button — pinned to sidebar bottom */}
-          {(!collapsed || mobile) && (
-            <div className="px-3 pb-2">
+          <div className="px-3 pb-2">
+            {collapsed && !mobile ? (
+              <AssistantButton
+                sidebarMode
+                collapsed
+                groupId={activeGroup.id}
+              />
+            ) : (
               <AssistantButton
                 sidebarMode
                 groupId={activeGroup.id}
                 onOpen={() => { if (mobile) setMobileOpen(false) }}
               />
-            </div>
-          )}
+            )}
+          </div>
 
           {!mobile && mounted && (
             <div className="border-t border-white/10 p-2">

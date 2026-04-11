@@ -42,7 +42,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
   const [email,    setEmail]    = useState(user?.email ?? '')
   const [password, setPassword] = useState('')
   const [groupId,  setGroupId]  = useState(user?.group_id ?? '')
-  const [role,     setRole]     = useState(user?.role ?? 'company_viewer')
+  const [role,     setRole]     = useState(user?.role ?? 'viewer')
 
   // All groups list (for selectors)
   const [groups,   setGroups]   = useState<Group[]>([])
@@ -55,7 +55,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
   )
   const [showAddGroup, setShowAddGroup] = useState(false)
   const [addGroupId,   setAddGroupId]   = useState('')
-  const [addRole,      setAddRole]      = useState('company_viewer')
+  const [addRole,      setAddRole]      = useState('viewer')
   const [addingGroup,  setAddingGroup]  = useState(false)
   const [updatingMembership, setUpdatingMembership] = useState<string | null>(null)
 
@@ -205,7 +205,7 @@ export default function UserFormModal({ user, onClose, onSaved }: UserFormModalP
         })
         setShowAddGroup(false)
         setAddGroupId(availableGroups.filter(g => g.id !== addGroupId)[0]?.id ?? '')
-        setAddRole('company_viewer')
+        setAddRole('viewer')
         void loadMemberships()
       }
     } catch {

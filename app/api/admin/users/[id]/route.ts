@@ -62,7 +62,7 @@ export async function PATCH(
     const { error: upsertErr } = await admin.from('user_groups').upsert({
       user_id:  userId,
       group_id: group_id ?? '',
-      role:     role ?? 'company_viewer',
+      role:     role ?? 'viewer',
     }, { onConflict: 'user_id,group_id' })
     if (upsertErr) return NextResponse.json({ error: upsertErr.message }, { status: 500 })
   }

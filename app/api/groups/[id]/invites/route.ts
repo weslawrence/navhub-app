@@ -16,7 +16,7 @@ function getResend() {
 // Body: { email: string, role: string }
 
 const ADMIN_ROLES     = ['super_admin', 'group_admin']
-const INVITABLE_ROLES = ['group_admin', 'company_viewer', 'division_viewer']
+const INVITABLE_ROLES = ['group_admin', 'manager', 'viewer']
 
 export async function GET(
   _request: Request,

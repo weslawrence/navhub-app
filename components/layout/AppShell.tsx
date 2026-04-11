@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import pkg from '@/package.json'
 import { useTheme } from 'next-themes'
 import {
   LayoutDashboard,
@@ -624,6 +625,11 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign out
               </DropdownMenuItem>
+              <div className="px-3 py-2 border-t border-border">
+                <p className="text-[11px] text-muted-foreground text-center">
+                  NavHub v{pkg.version}{process.env.NEXT_PUBLIC_BUILD_HASH ? ` · ${process.env.NEXT_PUBLIC_BUILD_HASH}` : ''}
+                </p>
+              </div>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

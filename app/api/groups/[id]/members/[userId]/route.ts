@@ -13,7 +13,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 // Cannot remove the last super_admin.
 
 const ADMIN_ROLES   = ['super_admin', 'group_admin']
-const ALLOWED_ROLES = ['super_admin', 'group_admin', 'company_viewer', 'division_viewer']
+const ALLOWED_ROLES = ['super_admin', 'group_admin', 'manager', 'viewer']
 
 type Params = { params: { id: string; userId: string } }
 

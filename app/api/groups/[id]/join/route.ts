@@ -2,7 +2,7 @@ import { NextResponse }      from 'next/server'
 import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-const VALID_ROLES = ['super_admin', 'group_admin', 'company_viewer', 'division_viewer']
+const VALID_ROLES = ['super_admin', 'group_admin', 'manager', 'viewer']
 
 // ─── POST /api/groups/[id]/join ───────────────────────────────────────────────
 // Called from /auth/accept-invite after the user has set their password.
@@ -25,7 +25,7 @@ export async function POST(
   try { body = await request.json() }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
-  const role = typeof body.role === 'string' ? body.role : 'company_viewer'
+  const role = typeof body.role === 'string' ? body.role : 'viewer'
   if (!VALID_ROLES.includes(role)) {
     return NextResponse.json({ error: 'Invalid role' }, { status: 422 })
   }

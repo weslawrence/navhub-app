@@ -1010,6 +1010,7 @@ export interface ListDocumentsParams {
   document_type?: string
   company_id?:    string
   folder_id?:     string
+  folder_type?:   string
 }
 
 export interface ReadDocumentParams {
@@ -1052,6 +1053,21 @@ export async function listDocuments(
   if (params.document_type) query = query.eq('document_type', params.document_type)
   if (params.company_id)    query = query.eq('company_id', params.company_id)
   if (params.folder_id)     query = query.eq('folder_id', params.folder_id)
+
+  // Filter by folder_type (e.g. 'templates')
+  if (params.folder_type) {
+    const { data: matchingFolders } = await admin
+      .from('document_folders')
+      .select('id')
+      .eq('group_id', context.groupId)
+      .eq('folder_type', params.folder_type)
+    const folderIds = (matchingFolders ?? []).map((f: { id: string }) => f.id)
+    if (folderIds.length > 0) {
+      query = query.in('folder_id', folderIds)
+    } else {
+      return JSON.stringify({ success: true, data: [], count: 0 })
+    }
+  }
 
   const { data, error } = await query
   if (error) return `Error listing documents: ${error.message}`

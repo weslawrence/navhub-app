@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
   History, RotateCcw, Share2, Download, Cloud, Loader2 as SyncLoader,
-  FileText, ImageIcon, Sparkles, ExternalLink,
+  FileText, ImageIcon, Sparkles, ExternalLink, Plus, Tag,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -194,6 +194,17 @@ export default function DocumentPage() {
   const [extracting,    setExtracting]    = useState(false)
   const [extractError,  setExtractError]  = useState<string | null>(null)
 
+  // File viewer state
+  const [fileUrl,       setFileUrl]       = useState<string | null>(null)
+  const [fileLoading,   setFileLoading]   = useState(false)
+  const [fileText,      setFileText]      = useState<string | null>(null)
+
+  // Tag editing state
+  const [editingTags,   setEditingTags]   = useState(false)
+  const [draftTags,     setDraftTags]     = useState<string[]>([])
+  const [tagInput,      setTagInput]      = useState('')
+  const [savingTags,    setSavingTags]    = useState(false)
+
   // Lock keepalive interval
   const keepaliveRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const editingRef   = useRef(false)
@@ -223,6 +234,29 @@ export default function DocumentPage() {
   }, [docId])
 
   useEffect(() => { void loadDoc() }, [loadDoc])
+
+  // Load signed URL for uploaded files
+  useEffect(() => {
+    if (!doc || doc.upload_source !== 'uploaded' || !doc.file_path) return
+    setFileLoading(true)
+    fetch(`/api/documents/${docId}/file-url`)
+      .then(r => r.json())
+      .then((j: { data?: { url: string } }) => {
+        if (j.data?.url) {
+          setFileUrl(j.data.url)
+          // For text files, also fetch the raw content
+          const ft = doc.file_type ?? ''
+          if (ft === 'text/plain' || ft === 'text/markdown' || ft === 'text/csv') {
+            fetch(j.data.url)
+              .then(r => r.text())
+              .then(t => setFileText(t))
+              .catch(() => {})
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setFileLoading(false))
+  }, [doc, docId])
 
   // Auto-enter edit mode if ?edit=1
   useEffect(() => {
@@ -366,6 +400,53 @@ export default function DocumentPage() {
     void loadVersions()
   }
 
+  async function handleSaveTags() {
+    setSavingTags(true)
+    try {
+      const res = await fetch(`/api/documents/${docId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ tags: draftTags }),
+      })
+      if (res.ok) {
+        const json = await res.json()
+        setDoc(json.data)
+        setEditingTags(false)
+      }
+    } finally {
+      setSavingTags(false)
+    }
+  }
+
+  function handleAddTag() {
+    const tag = tagInput.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').trim()
+    if (!tag || draftTags.includes(tag)) return
+    setDraftTags(prev => [...prev, tag])
+    setTagInput('')
+  }
+
+  function handleRemoveTag(tag: string) {
+    setDraftTags(prev => prev.filter(t => t !== tag))
+  }
+
+  // Helper to determine file viewer type
+  function getViewerType(fileType: string | null): 'pdf' | 'image' | 'office' | 'html' | 'text' | 'unknown' {
+    if (!fileType) return 'unknown'
+    if (fileType === 'application/pdf') return 'pdf'
+    if (fileType.startsWith('image/')) return 'image'
+    if (fileType === 'text/html') return 'html'
+    if (fileType === 'text/plain' || fileType === 'text/markdown' || fileType === 'text/csv') return 'text'
+    if (
+      fileType.includes('wordprocessingml') ||
+      fileType.includes('spreadsheetml') ||
+      fileType.includes('presentationml') ||
+      fileType.includes('msword') ||
+      fileType.includes('ms-excel') ||
+      fileType.includes('ms-powerpoint')
+    ) return 'office'
+    return 'unknown'
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center min-h-[40vh] text-sm text-muted-foreground">Loading…</div>
   }
@@ -452,6 +533,15 @@ export default function DocumentPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+              {fileUrl && (
+                <Button
+                  size="sm" variant="outline"
+                  onClick={() => window.open(fileUrl, '_blank')}
+                  className="gap-1.5"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> Open in tab
+                </Button>
+              )}
               <Button
                 size="sm" variant="outline"
                 onClick={() => setShowShare(s => !s)}
@@ -546,7 +636,57 @@ export default function DocumentPage() {
             </>
           ) : (
             <div className="p-8 max-w-4xl space-y-6">
-              {/* Uploaded file info card */}
+              {/* Tags section */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Tag className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                {editingTags ? (
+                  <>
+                    {draftTags.map(tag => (
+                      <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                        {tag}
+                        <button onClick={() => handleRemoveTag(tag)} className="hover:text-destructive">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      value={tagInput}
+                      onChange={e => setTagInput(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddTag() } }}
+                      placeholder="Add tag…"
+                      className="h-6 w-24 rounded-md border border-input bg-transparent px-2 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    />
+                    <Button size="sm" className="h-6 text-xs px-2" onClick={() => void handleSaveTags()} disabled={savingTags}>
+                      {savingTags ? '…' : 'Save'}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-6 text-xs px-2" onClick={() => setEditingTags(false)}>
+                      Cancel
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {doc.tags?.length ? (
+                      doc.tags.map(tag => (
+                        <span key={tag} className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground">
+                          {tag}
+                        </span>
+                      ))
+                    ) : (
+                      <span className="text-xs text-muted-foreground">No tags</span>
+                    )}
+                    {isAdmin && (
+                      <button
+                        onClick={() => { setDraftTags(doc.tags ?? []); setEditingTags(true) }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Edit tags
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* Uploaded file info + viewer card */}
               {doc.upload_source === 'uploaded' && doc.file_path && (
                 <div className="rounded-xl border bg-muted/30 p-4 space-y-3">
                   <div className="flex items-center gap-3">
@@ -563,26 +703,76 @@ export default function DocumentPage() {
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={async () => {
-                          const res  = await fetch(`/api/documents/${docId}/file-url`)
-                          const json = await res.json() as { data?: { url: string } }
-                          if (json.data?.url) window.open(json.data.url, '_blank')
-                        }}
-                        className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
-                      >
-                        <ExternalLink className="h-3.5 w-3.5" />
-                        {doc.file_type?.startsWith('image/') || doc.file_type === 'application/pdf'
-                          ? 'Preview'
-                          : 'Download'}
-                      </button>
+                      {fileUrl && (
+                        <button
+                          onClick={() => window.open(fileUrl, '_blank')}
+                          className="inline-flex items-center gap-1.5 text-xs text-primary hover:underline"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          Open in tab
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  {/* Image inline preview */}
-                  {doc.file_type?.startsWith('image/') && (
-                    <ImagePreview docId={docId} />
+                  {/* Inline file viewer */}
+                  {fileLoading && (
+                    <div className="flex items-center gap-2 py-8 justify-center text-sm text-muted-foreground">
+                      <SyncLoader className="h-4 w-4 animate-spin" /> Loading file…
+                    </div>
                   )}
+                  {!fileLoading && fileUrl && (() => {
+                    const viewerType = getViewerType(doc.file_type ?? null)
+                    if (viewerType === 'pdf') {
+                      return (
+                        <iframe
+                          src={fileUrl}
+                          className="w-full rounded-lg border"
+                          style={{ height: '70vh' }}
+                          title={doc.file_name ?? 'PDF viewer'}
+                        />
+                      )
+                    }
+                    if (viewerType === 'image') {
+                      return (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={fileUrl}
+                          alt={doc.file_name ?? 'Uploaded image'}
+                          className="max-w-full rounded-lg border"
+                        />
+                      )
+                    }
+                    if (viewerType === 'html') {
+                      return (
+                        <iframe
+                          src={fileUrl}
+                          className="w-full rounded-lg border"
+                          style={{ height: '70vh' }}
+                          sandbox="allow-scripts allow-same-origin"
+                          title={doc.file_name ?? 'HTML viewer'}
+                        />
+                      )
+                    }
+                    if (viewerType === 'text' && fileText) {
+                      return (
+                        <pre className="w-full p-4 rounded-lg border bg-muted text-sm overflow-auto" style={{ maxHeight: '70vh' }}>
+                          {fileText}
+                        </pre>
+                      )
+                    }
+                    if (viewerType === 'office') {
+                      return (
+                        <iframe
+                          src={`https://docs.google.com/viewer?url=${encodeURIComponent(fileUrl)}&embedded=true`}
+                          className="w-full rounded-lg border"
+                          style={{ height: '70vh' }}
+                          title={doc.file_name ?? 'Document viewer'}
+                        />
+                      )
+                    }
+                    return null
+                  })()}
 
                   {/* Extract text button */}
                   {!doc.content_markdown && (

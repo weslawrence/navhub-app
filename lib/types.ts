@@ -2,7 +2,44 @@
 // Enums / unions
 // ============================================================
 
-export type UserRole = 'super_admin' | 'group_admin' | 'company_viewer' | 'division_viewer'
+export type UserRole = 'super_admin' | 'group_admin' | 'manager' | 'viewer'
+
+// ── Role & Permission types (migration 031) ──
+export type AppRole     = 'super_admin' | 'group_admin' | 'manager' | 'viewer'
+export type FeatureKey  = 'financials' | 'reports' | 'documents' | 'marketing' | 'agents' | 'settings'
+export type AccessLevel = 'none' | 'view' | 'edit'
+
+export const FEATURE_KEYS: FeatureKey[] = ['financials', 'reports', 'documents', 'marketing', 'agents', 'settings']
+
+export const FEATURE_LABELS: Record<FeatureKey, string> = {
+  financials: 'Financials',
+  reports:    'Reports & Templates',
+  documents:  'Documents',
+  marketing:  'Marketing',
+  agents:     'Agents',
+  settings:   'Settings',
+}
+
+export const FEATURE_DESCRIPTIONS: Record<FeatureKey, string> = {
+  financials: 'Dashboard, P&L, Balance Sheet, Cash Flow, Forecasting',
+  reports:    'Custom Reports and Report Templates',
+  documents:  'Document management, uploads and sharing',
+  marketing:  'Marketing intelligence and analytics',
+  agents:     'AI agents, runs and scheduling',
+  settings:   'Group settings, integrations, members',
+}
+
+export const ROLE_LABELS: Record<AppRole, string> = {
+  super_admin: 'Super Admin',
+  group_admin: 'Group Admin',
+  manager:     'Manager',
+  viewer:      'Viewer',
+}
+
+// Permission lookup: feature → company_id → access level
+// key 'default' = null company_id (group-level default)
+// key = company uuid = company-specific override
+export type PermissionMatrix = Record<FeatureKey, Record<string, AccessLevel>>
 export type ReportType = 'profit_loss' | 'balance_sheet' | 'cashflow'
 export type DataSource = 'xero' | 'excel'
 export type UploadStatus = 'processing' | 'complete' | 'error' | 'processed'
@@ -312,6 +349,9 @@ export interface Agent {
   email_recipients:      string[] | null
   slack_channel:         string | null
   is_active:             boolean
+  // Migration 031 — visibility + creator
+  visibility:            'private' | 'public'
+  created_by:            string | null
   // Phase WS3 — personality + scheduling
   communication_style:   'formal' | 'balanced' | 'casual'
   response_length:       'concise' | 'balanced' | 'detailed'
@@ -319,6 +359,9 @@ export interface Agent {
   schedule_config:       Record<string, unknown> | null
   last_scheduled_run_at: string | null
   next_scheduled_run_at: string | null
+  // Knowledge base (migration 030)
+  knowledge_text:        string | null
+  knowledge_links:       Array<{ url: string; label?: string }>
   created_at:            string
   updated_at:            string
 }
@@ -627,11 +670,23 @@ export type DocumentAudience =
   | 'external'
 
 export interface DocumentFolder {
-  id:         string
-  group_id:   string
-  name:       string
-  created_by: string | null
-  created_at: string
+  id:          string
+  group_id:    string
+  name:        string
+  is_system:   boolean
+  folder_type: 'general' | 'templates'
+  created_by:  string | null
+  created_at:  string
+}
+
+export interface AgentKnowledgeDocument {
+  id:          string
+  agent_id:    string
+  document_id: string | null
+  file_path:   string | null
+  file_name:   string
+  file_type:   string | null
+  created_at:  string
 }
 
 export interface Document {
@@ -653,6 +708,7 @@ export interface Document {
   created_by:             string | null
   created_at:             string
   updated_at:             string
+  tags:                   string[]
   // Document upload fields (migration 027)
   upload_source:          'created' | 'uploaded' | 'agent'
   file_path:              string | null

@@ -215,13 +215,14 @@ const ALL_TOOL_DEFS: Record<string, object> = {
   },
   list_documents: {
     name:        'list_documents',
-    description: 'List documents in the NavHub Documents section for the current group.',
+    description: 'List documents. Use folder_type: "templates" to find template documents that can be used as structural guides.',
     input_schema: {
       type: 'object',
       properties: {
         document_type: { type: 'string', description: 'Optional filter by document type.' },
         company_id:    { type: 'string', description: 'Optional filter by company UUID.' },
         folder_id:     { type: 'string', description: 'Optional filter by folder UUID.' },
+        folder_type:   { type: 'string', enum: ['general', 'templates'], description: 'Optional filter by folder type. Use "templates" to find template documents.' },
       },
     },
   },
@@ -482,6 +483,55 @@ async function buildSystemPrompt(
     ? 'Provide thorough, detailed responses with full context, reasoning, and explanation.'
     : '' // balanced = no special instruction
 
+  // ── Knowledge base injection ───────────────────────────────────────────
+  const knowledgeParts: string[] = []
+
+  if (agent.knowledge_text) {
+    knowledgeParts.push(`\nBackground Knowledge:\n${agent.knowledge_text}`)
+  }
+
+  const kLinks = (agent.knowledge_links ?? []) as Array<{ url: string; label?: string }>
+  if (kLinks.length > 0) {
+    const linkLines = kLinks.map(l => `- ${l.label ?? l.url}: ${l.url}`).join('\n')
+    knowledgeParts.push(`\nReference Links:\n${linkLines}`)
+  }
+
+  // Knowledge documents — fetch and include content summaries
+  if (agent.id) {
+    try {
+      const { data: kDocs } = await admin
+        .from('agent_knowledge_documents')
+        .select('file_name, document_id')
+        .eq('agent_id', agent.id)
+
+      if (kDocs && kDocs.length > 0) {
+        const docIds = kDocs
+          .map((kd: { document_id: string | null }) => kd.document_id)
+          .filter((id: string | null): id is string => !!id)
+
+        let docContents: Record<string, string> = {}
+        if (docIds.length > 0) {
+          const { data: docs } = await admin
+            .from('documents')
+            .select('id, content_markdown')
+            .in('id', docIds)
+          if (docs) {
+            docContents = docs.reduce((acc: Record<string, string>, d: { id: string; content_markdown: string | null }) => {
+              if (d.content_markdown) acc[d.id] = d.content_markdown
+              return acc
+            }, {} as Record<string, string>)
+          }
+        }
+
+        const docSummaries = kDocs.map((kd: { file_name: string; document_id: string | null }) => {
+          const content = kd.document_id ? docContents[kd.document_id] : null
+          return `- ${kd.file_name}: ${content ? content.slice(0, 500) + '...' : '(no extracted content)'}`
+        }).join('\n')
+        knowledgeParts.push(`\nKnowledge Documents:\n${docSummaries}`)
+      }
+    } catch { /* ignore knowledge doc fetch errors */ }
+  }
+
   return [
     `You are ${agent.name}, an AI agent for ${groupName}.`,
     personaText ? `\n${personaText}` : '',
@@ -496,6 +546,7 @@ async function buildSystemPrompt(
     context.period ? `* Current period: ${context.period}` : '',
     '\nAvailable data:',
     `* Financial periods available: ${periodList}`,
+    ...knowledgeParts,
     context.extra_instructions ? `\nAdditional instructions: ${context.extra_instructions}` : '',
     attachments && attachments.length > 0
       ? `\nAttached files for this run:\n${attachments.map(a => `• ${a.file_name} (${a.file_type})`).join('\n')}\nUse the read_attachment tool to read the content of any attached file before referencing it.`

@@ -30,9 +30,9 @@ interface UserFormModalProps {
 }
 
 const ROLES = [
-  { value: 'group_admin',      label: 'Group Admin' },
-  { value: 'company_viewer',   label: 'Company Viewer' },
-  { value: 'division_viewer',  label: 'Division Viewer' },
+  { value: 'group_admin', label: 'Group Admin',  description: 'Full access to all group features' },
+  { value: 'manager',     label: 'Manager',       description: 'Access controlled by permissions matrix' },
+  { value: 'viewer',      label: 'Viewer',        description: 'Access controlled by permissions matrix' },
 ]
 
 export default function UserFormModal({ user, onClose, onSaved }: UserFormModalProps) {

@@ -140,5 +140,13 @@ export async function POST(request: Request) {
     is_default: isFirstGroup,
   })
 
+  // Auto-create Templates folder
+  void admin.from('document_folders').insert({
+    group_id:    group.id,
+    name:        'Templates',
+    is_system:   true,
+    folder_type: 'templates',
+  })
+
   return NextResponse.json({ data: group }, { status: 201 })
 }

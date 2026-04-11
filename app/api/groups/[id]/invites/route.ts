@@ -5,7 +5,9 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import type { GroupInvite }  from '@/lib/types'
 import { Resend }            from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+function getResend() {
+  return new Resend(process.env.RESEND_API_KEY)
+}
 
 // ─── GET/POST /api/groups/[id]/invites ────────────────────────────────────────
 // POST sends an email:
@@ -140,7 +142,7 @@ export async function POST(
     }
 
     // Also send a Resend notification so the invitee knows which group they're joining
-    void resend.emails.send({
+    void getResend().emails.send({
       from:    `NavHub <invites@${fromDomain}>`,
       to:      email,
       subject: `You've been invited to join ${groupName} on NavHub`,
@@ -190,7 +192,7 @@ export async function POST(
       .eq('id', invite.id)
 
     // Notification email
-    void resend.emails.send({
+    void getResend().emails.send({
       from:    `NavHub <invites@${fromDomain}>`,
       to:      email,
       subject: `You've been added to ${groupName} on NavHub`,

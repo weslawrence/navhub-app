@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   Plus, FolderOpen, FileText, Sparkles, Lock, Share2, MoreHorizontal,
   Folder, Trash2, MoveRight, Search, SlidersHorizontal, Upload,
+  LayoutTemplate, Tag, ChevronDown,
 } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { cn }       from '@/lib/utils'
@@ -210,6 +211,11 @@ export default function DocumentsPage() {
   const [filterCompany, setFilterCompany] = useState('')
   const [search,        setSearch]        = useState('')
 
+  // Tag filter state
+  const [allTags,       setAllTags]       = useState<string[]>([])
+  const [selectedTags,  setSelectedTags]  = useState<string[]>([])
+  const [tagDropOpen,   setTagDropOpen]   = useState(false)
+
   // New folder inline form
   const [newFolderName, setNewFolderName] = useState('')
   const [addingFolder,  setAddingFolder]  = useState(false)
@@ -218,20 +224,22 @@ export default function DocumentsPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [docsRes, foldersRes, companiesRes, roleRes] = await Promise.all([
+      const [docsRes, foldersRes, companiesRes, roleRes, tagsRes] = await Promise.all([
         fetch('/api/documents'),
         fetch('/api/documents/folders'),
         fetch('/api/companies'),
         fetch('/api/groups/active'),
+        fetch('/api/documents/tags'),
       ])
-      const [docsJson, foldersJson, companiesJson, roleJson] = await Promise.all([
-        docsRes.json(), foldersRes.json(), companiesRes.json(), roleRes.json(),
+      const [docsJson, foldersJson, companiesJson, roleJson, tagsJson] = await Promise.all([
+        docsRes.json(), foldersRes.json(), companiesRes.json(), roleRes.json(), tagsRes.json(),
       ])
       setDocuments(docsJson.data ?? [])
       setFolders(foldersJson.data ?? [])
       setCompanies((companiesJson.data ?? []).filter((c: Company) => c.is_active))
       const role = roleJson.data?.role as string | undefined
       setIsAdmin(role === 'super_admin' || role === 'group_admin')
+      setAllTags(tagsJson.data ?? [])
     } finally {
       setLoading(false)
     }
@@ -310,7 +318,12 @@ export default function DocumentsPage() {
     if (filterCompany && doc.company_id    !== filterCompany) return false
     if (search) {
       const q = search.toLowerCase()
-      if (!doc.title.toLowerCase().includes(q)) return false
+      const tags = doc.tags ?? []
+      if (!doc.title.toLowerCase().includes(q) && !tags.some(t => t.includes(q))) return false
+    }
+    if (selectedTags.length > 0) {
+      const docTags = doc.tags ?? []
+      if (!selectedTags.every(t => docTags.includes(t))) return false
     }
     return true
   })
@@ -355,8 +368,24 @@ export default function DocumentsPage() {
           <span className="text-xs text-muted-foreground">{countUnfiled}</span>
         </button>
 
-        {/* Named folders */}
-        {folders.map(f => (
+        {/* Templates folder — pinned at top */}
+        {folders.filter(f => f.folder_type === 'templates').map(f => (
+          <button
+            key={f.id}
+            onClick={() => setActiveFolder(f.id)}
+            className={cn(
+              'flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+              activeFolder === f.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            )}
+          >
+            <LayoutTemplate className="h-4 w-4 shrink-0" />
+            <span className="flex-1 truncate">{f.name}</span>
+            <span className="text-xs text-muted-foreground">{folderCounts[f.id] ?? 0}</span>
+          </button>
+        ))}
+
+        {/* Regular folders */}
+        {folders.filter(f => f.folder_type !== 'templates').map(f => (
           <button
             key={f.id}
             onClick={() => setActiveFolder(f.id)}
@@ -435,6 +464,58 @@ export default function DocumentsPage() {
                 ))}
               </select>
             </div>
+
+            {/* Tag filter */}
+            {allTags.length > 0 && (
+              <div className="relative">
+                <button
+                  onClick={() => setTagDropOpen(o => !o)}
+                  className={cn(
+                    'h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground flex items-center gap-1',
+                    selectedTags.length > 0 && 'border-primary text-primary'
+                  )}
+                >
+                  <Tag className="h-3 w-3" />
+                  Tags
+                  {selectedTags.length > 0 && (
+                    <span className="ml-0.5 rounded-full bg-primary text-primary-foreground h-4 w-4 text-[10px] flex items-center justify-center">
+                      {selectedTags.length}
+                    </span>
+                  )}
+                  <ChevronDown className="h-3 w-3 ml-0.5" />
+                </button>
+                {tagDropOpen && (
+                  <>
+                    <div className="fixed inset-0 z-10" onClick={() => setTagDropOpen(false)} />
+                    <div className="absolute top-9 left-0 z-20 bg-background border rounded-lg shadow-lg py-1 w-44 max-h-48 overflow-y-auto">
+                      {allTags.map(tag => (
+                        <label key={tag} className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted cursor-pointer text-xs">
+                          <input
+                            type="checkbox"
+                            checked={selectedTags.includes(tag)}
+                            onChange={() => {
+                              setSelectedTags(prev =>
+                                prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+                              )
+                            }}
+                            className="rounded border-input"
+                          />
+                          {tag}
+                        </label>
+                      ))}
+                      {selectedTags.length > 0 && (
+                        <button
+                          onClick={() => { setSelectedTags([]); setTagDropOpen(false) }}
+                          className="w-full text-left px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground border-t"
+                        >
+                          Clear tag filters
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
 
             {/* Company filter */}
             {companies.length > 0 && (

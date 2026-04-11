@@ -18,7 +18,7 @@ function fmtDate(s: string | null) {
   return new Date(s).toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-const ROLES = ['all', 'super_admin', 'group_admin', 'company_viewer', 'division_viewer']
+const ROLES = ['all', 'super_admin', 'group_admin', 'manager', 'viewer']
 
 export default function AdminUsersPage() {
   const [users,       setUsers]       = useState<UserRow[]>([])
@@ -63,7 +63,7 @@ export default function AdminUsersPage() {
       id: u.id,
       email: u.email,
       group_id: first?.group_id ?? '',
-      role: first?.role ?? 'company_viewer',
+      role: first?.role ?? 'viewer',
       memberships: u.groups,
     })
     setShowModal(true)

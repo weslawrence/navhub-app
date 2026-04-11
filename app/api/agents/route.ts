@@ -17,12 +17,13 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
 
-  // RLS ensures user belongs to this group
+  // Filter: public agents + user's own private agents
   const { data: agents, error } = await supabase
     .from('agents')
     .select('*')
     .eq('group_id', activeGroupId)
     .eq('is_active', true)
+    .or(`visibility.eq.public,created_by.eq.${session.user.id}`)
     .order('created_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

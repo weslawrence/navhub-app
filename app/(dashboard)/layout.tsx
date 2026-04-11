@@ -5,10 +5,10 @@ import { createClient }           from '@/lib/supabase/server'
 import { createAdminClient }      from '@/lib/supabase/admin'
 import AppShell                   from '@/components/layout/AppShell'
 import ImpersonationBanner        from '@/components/admin/ImpersonationBanner'
-import AssistantButton            from '@/components/assistant/AssistantButton'
 import { getPalette, buildPaletteCSS } from '@/lib/themes'
 import { decrypt }                from '@/lib/encryption'
-import type { Group, UserGroup }  from '@/lib/types'
+import { getUserPermissions, getVisibleFeatures } from '@/lib/permissions'
+import type { Group, UserGroup, AppRole, FeatureKey } from '@/lib/types'
 
 export default async function DashboardLayout({
   children,
@@ -93,6 +93,11 @@ export default async function DashboardLayout({
     }
   }
 
+  // ── Permissions ─────────────────────────────────────────────────────────────
+  const userRole = (activeUserGroup.role ?? 'viewer') as AppRole
+  const permissions = await getUserPermissions(session.user.id, activeUserGroup.group_id, userRole)
+  const visibleFeatures: FeatureKey[] = getVisibleFeatures(permissions)
+
   return (
     <>
       {/*
@@ -114,14 +119,13 @@ export default async function DashboardLayout({
         user={{ id: session.user.id, email: session.user.email! }}
         groups={typedGroups}
         activeGroup={activeGroup}
+        visibleFeatures={visibleFeatures}
+        userRole={userRole}
         // Push content down when impersonation banner is visible
         topOffset={impersonatedGroupName ? 36 : 0}
       >
         {children}
       </AppShell>
-
-      {/* Floating AI Assistant */}
-      <AssistantButton groupId={activeGroup.id} />
     </>
   )
 }

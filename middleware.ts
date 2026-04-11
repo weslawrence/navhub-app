@@ -47,6 +47,7 @@ export async function middleware(request: NextRequest) {
     pathname === '/reset-password'              ||
     pathname === '/no-group'                    ||
     pathname === '/landing'                     ||
+    pathname === '/access-denied'               ||
     pathname.startsWith('/api/groups/switch')   ||
     pathname.startsWith('/accept-invite')       ||
     pathname.startsWith('/api/cron/')           ||
@@ -123,6 +124,47 @@ export async function middleware(request: NextRequest) {
       { error: 'Writes are disabled while impersonating a group. Exit impersonation first.' },
       { status: 403 }
     )
+  }
+
+  // ── Feature-level access enforcement ──────────────────────────────────────────
+  // Non-admin users must have a permission row for the feature matching this route.
+  const FEATURE_ROUTES = [
+    { prefix: '/cashflow',    feature: 'financials' },
+    { prefix: '/forecasting', feature: 'financials' },
+    { prefix: '/reports',     feature: 'reports'    },
+    { prefix: '/documents',   feature: 'documents'  },
+    { prefix: '/marketing',   feature: 'marketing'  },
+    { prefix: '/agents',      feature: 'agents'     },
+    { prefix: '/settings',    feature: 'settings'   },
+  ]
+
+  const matchedFeature = FEATURE_ROUTES.find(r => pathname.startsWith(r.prefix))
+  const activeGroupId = request.cookies.get('active_group_id')?.value
+
+  if (matchedFeature && activeGroupId && !isAdminRoute) {
+    const { data: roleRow } = await supabase
+      .from('user_groups')
+      .select('role')
+      .eq('user_id', session.user.id)
+      .eq('group_id', activeGroupId)
+      .single()
+
+    const role = roleRow?.role ?? 'viewer'
+    const adminRoles = ['super_admin', 'group_admin']
+    if (!adminRoles.includes(role)) {
+      const { data: perms } = await supabase
+        .from('user_permissions')
+        .select('access')
+        .eq('user_id', session.user.id)
+        .eq('group_id', activeGroupId)
+        .eq('feature', matchedFeature.feature)
+        .is('company_id', null)
+        .single()
+
+      if (!perms || perms.access === 'none') {
+        return NextResponse.redirect(new URL('/access-denied', request.url))
+      }
+    }
   }
 
   return response

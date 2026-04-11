@@ -22,6 +22,7 @@ import {
   Banknote,
   FileText,
   KeyRound,
+  Sparkles,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -486,6 +487,21 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
               <HelpMenu userEmail={user.email} />
             )}
           </nav>
+
+          {/* Launch Agent button — only shown when sidebar is expanded */}
+          {(!collapsed || mobile) && (
+            <div className="px-3 pb-2">
+              <Link
+                href="/agents"
+                onClick={() => setMobileOpen(false)}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium
+                           bg-white/5 hover:bg-white/10 text-white/80 hover:text-white transition-colors border border-white/10"
+              >
+                <Sparkles className="h-4 w-4 flex-shrink-0" style={{ color: 'var(--palette-primary)' }} />
+                <span>Launch Agent</span>
+              </Link>
+            </div>
+          )}
 
           {!mobile && mounted && (
             <div className="border-t border-white/10 p-2">

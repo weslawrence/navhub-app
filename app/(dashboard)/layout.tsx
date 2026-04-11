@@ -5,7 +5,6 @@ import { createClient }           from '@/lib/supabase/server'
 import { createAdminClient }      from '@/lib/supabase/admin'
 import AppShell                   from '@/components/layout/AppShell'
 import ImpersonationBanner        from '@/components/admin/ImpersonationBanner'
-import AssistantButton            from '@/components/assistant/AssistantButton'
 import { getPalette, buildPaletteCSS } from '@/lib/themes'
 import { decrypt }                from '@/lib/encryption'
 import type { Group, UserGroup }  from '@/lib/types'
@@ -119,9 +118,6 @@ export default async function DashboardLayout({
       >
         {children}
       </AppShell>
-
-      {/* Floating AI Assistant */}
-      <AssistantButton groupId={activeGroup.id} />
     </>
   )
 }

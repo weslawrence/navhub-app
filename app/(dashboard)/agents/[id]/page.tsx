@@ -233,19 +233,6 @@ export default function AgentDetailPage() {
     setKnowledgeLinks(prev => prev.filter((_, i) => i !== idx))
   }
 
-  async function handleAddKnowledgeDoc(documentId: string, title: string, docType: string) {
-    try {
-      const res = await fetch(`/api/agents/${agentId}/knowledge-documents`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ document_id: documentId, file_name: title, file_type: docType }),
-      })
-      if (res.ok) {
-        const json = (await res.json()) as { data: AgentKnowledgeDocument }
-        setKnowledgeDocs(prev => [json.data, ...prev])
-      }
-    } catch { /* ignore */ }
-  }
 
   async function handleRemoveKnowledgeDoc(id: string) {
     try {

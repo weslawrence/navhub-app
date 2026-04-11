@@ -8,7 +8,7 @@ import remarkGfm from 'remark-gfm'
 import {
   ArrowLeft, Edit3, Save, X, Lock, Eye, EyeOff,
   History, RotateCcw, Share2, Download, Cloud, Loader2 as SyncLoader,
-  FileText, ImageIcon, Sparkles, ExternalLink, Plus, Tag,
+  FileText, ImageIcon, Sparkles, ExternalLink, Tag,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -145,23 +145,6 @@ function SharePopover({ docId, isAdmin, onClose }: { docId: string; isAdmin: boo
         )}
       </div>
     </div>
-  )
-}
-
-// ─── Image Preview ──────────────────────────────────────────────────────────
-
-function ImagePreview({ docId }: { docId: string }) {
-  const [src, setSrc] = useState<string | null>(null)
-  useEffect(() => {
-    fetch(`/api/documents/${docId}/file-url`)
-      .then(r => r.json())
-      .then((j: { data?: { url: string } }) => { if (j.data?.url) setSrc(j.data.url) })
-      .catch(() => {})
-  }, [docId])
-  if (!src) return null
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img src={src} alt="Uploaded file" className="max-w-full rounded-lg border" style={{ maxHeight: 400 }} />
   )
 }
 

@@ -25,7 +25,6 @@ import {
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
-import AssistantButton from '@/components/assistant/AssistantButton'
 import {
   Tooltip,
   TooltipContent,

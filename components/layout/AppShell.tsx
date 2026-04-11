@@ -43,9 +43,11 @@ import {
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
 import { getPalette } from '@/lib/themes'
-import type { Group, UserGroup } from '@/lib/types'
+import type { Group, UserGroup, FeatureKey, AppRole } from '@/lib/types'
+import { ADMIN_ROLES } from '@/lib/permissions'
 import CreateGroupModal from '@/components/groups/CreateGroupModal'
 import HelpMenu        from '@/components/layout/HelpMenu'
+import AssistantButton from '@/components/assistant/AssistantButton'
 
 // ============================================================
 // Nav structure
@@ -72,29 +74,28 @@ const TOP_NAV = [
   { label: 'Dashboard', href: '/dashboard', Icon: LayoutDashboard },
 ] as const
 
-const BOTTOM_NAV = [
-  { label: 'Agents',   href: '/agents',   Icon: Bot      },
-  { label: 'Settings', href: '/settings', Icon: Settings  },
-] as const
+// Agents + Settings are now rendered via individual show() calls in the Sidebar
 
 // ============================================================
 // Props
 // ============================================================
 
 interface AppShellProps {
-  children:    React.ReactNode
-  user:        { id: string; email: string }
-  groups:      UserGroup[]
-  activeGroup: Group
+  children:         React.ReactNode
+  user:             { id: string; email: string }
+  groups:           UserGroup[]
+  activeGroup:      Group
+  visibleFeatures?: FeatureKey[]
+  userRole?:        AppRole
   /** Extra top offset in px (used when an overlay banner is present, e.g. impersonation) */
-  topOffset?:  number
+  topOffset?:       number
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export default function AppShell({ children, user, groups, activeGroup, topOffset = 0 }: AppShellProps) {
+export default function AppShell({ children, user, groups, activeGroup, visibleFeatures, userRole, topOffset = 0 }: AppShellProps) {
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
 
@@ -109,9 +110,12 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
   const marketingActive  = pathname.startsWith('/marketing')
 
   // Derive admin status from active group membership
-  const activeRole = groups.find(g => g.group_id === activeGroup.id)?.role
-  const isAdmin    = activeRole === 'super_admin' || activeRole === 'group_admin'
+  const activeRole = userRole ?? (groups.find(g => g.group_id === activeGroup.id)?.role as AppRole | undefined)
+  const isAdmin    = activeRole ? ADMIN_ROLES.includes(activeRole) : false
   const isSuperAdmin = activeRole === 'super_admin'
+
+  // Feature visibility — admins see everything; others see only permitted features
+  const show = (f: FeatureKey): boolean => isAdmin || (visibleFeatures ?? []).includes(f)
 
   // Apply full palette CSS vars on mount / group change
   useEffect(() => {
@@ -423,65 +427,69 @@ export default function AppShell({ children, user, groups, activeGroup, topOffse
           }}
         >
           <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-1">
+            {/* Dashboard — always visible */}
             {TOP_NAV.map(item => (
               <NavLink key={item.href} {...item} mobile={mobile} />
             ))}
-            <ReportsGroup   mobile={mobile} />
-            {/* Documents — flat nav item */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Link
-                  href="/documents"
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
-                    documentsActive
-                      ? 'bg-white/10 text-white'
-                      : 'text-white/60 hover:text-white hover:bg-white/10',
-                    collapsed && !mobile ? 'justify-center px-2' : 'px-2'
-                  )}
-                  style={
-                    documentsActive
-                      ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
-                      : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
-                  }
-                >
-                  <FileText className="h-5 w-5 shrink-0" />
-                  {(!collapsed || mobile) && <span>Documents</span>}
-                </Link>
-              </TooltipTrigger>
-              {collapsed && !mobile && <TooltipContent side="right">Documents</TooltipContent>}
-            </Tooltip>
-            {/* Marketing — flat nav item */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Link
-                  href="/marketing"
-                  onClick={() => setMobileOpen(false)}
-                  className={cn(
-                    'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
-                    marketingActive
-                      ? 'bg-white/10 text-white'
-                      : 'text-white/60 hover:text-white hover:bg-white/10',
-                    collapsed && !mobile ? 'justify-center px-2' : 'px-2'
-                  )}
-                  style={
-                    marketingActive
-                      ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
-                      : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
-                  }
-                >
-                  <BarChart2 className="h-5 w-5 shrink-0" />
-                  {(!collapsed || mobile) && <span>Marketing</span>}
-                </Link>
-              </TooltipTrigger>
-              {collapsed && !mobile && <TooltipContent side="right">Marketing</TooltipContent>}
-            </Tooltip>
-            <CashflowGroup  mobile={mobile} />
-            <ForecastGroup  mobile={mobile} />
-            {BOTTOM_NAV.map(item => (
-              <NavLink key={item.href} {...item} mobile={mobile} />
-            ))}
+            {show('reports') && <ReportsGroup mobile={mobile} />}
+            {/* Documents — conditional */}
+            {show('documents') && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link
+                    href="/documents"
+                    onClick={() => setMobileOpen(false)}
+                    className={cn(
+                      'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                      documentsActive
+                        ? 'bg-white/10 text-white'
+                        : 'text-white/60 hover:text-white hover:bg-white/10',
+                      collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+                    )}
+                    style={
+                      documentsActive
+                        ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
+                        : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
+                    }
+                  >
+                    <FileText className="h-5 w-5 shrink-0" />
+                    {(!collapsed || mobile) && <span>Documents</span>}
+                  </Link>
+                </TooltipTrigger>
+                {collapsed && !mobile && <TooltipContent side="right">Documents</TooltipContent>}
+              </Tooltip>
+            )}
+            {/* Marketing — conditional */}
+            {show('marketing') && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link
+                    href="/marketing"
+                    onClick={() => setMobileOpen(false)}
+                    className={cn(
+                      'flex items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors',
+                      marketingActive
+                        ? 'bg-white/10 text-white'
+                        : 'text-white/60 hover:text-white hover:bg-white/10',
+                      collapsed && !mobile ? 'justify-center px-2' : 'px-2'
+                    )}
+                    style={
+                      marketingActive
+                        ? { borderLeft: '3px solid var(--palette-primary)', paddingLeft: '5px' }
+                        : { borderLeft: '3px solid transparent', paddingLeft: '5px' }
+                    }
+                  >
+                    <BarChart2 className="h-5 w-5 shrink-0" />
+                    {(!collapsed || mobile) && <span>Marketing</span>}
+                  </Link>
+                </TooltipTrigger>
+                {collapsed && !mobile && <TooltipContent side="right">Marketing</TooltipContent>}
+              </Tooltip>
+            )}
+            {show('financials') && <CashflowGroup mobile={mobile} />}
+            {show('financials') && <ForecastGroup mobile={mobile} />}
+            {show('agents') && <NavLink href="/agents" label="Agents" Icon={Bot} mobile={mobile} />}
+            {show('settings') && <NavLink href="/settings" label="Settings" Icon={Settings} mobile={mobile} />}
             {/* Help menu — shown when expanded or mobile */}
             {(!collapsed || mobile) && (
               <HelpMenu userEmail={user.email} />

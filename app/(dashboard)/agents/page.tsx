@@ -99,14 +99,19 @@ export default function AgentsPage() {
     const activeAgents = agents.filter(a => a.is_active)
     if (activeAgents.length === 0) return
     setInitialBrief(decodeURIComponent(briefParam))
-    // Try to match agent by name if provided
-    let targetAgent = activeAgents[0]
+    // Try to match agent by name if provided — robust matching
+    let targetAgent: Agent | null = null
     if (agentNameParam) {
-      const decodedName = decodeURIComponent(agentNameParam).toLowerCase()
-      const match = activeAgents.find(a => a.name.toLowerCase().includes(decodedName))
-      if (match) targetAgent = match
+      const decoded = decodeURIComponent(agentNameParam).toLowerCase().trim()
+      targetAgent =
+        activeAgents.find(a => a.name.toLowerCase() === decoded) ??             // exact
+        activeAgents.find(a => a.name.toLowerCase().includes(decoded)) ??       // agent contains param
+        activeAgents.find(a => decoded.includes(a.name.toLowerCase())) ??       // param contains agent
+        null
     }
-    setRunTarget(targetAgent)
+    // If no match found — fall back to first agent only when no name was provided
+    if (!targetAgent) targetAgent = agentNameParam ? null : activeAgents[0]
+    if (targetAgent) setRunTarget(targetAgent)
     // Clear URL params without page reload
     window.history.replaceState({}, '', '/agents')
   }, [loading, briefParam, agentNameParam, agents]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -233,6 +238,11 @@ function AgentCard({
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <p className="text-sm font-semibold truncate">{agent.name}</p>
+              {agent.visibility === 'private' && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 shrink-0">
+                  Private
+                </Badge>
+              )}
               {isDisabled && (
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0 flex items-center gap-0.5">
                   <PowerOff className="h-2.5 w-2.5" /> Disabled

@@ -78,9 +78,17 @@ export async function PATCH(
     })
   }
 
+  // Sanitise tags if provided
+  if (Array.isArray(body.tags)) {
+    body.tags = (body.tags as string[])
+      .map((t: string) => String(t).toLowerCase().trim().slice(0, 40))
+      .filter((t: string) => t.length > 0)
+      .filter((v: string, i: number, a: string[]) => a.indexOf(v) === i)
+  }
+
   const allowedFields = [
     'title', 'document_type', 'audience', 'content_markdown',
-    'status', 'folder_id', 'company_id', 'locked_by', 'locked_at',
+    'status', 'folder_id', 'company_id', 'locked_by', 'locked_at', 'tags',
   ]
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
   for (const key of allowedFields) {

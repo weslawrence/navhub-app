@@ -272,6 +272,18 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
   const [userRole,     setUserRole]     = useState('member')
   const [contextReady, setContextReady] = useState(false)
 
+  // ── Mobile detection ──
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    function checkMobile() {
+      setIsMobile(window.innerWidth < 768)
+    }
+    checkMobile()
+    window.addEventListener('resize', checkMobile)
+    return () => window.removeEventListener('resize', checkMobile)
+  }, [])
+
   // ── Position & size ──
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
   const [size,     setSize]     = useState<{ width: number; height: number }>({ width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT })
@@ -305,11 +317,17 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const panelRef    = useRef<HTMLDivElement>(null)
 
-  // ── Load position/size from localStorage ──
+  // ── Load position/size from localStorage (clamped to current viewport) ──
   useEffect(() => {
     try {
       const savedPos = localStorage.getItem(STORAGE_KEY_POSITION)
-      if (savedPos) setPosition(JSON.parse(savedPos) as { x: number; y: number })
+      if (savedPos) {
+        const p = JSON.parse(savedPos) as { x: number; y: number }
+        setPosition({
+          x: Math.max(0, Math.min(window.innerWidth  - DEFAULT_WIDTH,  p.x)),
+          y: Math.max(0, Math.min(window.innerHeight - DEFAULT_HEIGHT, p.y)),
+        })
+      }
       const savedSize = localStorage.getItem(STORAGE_KEY_SIZE)
       if (savedSize) {
         const s = JSON.parse(savedSize) as { width: number; height: number }
@@ -320,6 +338,21 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
       }
     } catch { /* ignore */ }
   }, [])
+
+  // ── Clamp position on window resize (Fix 1) ──
+  useEffect(() => {
+    function handleResize() {
+      setPosition(pos => {
+        if (!pos) return pos
+        return {
+          x: Math.max(0, Math.min(window.innerWidth  - size.width,  pos.x)),
+          y: Math.max(0, Math.min(window.innerHeight - size.height, pos.y)),
+        }
+      })
+    }
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
+  }, [size])
 
   // ── loadConversation ──
   const loadConversation = useCallback(async (id: string) => {
@@ -413,7 +446,7 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     if (typeof window === 'undefined') return { x: 0, y: 0 }
     return {
       x: window.innerWidth  - size.width  - 24,
-      y: window.innerHeight - size.height - 24,
+      y: Math.max(80, window.innerHeight - size.height - 24),
     }
   }
 
@@ -421,9 +454,9 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     return position ?? getDefaultPosition()
   }
 
-  // ── Drag handlers (disabled when maximised) ──
+  // ── Drag handlers (disabled when maximised or mobile) ──
   function handleHeaderMouseDown(e: React.MouseEvent) {
-    if (maximised) return
+    if (maximised || isMobile) return
     if ((e.target as HTMLElement).closest('button')) return
     dragging.current = true
     const pos = resolvedPosition()
@@ -641,59 +674,92 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
     }
   }
 
-  // ── Panel style — normal vs maximised ──
+  // ── Panel style — mobile bottom sheet vs desktop floating/maximised ──
   const pos = resolvedPosition()
-  const panelStyle = maximised
+  const panelStyle: React.CSSProperties = isMobile
     ? {
-        position: 'fixed' as const,
-        left:     '5vw',
-        top:      '5vh',
-        width:    '90vw',
-        height:   '90vh',
+        position: 'fixed',
+        left:     0,
+        right:    0,
+        bottom:   0,
+        width:    '100%',
+        height:   '82vh',
+        borderRadius: '16px 16px 0 0',
+        zIndex:   50,
       }
-    : {
-        left:   pos.x,
-        top:    pos.y,
-        width:  size.width,
-        height: size.height,
-      }
+    : maximised
+      ? {
+          position: 'fixed',
+          left:     '5vw',
+          top:      '5vh',
+          width:    '90vw',
+          height:   '90vh',
+          zIndex:   50,
+        }
+      : {
+          left:   pos.x,
+          top:    pos.y,
+          width:  size.width,
+          height: size.height,
+        }
 
   return (
     <>
-      {/* Non-blocking backdrop — pointer events disabled so clicks pass through */}
+      {/* Non-blocking backdrop */}
       <div
-        className="fixed inset-0 z-40 bg-black/10"
-        style={{ pointerEvents: 'none' }}
+        className="fixed inset-0 z-40"
+        style={{
+          pointerEvents: isMobile ? 'auto' : 'none',
+          backgroundColor: isMobile ? 'rgba(0,0,0,0.2)' : 'rgba(0,0,0,0.1)',
+        }}
+        onClick={isMobile ? onClose : undefined}
       />
 
       {/* Panel */}
       <div
         ref={panelRef}
-        className="fixed z-50 bg-background border shadow-2xl flex flex-col rounded-xl overflow-hidden"
-        style={panelStyle}
+        className="fixed z-50 bg-background border shadow-2xl flex flex-col overflow-hidden"
+        style={{
+          ...panelStyle,
+          borderRadius: isMobile ? '16px 16px 0 0' : '0.75rem',
+        }}
       >
-        {/* ── Left resize handle (disabled when maximised) ── */}
-        {!maximised && (
+        {/* ── Left resize handle (desktop only, not maximised) ── */}
+        {!isMobile && !maximised && (
           <div
             onMouseDown={handleLeftResizeMouseDown}
             className="absolute left-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-primary/20 transition-colors"
           />
         )}
 
-        {/* ── Bottom resize handle (disabled when maximised) ── */}
-        {!maximised && (
+        {/* ── Bottom resize handle (desktop only, not maximised) ── */}
+        {!isMobile && !maximised && (
           <div
             onMouseDown={handleBottomResizeMouseDown}
             className="absolute left-0 right-0 bottom-0 h-1.5 cursor-ns-resize z-10 hover:bg-primary/20 transition-colors"
           />
         )}
 
-        {/* ── Header (drag target) ── */}
+        {/* ── Mobile drag handle bar ── */}
+        {isMobile && (
+          <div className="flex justify-center pt-2 pb-0 shrink-0">
+            <div
+              style={{
+                width:        40,
+                height:       4,
+                borderRadius: 2,
+                background:   'rgba(128,128,128,0.3)',
+              }}
+            />
+          </div>
+        )}
+
+        {/* ── Header (drag target on desktop) ── */}
         <div
           onMouseDown={handleHeaderMouseDown}
           className={cn(
             'flex items-center gap-1.5 px-4 py-3.5 border-b bg-background shrink-0 select-none',
-            !maximised && 'cursor-grab active:cursor-grabbing',
+            !isMobile && !maximised && 'cursor-grab active:cursor-grabbing',
           )}
         >
           <Sparkles className="h-4 w-4 text-primary shrink-0" />
@@ -724,18 +790,20 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
             <Plus className="h-4 w-4" />
           </Button>
 
-          {/* Maximise / restore */}
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 w-7 p-0 text-muted-foreground"
-            title={maximised ? 'Restore' : 'Maximise'}
-            onClick={() => setMaximised(m => !m)}
-          >
-            {maximised
-              ? <Minimize2 className="h-4 w-4" />
-              : <Maximize2 className="h-4 w-4" />}
-          </Button>
+          {/* Maximise / restore — hidden on mobile */}
+          {!isMobile && (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 w-7 p-0 text-muted-foreground"
+              title={maximised ? 'Restore' : 'Maximise'}
+              onClick={() => setMaximised(m => !m)}
+            >
+              {maximised
+                ? <Minimize2 className="h-4 w-4" />
+                : <Maximize2 className="h-4 w-4" />}
+            </Button>
+          )}
 
           {/* Close */}
           <Button

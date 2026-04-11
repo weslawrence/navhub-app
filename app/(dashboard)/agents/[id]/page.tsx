@@ -6,6 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Calendar, Sparkles, KeyRound, Loader2,
   Check, Clock, Eye, EyeOff, Trash2, Plus, Shield,
+  BookOpen, Link2, FileText, X, Globe, Lock,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -13,13 +14,13 @@ import { Input }     from '@/components/ui/input'
 import { Label }     from '@/components/ui/label'
 import { Badge }     from '@/components/ui/badge'
 import { cn }        from '@/lib/utils'
-import type { Agent, AgentCredential, ScheduledRunLog } from '@/lib/types'
+import type { Agent, AgentCredential, ScheduledRunLog, AgentKnowledgeDocument } from '@/lib/types'
 import { getNextRunTime, formatNextRun } from '@/lib/scheduling'
 import type { ScheduleConfig as LibScheduleConfig } from '@/lib/scheduling'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type Tab = 'Schedule' | 'Personality' | 'API Keys'
+type Tab = 'Knowledge' | 'Schedule' | 'Personality' | 'API Keys'
 
 interface ScheduleConfig {
   frequency:  'daily' | 'weekly' | 'monthly'
@@ -56,7 +57,7 @@ export default function AgentDetailPage() {
   const [agent,       setAgent]       = useState<Agent | null>(null)
   const [credentials, setCredentials] = useState<AgentCredential[]>([])
   const [loading,     setLoading]     = useState(true)
-  const [tab,         setTab]         = useState<Tab>('Schedule')
+  const [tab,         setTab]         = useState<Tab>('Knowledge')
   const [saving,      setSaving]      = useState(false)
   const [saved,       setSaved]       = useState(false)
   const [error,       setError]       = useState<string | null>(null)
@@ -76,6 +77,13 @@ export default function AgentDetailPage() {
 
   // Schedule logs state
   const [scheduledLogs, setScheduledLogs] = useState<ScheduledRunLog[]>([])
+
+  // Knowledge state
+  const [knowledgeText,   setKnowledgeText]   = useState('')
+  const [knowledgeLinks,  setKnowledgeLinks]  = useState<Array<{ url: string; label?: string }>>([])
+  const [knowledgeDocs,   setKnowledgeDocs]   = useState<AgentKnowledgeDocument[]>([])
+  const [newLinkUrl,      setNewLinkUrl]      = useState('')
+  const [newLinkLabel,    setNewLinkLabel]    = useState('')
 
   // API Keys state
   const [anthropicKey,  setAnthropicKey]  = useState('')
@@ -108,6 +116,10 @@ export default function AgentDetailPage() {
       setCommStyle((a.communication_style as 'formal' | 'balanced' | 'casual') ?? 'balanced')
       setRespLength((a.response_length as 'concise' | 'balanced' | 'detailed') ?? 'balanced')
 
+      // Hydrate knowledge state
+      setKnowledgeText(a.knowledge_text ?? '')
+      setKnowledgeLinks(a.knowledge_links ?? [])
+
       // Credentials
       if (credsRes.ok) {
         const credsData = (await credsRes.json()) as { data: AgentCredential[] }
@@ -123,6 +135,15 @@ export default function AgentDetailPage() {
         const logsData = (await logsRes.json()) as { data: ScheduledRunLog[] }
         setScheduledLogs(logsData.data ?? [])
       }
+
+      // Knowledge documents
+      try {
+        const kdRes = await fetch(`/api/agents/${agentId}/knowledge-documents`)
+        if (kdRes.ok) {
+          const kdJson = (await kdRes.json()) as { data: AgentKnowledgeDocument[] }
+          setKnowledgeDocs(kdJson.data ?? [])
+        }
+      } catch { /* ignore */ }
     } finally {
       setLoading(false)
     }
@@ -146,6 +167,8 @@ export default function AgentDetailPage() {
         const j = await res.json().catch(() => ({})) as { error?: string }
         throw new Error(j.error ?? 'Save failed')
       }
+      // Update local state so UI reflects changes immediately
+      setAgent(prev => prev ? { ...prev, ...updates } as Agent : prev)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {
@@ -188,6 +211,47 @@ export default function AgentDetailPage() {
       communication_style: commStyle,
       response_length:     respLength,
     })
+  }
+
+  // ── Knowledge save ────────────────────────────────────────────────────────
+
+  async function saveKnowledge() {
+    await patchAgent({
+      knowledge_text:  knowledgeText || null,
+      knowledge_links: knowledgeLinks,
+    })
+  }
+
+  function handleAddLink() {
+    if (!newLinkUrl.trim()) return
+    setKnowledgeLinks(prev => [...prev, { url: newLinkUrl.trim(), label: newLinkLabel.trim() || undefined }])
+    setNewLinkUrl('')
+    setNewLinkLabel('')
+  }
+
+  function handleRemoveLink(idx: number) {
+    setKnowledgeLinks(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function handleAddKnowledgeDoc(documentId: string, title: string, docType: string) {
+    try {
+      const res = await fetch(`/api/agents/${agentId}/knowledge-documents`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ document_id: documentId, file_name: title, file_type: docType }),
+      })
+      if (res.ok) {
+        const json = (await res.json()) as { data: AgentKnowledgeDocument }
+        setKnowledgeDocs(prev => [json.data, ...prev])
+      }
+    } catch { /* ignore */ }
+  }
+
+  async function handleRemoveKnowledgeDoc(id: string) {
+    try {
+      await fetch(`/api/agents/${agentId}/knowledge-documents?doc_id=${id}`, { method: 'DELETE' })
+      setKnowledgeDocs(prev => prev.filter(d => d.id !== id))
+    } catch { /* ignore */ }
   }
 
   // ── API Key operations ────────────────────────────────────────────────────
@@ -313,9 +377,10 @@ export default function AgentDetailPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const TABS: { id: Tab; icon: React.ElementType; label: string }[] = [
-    { id: 'Schedule',   icon: Calendar,  label: 'Schedule'   },
-    { id: 'Personality', icon: Sparkles, label: 'Personality' },
-    { id: 'API Keys',   icon: KeyRound,  label: 'API Keys'   },
+    { id: 'Knowledge',   icon: BookOpen,  label: 'Knowledge'   },
+    { id: 'Schedule',    icon: Calendar,  label: 'Schedule'    },
+    { id: 'Personality', icon: Sparkles,  label: 'Personality' },
+    { id: 'API Keys',   icon: KeyRound,  label: 'API Keys'    },
   ]
 
   return (
@@ -347,6 +412,40 @@ export default function AgentDetailPage() {
         </div>
       </div>
 
+      {/* Visibility toggle */}
+      <div className="flex items-center gap-3 rounded-lg border px-4 py-3">
+        <div className="flex-1">
+          <p className="text-sm font-medium text-foreground">Visibility</p>
+          <p className="text-xs text-muted-foreground">
+            {agent.visibility === 'public' ? 'Visible to all group members' : 'Only visible to you and admins'}
+          </p>
+        </div>
+        <div className="flex rounded-lg border border-border overflow-hidden">
+          <button
+            onClick={() => void patchAgent({ visibility: 'private' })}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors',
+              agent.visibility === 'private'
+                ? 'bg-muted text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Lock className="h-3 w-3" /> Private
+          </button>
+          <button
+            onClick={() => void patchAgent({ visibility: 'public' })}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l',
+              agent.visibility === 'public'
+                ? 'bg-muted text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Globe className="h-3 w-3" /> Public
+          </button>
+        </div>
+      </div>
+
       {/* Tab bar */}
       <div className="flex border-b border-border">
         {TABS.map(t => (
@@ -370,6 +469,128 @@ export default function AgentDetailPage() {
       {error && (
         <div className="rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 px-4 py-3 text-sm text-red-700 dark:text-red-400">
           {error}
+        </div>
+      )}
+
+      {/* ── Knowledge tab ────────────────────────────────────────────────── */}
+      {tab === 'Knowledge' && (
+        <div className="space-y-4">
+          {/* Background Knowledge */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Background Knowledge</CardTitle>
+              <CardDescription>
+                What should this agent know? Include context, background, specific instructions, or domain knowledge.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <textarea
+                value={knowledgeText}
+                onChange={e => setKnowledgeText(e.target.value)}
+                rows={6}
+                className="w-full resize-y rounded-md border border-input bg-transparent p-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                placeholder="E.g. Our financial year runs July–June. When analysing revenue, always include the division breakdown. Key contacts: CFO is Sarah Chen..."
+              />
+            </CardContent>
+          </Card>
+
+          {/* Reference Documents */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Reference Documents</CardTitle>
+              <CardDescription>
+                Link documents from your Documents library. The agent can read these during runs.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {knowledgeDocs.length > 0 ? (
+                <div className="divide-y divide-border rounded-md border overflow-hidden">
+                  {knowledgeDocs.map(kd => (
+                    <div key={kd.id} className="flex items-center gap-3 px-3 py-2 bg-background">
+                      <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{kd.file_name}</p>
+                        <p className="text-xs text-muted-foreground">{kd.file_type ?? 'document'}</p>
+                      </div>
+                      <button
+                        onClick={() => void handleRemoveKnowledgeDoc(kd.id)}
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No documents linked yet.</p>
+              )}
+              <p className="text-xs text-muted-foreground">
+                To add documents, link them from the{' '}
+                <Link href="/documents" className="text-primary hover:underline">Documents</Link> section
+                using the document ID.
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Reference Links */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Reference Links</CardTitle>
+              <CardDescription>
+                Add web links the agent should be aware of during runs.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {knowledgeLinks.length > 0 && (
+                <div className="divide-y divide-border rounded-md border overflow-hidden">
+                  {knowledgeLinks.map((link, idx) => (
+                    <div key={idx} className="flex items-center gap-3 px-3 py-2 bg-background">
+                      <Link2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm truncate">{link.label || link.url}</p>
+                        {link.label && <p className="text-xs text-muted-foreground truncate">{link.url}</p>}
+                      </div>
+                      <button
+                        onClick={() => handleRemoveLink(idx)}
+                        className="text-muted-foreground hover:text-destructive shrink-0"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Input
+                  value={newLinkUrl}
+                  onChange={e => setNewLinkUrl(e.target.value)}
+                  placeholder="https://…"
+                  className="flex-1 text-sm"
+                />
+                <Input
+                  value={newLinkLabel}
+                  onChange={e => setNewLinkLabel(e.target.value)}
+                  placeholder="Label (optional)"
+                  className="w-40 text-sm"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleAddLink}
+                  disabled={!newLinkUrl.trim()}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-end">
+            <Button onClick={saveKnowledge} disabled={saving} className="gap-2">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : saved ? <Check className="h-4 w-4" /> : null}
+              {saved ? 'Saved' : 'Save Knowledge'}
+            </Button>
+          </div>
         </div>
       )}
 

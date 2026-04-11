@@ -1,26 +1,31 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Users, ChevronDown, Check, Mail } from 'lucide-react'
+import { Users, ChevronDown, Check, Mail, Shield } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { Input }    from '@/components/ui/input'
 import { Badge }    from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { cn }       from '@/lib/utils'
-import type { GroupMember, GroupInvite } from '@/lib/types'
+import type { GroupMember, GroupInvite, AppRole } from '@/lib/types'
+import { ADMIN_ROLES } from '@/lib/permissions'
+import PermissionsModal from './PermissionsModal'
 
 const ROLE_OPTIONS = [
-  { value: 'super_admin',     label: 'Super Admin'    },
-  { value: 'group_admin',     label: 'Group Admin'    },
-  { value: 'company_viewer',  label: 'Company Viewer' },
-  { value: 'division_viewer', label: 'Division Viewer' },
+  { value: 'super_admin', label: 'Super Admin' },
+  { value: 'group_admin', label: 'Group Admin' },
+  { value: 'manager',     label: 'Manager'     },
+  { value: 'viewer',      label: 'Viewer'      },
 ]
 
 const ROLE_DISPLAY: Record<string, string> = {
-  super_admin:     'Super Admin',
-  group_admin:     'Group Admin',
-  company_viewer:  'Company Viewer',
-  division_viewer: 'Division Viewer',
+  super_admin: 'Super Admin',
+  group_admin: 'Group Admin',
+  manager:     'Manager',
+  viewer:      'Viewer',
+  // Legacy role labels for backwards compat display
+  company_viewer:  'Viewer',
+  division_viewer: 'Viewer',
 }
 
 interface MembersTabProps {
@@ -38,7 +43,9 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
   const [cancelConfirm,  setCancelConfirm]  = useState<string | null>(null)
   const [roleSaving,     setRoleSaving]     = useState<string | null>(null)
   const [inviteEmail,    setInviteEmail]    = useState('')
-  const [inviteRole,     setInviteRole]     = useState('company_viewer')
+  const [inviteRole,     setInviteRole]     = useState('viewer')
+  const [permTarget,     setPermTarget]     = useState<{ id: string; email: string; role: AppRole } | null>(null)
+  const [companies,      setCompanies]      = useState<{ id: string; name: string }[]>([])
   const [inviteSaving,   setInviteSaving]   = useState(false)
   const [inviteToast,    setInviteToast]    = useState<string | null>(null)
 
@@ -46,14 +53,17 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
     if (!groupId) return
     setLoading(true)
     try {
-      const [mRes, iRes] = await Promise.all([
+      const [mRes, iRes, cRes] = await Promise.all([
         fetch(`/api/groups/${groupId}/members`),
         fetch(`/api/groups/${groupId}/invites`),
+        fetch('/api/companies'),
       ])
       const mJson = await mRes.json()
       const iJson = await iRes.json()
+      const cJson = await cRes.json()
       if (mJson.data) setMembers(mJson.data)
       if (iJson.data) setInvites(iJson.data)
+      if (cJson.data) setCompanies((cJson.data as Array<{ id: string; name: string; is_active: boolean }>).filter(c => c.is_active).map(c => ({ id: c.id, name: c.name })))
     } catch (err) { console.error('Members load error:', err) } finally {
       setLoading(false)
     }
@@ -263,6 +273,18 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
                       </div>
                     )}
 
+                    {/* Manage access — only for non-admin members */}
+                    {!isYou && !ADMIN_ROLES.includes(member.role as AppRole) && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs gap-1 px-2"
+                        onClick={() => setPermTarget({ id: member.user_id, email: member.email, role: member.role as AppRole })}
+                      >
+                        <Shield className="h-3 w-3" /> Access
+                      </Button>
+                    )}
+
                     {/* Remove — disabled for self */}
                     {!isYou && (
                       deleteConfirm === member.user_id ? (
@@ -371,6 +393,18 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
         </CardContent>
       </Card>
 
+      {/* Permissions Modal */}
+      {permTarget && groupId && (
+        <PermissionsModal
+          userId={permTarget.id}
+          groupId={groupId}
+          email={permTarget.email}
+          role={permTarget.role}
+          companies={companies}
+          onSave={() => void loadMembers()}
+          onClose={() => setPermTarget(null)}
+        />
+      )}
     </div>
   )
 }

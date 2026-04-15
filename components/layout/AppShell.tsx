@@ -407,7 +407,7 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
               </DropdownMenuItem>
               <div className="px-3 py-2 border-t border-border">
                 <p className="text-[11px] text-muted-foreground text-center">
-                  NavHub v{pkg.version}{process.env.NEXT_PUBLIC_BUILD_HASH ? ` · ${process.env.NEXT_PUBLIC_BUILD_HASH}` : ''}
+                  NavHub v{pkg.version}.{process.env.NEXT_PUBLIC_BUILD_DATE ?? '0'}{process.env.NEXT_PUBLIC_BUILD_HASH ? ` · ${process.env.NEXT_PUBLIC_BUILD_HASH}` : ''}
                 </p>
               </div>
             </DropdownMenuContent>

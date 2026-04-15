@@ -5,13 +5,12 @@ import Link from 'next/link'
 import {
   Plus, FolderOpen, FileText, Sparkles, Lock, Share2, MoreHorizontal,
   Folder, Trash2, MoveRight, Search, SlidersHorizontal, Upload,
-  LayoutTemplate, Tag, ChevronDown, Cloud,
+  LayoutTemplate, Tag, ChevronDown, Cloud, Download, Pencil, Eye,
 } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { cn }       from '@/lib/utils'
 import {
   DOCUMENT_TYPE_LABELS,
-  DOCUMENT_AUDIENCE_LABELS,
   type Document,
   type DocumentFolder,
   type DocumentType,
@@ -19,6 +18,7 @@ import {
 } from '@/lib/types'
 import NewDocumentModal    from '@/components/documents/NewDocumentModal'
 import UploadDropzone      from '@/components/documents/UploadDropzone'
+import TagEditor           from '@/components/shared/TagEditor'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -39,18 +39,6 @@ function docTypeBadgeClass(t: DocumentType) {
   return `inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[t] ?? 'bg-muted text-muted-foreground'}`
 }
 
-function audienceBadgeClass(a: string) {
-  const map: Record<string, string> = {
-    board:      'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300',
-    management: 'bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400',
-    investor:   'bg-green-50 dark:bg-green-950 text-green-600 dark:text-green-400',
-    internal:   'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
-    hr:         'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400',
-    external:   'bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400',
-  }
-  return `inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[a] ?? 'bg-muted text-muted-foreground'}`
-}
-
 // ─── Document Card ───────────────────────────────────────────────────────────
 
 interface DocWithMeta extends Document { locked_by_email?: string | null }
@@ -61,9 +49,12 @@ function DocumentCard({
   onDelete,
   onMoveToFolder,
   onToggleStatus,
+  onRename,
+  onSaveTags,
   folders,
   isAdmin,
   spConnected,
+  allTags,
 }: {
   doc:             DocWithMeta
   companies:       Company[]
@@ -71,131 +62,138 @@ function DocumentCard({
   onDelete:        (id: string) => void
   onMoveToFolder:  (id: string, folderId: string | null) => void
   onToggleStatus:  (id: string, status: string) => void
+  onRename:        (id: string, title: string) => void
+  onSaveTags:      (id: string, tags: string[]) => Promise<void>
   isAdmin:         boolean
   spConnected:     boolean
+  allTags:         string[]
 }) {
-  const [menuOpen,   setMenuOpen]   = useState(false)
-  const [moveOpen,   setMoveOpen]   = useState(false)
+  const [menuOpen,    setMenuOpen]    = useState(false)
+  const [moveOpen,    setMoveOpen]    = useState(false)
+  const [editingTags, setEditingTags] = useState(false)
+  const [renaming,    setRenaming]    = useState(false)
+  const [renameVal,   setRenameVal]   = useState(doc.title)
 
   const company  = companies.find(c => c.id === doc.company_id)
   const lockName = doc.locked_by_email?.split('@')[0] ?? 'Someone'
   const isLocked = !!doc.locked_by
+  const docTags  = doc.tags ?? []
+
+  function handleRenameSubmit() {
+    if (renameVal.trim() && renameVal.trim() !== doc.title) {
+      onRename(doc.id, renameVal.trim())
+    }
+    setRenaming(false)
+  }
 
   return (
     <div className="relative group rounded-xl border bg-card hover:shadow-md transition-shadow flex flex-col">
-      <Link href={`/documents/${doc.id}`} className="flex-1 p-4 space-y-3">
+      <Link href={`/documents/${doc.id}`} className="flex-1 p-4 space-y-2.5">
         {/* Title row */}
         <div className="flex items-start gap-2">
           <FileText className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-          <h3 className="font-medium text-sm leading-snug line-clamp-2 text-foreground">{doc.title}</h3>
+          {renaming ? (
+            <input
+              autoFocus
+              value={renameVal}
+              onChange={e => setRenameVal(e.target.value)}
+              onBlur={handleRenameSubmit}
+              onKeyDown={e => { if (e.key === 'Enter') handleRenameSubmit(); if (e.key === 'Escape') setRenaming(false) }}
+              onClick={e => e.preventDefault()}
+              className="font-medium text-sm leading-snug text-foreground bg-transparent border-b border-primary outline-none w-full"
+            />
+          ) : (
+            <h3 className="font-medium text-sm leading-snug line-clamp-2 text-foreground">{doc.title}</h3>
+          )}
         </div>
 
-        {/* Badges */}
-        <div className="flex flex-wrap gap-1.5">
-          <span className={docTypeBadgeClass(doc.document_type)}>
-            {DOCUMENT_TYPE_LABELS[doc.document_type]}
-          </span>
-          <span className={audienceBadgeClass(doc.audience)}>
-            {DOCUMENT_AUDIENCE_LABELS[doc.audience]}
-          </span>
-          {doc.status === 'published' && (
-            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">
-              Published
-            </span>
+        {/* Badges + tags */}
+        <div className="flex flex-wrap gap-1">
+          {doc.status === 'published' ? (
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">Published</span>
+          ) : (
+            <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium bg-muted text-muted-foreground">Draft</span>
           )}
+          <span className={docTypeBadgeClass(doc.document_type)}>{DOCUMENT_TYPE_LABELS[doc.document_type]}</span>
+          {docTags.slice(0, 3).map(t => (
+            <span key={t} className="inline-flex items-center rounded-full px-1.5 py-0 text-[10px] font-medium bg-secondary text-secondary-foreground">{t}</span>
+          ))}
+          {docTags.length > 3 && <span className="text-[10px] text-muted-foreground">+{docTags.length - 3}</span>}
         </div>
 
         {/* Meta */}
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
           {company && <span>{company.name}</span>}
+          {doc.agent_run_id && <Sparkles className="h-3 w-3 text-primary" />}
+          {isLocked && <span className="text-amber-600 dark:text-amber-400 flex items-center gap-0.5"><Lock className="h-2.5 w-2.5" />{lockName}</span>}
+          {doc.is_shareable && <Share2 className="h-2.5 w-2.5 text-emerald-500" />}
+          {spConnected && <Cloud className="h-2.5 w-2.5 text-muted-foreground/40" />}
           <span className="ml-auto">{new Date(doc.updated_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short' })}</span>
-        </div>
-
-        {/* Indicators */}
-        <div className="flex items-center gap-2">
-          {doc.agent_run_id && (
-            <span title="Created by agent"><Sparkles className="h-3.5 w-3.5 text-primary" /></span>
-          )}
-          {isLocked && (
-            <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
-              <Lock className="h-3 w-3" /> Editing — {lockName}
-            </span>
-          )}
-          {doc.is_shareable && (
-            <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 ml-auto">
-              <Share2 className="h-3 w-3" /> Shared
-            </span>
-          )}
-          {spConnected && (
-            <span className="ml-auto" title="SharePoint connected">
-              <Cloud className="h-3 w-3 text-muted-foreground/40" />
-            </span>
-          )}
         </div>
       </Link>
 
-      {/* Three-dot menu */}
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <div className="relative">
-          <button
-            onClick={e => { e.preventDefault(); setMenuOpen(o => !o) }}
-            className="rounded-md p-1.5 hover:bg-muted transition-colors"
-          >
-            <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+      {/* Inline tag editor */}
+      {editingTags && (
+        <div className="px-4 pb-3" onClick={e => e.stopPropagation()}>
+          <TagEditor
+            tags={docTags}
+            allTags={allTags}
+            onSave={async (tags) => { await onSaveTags(doc.id, tags); setEditingTags(false) }}
+            compact
+          />
+        </div>
+      )}
+
+      {/* Bottom action row */}
+      <div className="border-t px-3 py-1.5 flex items-center gap-1">
+        <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2" asChild>
+          <Link href={`/documents/${doc.id}`}><Eye className="h-3 w-3 mr-1" />Open</Link>
+        </Button>
+        {isAdmin && (
+          <Button size="sm" variant="ghost" className="h-6 text-[11px] px-2"
+            onClick={() => onToggleStatus(doc.id, doc.status === 'published' ? 'draft' : 'published')}>
+            {doc.status === 'published' ? 'Unpublish' : 'Publish'}
+          </Button>
+        )}
+        <div className="ml-auto relative">
+          <button onClick={() => setMenuOpen(o => !o)} className="rounded-md p-1 hover:bg-muted transition-colors">
+            <MoreHorizontal className="h-3.5 w-3.5 text-muted-foreground" />
           </button>
           {menuOpen && (
             <>
               <div className="fixed inset-0 z-10" onClick={() => { setMenuOpen(false); setMoveOpen(false) }} />
-              <div className="absolute right-0 top-7 z-20 bg-background border rounded-lg shadow-lg py-1 w-48 text-sm">
-                <Link
-                  href={`/documents/${doc.id}`}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted"
-                  onClick={() => setMenuOpen(false)}
-                >
-                  <FileText className="h-3.5 w-3.5" /> Open
-                </Link>
-                <button
-                  className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
-                  onClick={() => { setMoveOpen(o => !o) }}
-                >
+              <div className="absolute right-0 bottom-7 z-20 bg-background border rounded-lg shadow-lg py-1 w-44 text-sm">
+                <button className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
+                  onClick={() => { setEditingTags(true); setMenuOpen(false) }}>
+                  <Tag className="h-3.5 w-3.5" /> Tags
+                </button>
+                <button className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
+                  onClick={() => { setRenaming(true); setMenuOpen(false) }}>
+                  <Pencil className="h-3.5 w-3.5" /> Rename
+                </button>
+                <button className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
+                  onClick={() => setMoveOpen(o => !o)}>
                   <MoveRight className="h-3.5 w-3.5" /> Move to Folder
                 </button>
                 {moveOpen && (
                   <div className="pl-6 pb-1 space-y-0.5">
-                    <button
-                      className="w-full text-left px-2 py-1 text-xs rounded hover:bg-muted text-muted-foreground"
-                      onClick={() => { onMoveToFolder(doc.id, null); setMenuOpen(false) }}
-                    >
-                      Unfiled
-                    </button>
+                    <button className="w-full text-left px-2 py-1 text-xs rounded hover:bg-muted text-muted-foreground"
+                      onClick={() => { onMoveToFolder(doc.id, null); setMenuOpen(false) }}>Unfiled</button>
                     {folders.map(f => (
-                      <button
-                        key={f.id}
-                        className="w-full text-left px-2 py-1 text-xs rounded hover:bg-muted"
-                        onClick={() => { onMoveToFolder(doc.id, f.id); setMenuOpen(false) }}
-                      >
-                        {f.name}
-                      </button>
+                      <button key={f.id} className="w-full text-left px-2 py-1 text-xs rounded hover:bg-muted"
+                        onClick={() => { onMoveToFolder(doc.id, f.id); setMenuOpen(false) }}>{f.name}</button>
                     ))}
                   </div>
                 )}
+                <button className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
+                  onClick={() => { window.open(`/api/documents/${doc.id}/export?format=docx`, '_blank'); setMenuOpen(false) }}>
+                  <Download className="h-3.5 w-3.5" /> Download
+                </button>
                 {isAdmin && (
                   <>
                     <div className="border-t my-1" />
-                    <button
-                      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
-                      onClick={() => {
-                        onToggleStatus(doc.id, doc.status === 'published' ? 'draft' : 'published')
-                        setMenuOpen(false)
-                      }}
-                    >
-                      <Sparkles className="h-3.5 w-3.5" />
-                      {doc.status === 'published' ? 'Unpublish' : 'Publish'}
-                    </button>
-                    <button
-                      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left text-destructive"
-                      onClick={() => { onDelete(doc.id); setMenuOpen(false) }}
-                    >
+                    <button className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left text-destructive"
+                      onClick={() => { onDelete(doc.id); setMenuOpen(false) }}>
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </button>
                   </>
@@ -276,6 +274,22 @@ export default function DocumentsPage() {
     if (!confirm('Delete this document? This cannot be undone.')) return
     await fetch(`/api/documents/${id}`, { method: 'DELETE' })
     setDocuments(prev => prev.filter(d => d.id !== id))
+  }
+
+  async function handleRename(docId: string, title: string) {
+    await fetch(`/api/documents/${docId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    })
+    setDocuments(prev => prev.map(d => d.id === docId ? { ...d, title } : d))
+  }
+
+  async function handleSaveTags(docId: string, tags: string[]) {
+    await fetch(`/api/documents/${docId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    })
+    setDocuments(prev => prev.map(d => d.id === docId ? { ...d, tags } : d))
   }
 
   async function handleToggleStatus(docId: string, status: string) {
@@ -633,7 +647,8 @@ export default function DocumentsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {published.map(doc => (
                       <DocumentCard key={doc.id} doc={doc} companies={companies} folders={folders}
-                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} spConnected={spConnected} />
+                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus}
+                        onRename={handleRename} onSaveTags={handleSaveTags} isAdmin={isAdmin} spConnected={spConnected} allTags={allTags} />
                     ))}
                   </div>
                 </div>
@@ -654,7 +669,8 @@ export default function DocumentsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 opacity-90">
                     {drafts.map(doc => (
                       <DocumentCard key={doc.id} doc={doc} companies={companies} folders={folders}
-                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} spConnected={spConnected} />
+                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus}
+                        onRename={handleRename} onSaveTags={handleSaveTags} isAdmin={isAdmin} spConnected={spConnected} allTags={allTags} />
                     ))}
                   </div>
                 </div>

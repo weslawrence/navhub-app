@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useRouter }  from 'next/navigation'
-import { Play, X, Loader2, FileText, MessageSquare, Send, Paperclip } from 'lucide-react'
+import { Play, X, Loader2, FileText, MessageSquare, Send, Paperclip, CalendarClock, Check } from 'lucide-react'
 import { Button }    from '@/components/ui/button'
 import { Label }     from '@/components/ui/label'
 import { cn }        from '@/lib/utils'
 import type { Agent, Company } from '@/lib/types'
+import { getNextRunTime, formatNextRun } from '@/lib/scheduling'
+import type { ScheduleConfig } from '@/lib/scheduling'
 
 const ACCEPTED_TYPES = '.pdf,.docx,.doc,.txt,.md,.png,.jpg,.jpeg,.xlsx,.xls,.csv,.pptx,.ppt,.html'
 const MAX_ATTACHMENTS = 5
@@ -53,7 +55,15 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
   // Attachments
   const [attachments,       setAttachments]       = useState<File[]>([])
   const [attachmentError,   setAttachmentError]   = useState<string | null>(null)
-  
+
+  // Recurring schedule
+  const [isRecurring,   setIsRecurring]   = useState(false)
+  const [schedFreq,     setSchedFreq]     = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [schedTime,     setSchedTime]     = useState('09:00')
+  const [schedDow,      setSchedDow]     = useState(1)
+  const [schedDom,      setSchedDom]     = useState(1)
+  const [schedSaved,    setSchedSaved]    = useState(false)
+
   // ─── Awaiting-input (ask_user) state ───────────────────────────────────────
   const [runId,        setRunId]        = useState<string | null>(null)
   const [awaitingInput, setAwaitingInput] = useState<{ question: string } | null>(null)
@@ -133,6 +143,31 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
     tokens += companyCount * 300 // per-company info in scope
     return tokens
   }, [includePeriod, selectedCompanyIds, companies.length])
+
+  const schedConfig: ScheduleConfig = { frequency: schedFreq, time: schedTime, day_of_week: schedDow, day_of_month: schedDom, timezone: 'Australia/Brisbane' }
+  const nextRunPreview = isRecurring ? formatNextRun(getNextRunTime(schedConfig)) : null
+
+  async function handleSchedule() {
+    setSubmitting(true)
+    setError(null)
+    try {
+      const nextRun = getNextRunTime(schedConfig)
+      const res = await fetch(`/api/agents/${agent.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          schedule_config: schedConfig,
+          schedule_enabled: true,
+          next_scheduled_run_at: nextRun.toISOString(),
+        }),
+      })
+      if (!res.ok) { const json = await res.json(); throw new Error(json.error ?? 'Failed') }
+      setSchedSaved(true)
+      setTimeout(() => { onClose() }, 1500)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save schedule')
+      setSubmitting(false)
+    }
+  }
 
   // ─── Launch run + poll briefly for awaiting_input ──────────────────────────
 
@@ -458,6 +493,56 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
               </p>
             </div>
 
+            {/* Recurring schedule toggle */}
+            <div className="border-t pt-4 space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)}
+                  className="rounded border-input" />
+                <span className="text-sm font-medium">Make this a recurring run</span>
+              </label>
+              {isRecurring && (
+                <div className="space-y-3 pl-6">
+                  <div className="flex gap-3">
+                    <div className="flex-1">
+                      <Label className="text-xs">Frequency</Label>
+                      <select value={schedFreq} onChange={e => setSchedFreq(e.target.value as typeof schedFreq)}
+                        className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm">
+                        <option value="daily">Daily</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </select>
+                    </div>
+                    <div className="w-28">
+                      <Label className="text-xs">Time</Label>
+                      <input type="time" value={schedTime} onChange={e => setSchedTime(e.target.value)}
+                        className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm" />
+                    </div>
+                  </div>
+                  {schedFreq === 'weekly' && (
+                    <div>
+                      <Label className="text-xs">Day</Label>
+                      <select value={schedDow} onChange={e => setSchedDow(Number(e.target.value))}
+                        className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm">
+                        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => <option key={i} value={i}>{d}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {schedFreq === 'monthly' && (
+                    <div>
+                      <Label className="text-xs">Day of month</Label>
+                      <input type="number" min={1} max={28} value={schedDom} onChange={e => setSchedDom(Number(e.target.value))}
+                        className="flex h-8 w-28 rounded-md border border-input bg-transparent px-2 text-sm" />
+                    </div>
+                  )}
+                  {nextRunPreview && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                      <CalendarClock className="h-3.5 w-3.5" /> Next run: {nextRunPreview}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* render_report note */}
             {agent.tools?.includes('render_report') && (
               <div className="flex items-start gap-2 rounded-md border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950 px-3 py-2.5">
@@ -482,14 +567,22 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
 
             {/* Actions */}
             <div className="flex gap-2 justify-end pt-1">
-              <Button variant="outline" onClick={onClose} disabled={submitting}>
-                Cancel
-              </Button>
-              <Button onClick={() => void handleRun()} disabled={submitting}>
-                {submitting
-                  ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Starting…</>
-                  : <><Play className="h-4 w-4 mr-1.5" /> Run Agent</>}
-              </Button>
+              <Button variant="outline" onClick={onClose} disabled={submitting}>Cancel</Button>
+              {isRecurring ? (
+                <Button onClick={() => void handleSchedule()} disabled={submitting}>
+                  {submitting
+                    ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</>
+                    : schedSaved
+                    ? <><Check className="h-4 w-4 mr-1.5" /> Scheduled!</>
+                    : <><CalendarClock className="h-4 w-4 mr-1.5" /> Schedule</>}
+                </Button>
+              ) : (
+                <Button onClick={() => void handleRun()} disabled={submitting}>
+                  {submitting
+                    ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Starting…</>
+                    : <><Play className="h-4 w-4 mr-1.5" /> Run Agent</>}
+                </Button>
+              )}
             </div>
           </>
         )}

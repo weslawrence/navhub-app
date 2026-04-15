@@ -4,13 +4,14 @@ import { useState, useEffect } from 'react'
 import { useSearchParams }  from 'next/navigation'
 import Link from 'next/link'
 import {
-  Bot, Plus, Play, Settings, Clock, Zap, PowerOff,
+  Bot, Plus, Play, Settings, Clock, Zap, PowerOff, CalendarClock,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button }  from '@/components/ui/button'
 import { Badge }   from '@/components/ui/badge'
 import { cn }      from '@/lib/utils'
-import RunModal    from '@/components/agents/RunModal'
+import RunModal            from '@/components/agents/RunModal'
+import ScheduledRunsPanel  from '@/components/agents/ScheduledRunsPanel'
 import type { Agent, AgentTool } from '@/lib/types'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
@@ -75,8 +76,9 @@ export default function AgentsPage() {
   const [agents,       setAgents]       = useState<Agent[]>([])
   const [loading,      setLoading]      = useState(true)
   const [isAdmin,      setIsAdmin]      = useState(false)
-  const [runTarget,    setRunTarget]    = useState<Agent | null>(null)
-  const [initialBrief, setInitialBrief] = useState(briefParam)
+  const [runTarget,        setRunTarget]        = useState<Agent | null>(null)
+  const [initialBrief,     setInitialBrief]     = useState(briefParam)
+  const [scheduleAgentId,  setScheduleAgentId]  = useState<string | null>(null)
 
   useEffect(() => {
     async function load() {
@@ -196,6 +198,7 @@ export default function AgentsPage() {
               isAdmin={isAdmin}
               onRun={() => setRunTarget(agent)}
               onToggleActive={() => void handleToggleActive(agent)}
+              onSchedule={() => setScheduleAgentId(agent.id)}
             />
           ))}
         </div>
@@ -209,6 +212,13 @@ export default function AgentsPage() {
           onClose={() => { setRunTarget(null); setInitialBrief('') }}
         />
       )}
+      {scheduleAgentId && (
+        <ScheduledRunsPanel
+          agentId={scheduleAgentId}
+          agentName={agents.find(a => a.id === scheduleAgentId)?.name ?? ''}
+          onClose={() => setScheduleAgentId(null)}
+        />
+      )}
     </div>
   )
 }
@@ -216,12 +226,13 @@ export default function AgentsPage() {
 // ─── Agent card ───────────────────────────────────────────────────────────────
 
 function AgentCard({
-  agent, isAdmin, onRun, onToggleActive,
+  agent, isAdmin, onRun, onToggleActive, onSchedule,
 }: {
   agent:          Agent
   isAdmin:        boolean
   onRun:          () => void
   onToggleActive: () => void
+  onSchedule:     () => void
 }) {
   const isDisabled = !agent.is_active
 
@@ -251,6 +262,11 @@ function AgentCard({
             </div>
             {agent.description && (
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{agent.description}</p>
+            )}
+            {agent.schedule_enabled && agent.next_scheduled_run_at && (
+              <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1">
+                Next: {new Date(agent.next_scheduled_run_at).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+              </p>
             )}
           </div>
           {/* Active/Disabled toggle pill — admins only */}
@@ -301,6 +317,11 @@ function AgentCard({
               </Link>
             </Button>
           )}
+          <Button size="sm" variant="outline"
+            onClick={onSchedule}
+            className={cn(agent.schedule_enabled && 'border-amber-300 text-amber-600')}>
+            <CalendarClock className="h-3.5 w-3.5" />
+          </Button>
           <Button size="sm" variant="outline" asChild>
             <Link href={`/agents/${agent.id}/runs`}>
               <Clock className="h-3.5 w-3.5" />

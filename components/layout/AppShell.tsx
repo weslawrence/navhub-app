@@ -20,6 +20,8 @@ import {
   Plus,
   FileText,
   KeyRound,
+  Megaphone,
+  Bot,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -155,13 +157,11 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
   // Collapsible nav group state (persisted in localStorage)
   const [financialsOpen,  setFinancialsOpen]  = useState(() => pathname.startsWith('/reports') || pathname.startsWith('/cashflow') || pathname.startsWith('/forecasting'))
   const [reportsDocsOpen, setReportsDocsOpen] = useState(() => pathname.startsWith('/reports/custom') || pathname.startsWith('/documents'))
-  const [workspaceOpen,   setWorkspaceOpen]   = useState(() => pathname.startsWith('/agents') || pathname.startsWith('/settings'))
 
   useEffect(() => {
     try {
       const f = localStorage.getItem('navhub:nav:financials');  if (f !== null) setFinancialsOpen(f === 'true')
       const r = localStorage.getItem('navhub:nav:reportsdocs'); if (r !== null) setReportsDocsOpen(r === 'true')
-      const w = localStorage.getItem('navhub:nav:workspace');   if (w !== null) setWorkspaceOpen(w === 'true')
     } catch { /* ignore */ }
   }, [])
 
@@ -169,7 +169,6 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
   useEffect(() => {
     if (pathname.startsWith('/reports/profit') || pathname.startsWith('/reports/balance') || pathname.startsWith('/cashflow') || pathname.startsWith('/forecasting')) setFinancialsOpen(true)
     if (pathname.startsWith('/reports/custom') || pathname.startsWith('/documents')) setReportsDocsOpen(true)
-    if (pathname.startsWith('/agents') || pathname.startsWith('/settings')) setWorkspaceOpen(true)
   }, [pathname])
 
   function toggleNavGroup(key: string, setter: React.Dispatch<React.SetStateAction<boolean>>) {
@@ -260,24 +259,19 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
             </NavGroup>
 
             {/* Marketing — single item */}
-            {show('marketing') && <NavLink href="/marketing" label="Marketing" Icon={BarChart2} mobile={mobile} />}
+            {show('marketing') && <NavLink href="/marketing" label="Marketing" Icon={Megaphone} mobile={mobile} />}
 
             {/* Reports & Documents group */}
             <NavGroup label="Reports & Docs" Icon={FileText} open={reportsDocsOpen}
               onToggle={() => toggleNavGroup('reportsdocs', setReportsDocsOpen)}
               visible={show('reports') || show('documents')} mobile={mobile}>
               {show('reports') && <SubLink href="/reports/custom" label="Reports" mobile={mobile} />}
-              {show('reports') && <SubLink href="/reports/templates" label="Templates" mobile={mobile} />}
               {show('documents') && <SubLink href="/documents" label="Documents" mobile={mobile} />}
             </NavGroup>
 
-            {/* Workspace group */}
-            <NavGroup label="Workspace" Icon={Settings} open={workspaceOpen}
-              onToggle={() => toggleNavGroup('workspace', setWorkspaceOpen)}
-              visible={show('agents') || show('settings')} mobile={mobile}>
-              {show('agents') && <SubLink href="/agents" label="Agents" mobile={mobile} />}
-              {show('settings') && <SubLink href="/settings" label="Settings" mobile={mobile} />}
-            </NavGroup>
+            {/* Agents + Settings — top level */}
+            {show('agents') && <NavLink href="/agents" label="Agents" Icon={Bot} mobile={mobile} />}
+            {show('settings') && <NavLink href="/settings" label="Settings" Icon={Settings} mobile={mobile} />}
 
             {(!collapsed || mobile) && <HelpMenu userEmail={user.email} />}
           </nav>

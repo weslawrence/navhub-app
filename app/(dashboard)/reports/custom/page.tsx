@@ -231,6 +231,20 @@ export default function ReportsLibraryPage() {
     }
   }
 
+  async function handleToggleStatus(report: CustomReport) {
+    const newStatus = report.status === 'published' ? 'draft' : 'published'
+    try {
+      const res = await fetch(`/api/reports/custom/${report.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (res.ok) {
+        setReports(rs => rs.map(r => r.id === report.id ? { ...r, status: newStatus } : r))
+      }
+    } catch { /* ignore */ }
+  }
+
   async function handleDelete(report: CustomReport) {
     if (!confirm(`Delete "${report.name}"? This cannot be undone.`)) return
     try {
@@ -442,6 +456,11 @@ export default function ReportsLibraryPage() {
                   </DropdownMenuItem>
                   <DropdownMenuItem asChild>
                     <Link href={`/reports/custom/${report.id}`}>Edit tags</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={() => void handleToggleStatus(report)}
+                  >
+                    {report.status === 'published' ? 'Unpublish' : 'Publish'}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -787,33 +806,79 @@ export default function ReportsLibraryPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : view === 'grid' ? (
-        /* Grid view */
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {filtered.map(report => (
-            <ReportCard key={report.id} report={report} />
-          ))}
-        </div>
       ) : (
-        /* Table view */
-        <div className="rounded-lg border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/40">
-              <tr>
-                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Name</th>
-                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Tags</th>
-                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Source</th>
-                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Shared</th>
-                <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Added</th>
-                <th className="text-right py-2.5 px-3 text-xs font-medium text-muted-foreground">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(report => (
-                <TableRow key={report.id} report={report} />
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-8">
+          {/* Published section */}
+          {(() => {
+            const published = filtered.filter(r => r.status === 'published')
+            if (published.length === 0) return null
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-500" />
+                  <h2 className="text-sm font-semibold text-foreground">Published</h2>
+                  <span className="text-xs text-muted-foreground">({published.length})</span>
+                </div>
+                {view === 'grid' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    {published.map(report => <ReportCard key={report.id} report={report} />)}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Name</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Tags</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Source</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Shared</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Added</th>
+                          <th className="text-right py-2.5 px-3 text-xs font-medium text-muted-foreground">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>{published.map(report => <TableRow key={report.id} report={report} />)}</tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {/* Drafts section */}
+          {(() => {
+            const drafts = filtered.filter(r => r.status !== 'published')
+            if (drafts.length === 0) return null
+            return (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-muted-foreground/40" />
+                  <h2 className="text-sm font-semibold text-muted-foreground">Drafts</h2>
+                  <span className="text-xs text-muted-foreground">({drafts.length})</span>
+                </div>
+                {view === 'grid' ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 opacity-90">
+                    {drafts.map(report => <ReportCard key={report.id} report={report} />)}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border overflow-hidden opacity-90">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Name</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Tags</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Source</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Shared</th>
+                          <th className="text-left py-2.5 px-3 text-xs font-medium text-muted-foreground">Added</th>
+                          <th className="text-right py-2.5 px-3 text-xs font-medium text-muted-foreground">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>{drafts.map(report => <TableRow key={report.id} report={report} />)}</tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
 

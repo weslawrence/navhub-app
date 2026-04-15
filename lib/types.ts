@@ -251,6 +251,8 @@ export interface CustomReport {
   file_type:              string
   uploaded_by:            string
   is_active:              boolean
+  is_draft:               boolean
+  status:                 'draft' | 'published'
   sort_order:             number
   is_shareable:           boolean
   share_token:            string | null

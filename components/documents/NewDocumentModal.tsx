@@ -17,10 +17,11 @@ import {
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 interface Props {
-  folders:   DocumentFolder[]
-  companies: Company[]
-  onClose:   () => void
-  onCreated: () => void
+  folders:          DocumentFolder[]
+  companies:        Company[]
+  defaultFolderId?: string
+  onClose:          () => void
+  onCreated:        () => void
 }
 
 type Step = 'pick' | 'manual' | 'agent'
@@ -37,7 +38,7 @@ function isFinancialType(t: DocumentType) {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function NewDocumentModal({ folders, companies, onClose, onCreated }: Props) {
+export default function NewDocumentModal({ folders, companies, defaultFolderId, onClose, onCreated }: Props) {
   const router = useRouter()
 
   const [step,        setStep]        = useState<Step>('pick')
@@ -49,7 +50,7 @@ export default function NewDocumentModal({ folders, companies, onClose, onCreate
   const [docType,     setDocType]     = useState<DocumentType>('financial_analysis')
   const [audience,    setAudience]    = useState<DocumentAudience>('internal')
   const [companyId,   setCompanyId]   = useState('')
-  const [folderId,    setFolderId]    = useState('')
+  const [folderId,    setFolderId]    = useState(defaultFolderId ?? '')
 
   // Agent extra
   const [usePL,          setUsePL]          = useState(false)

@@ -21,6 +21,16 @@ export async function GET(request: Request) {
   const docType = url.searchParams.get('document_type')
   const status  = url.searchParams.get('status')
 
+  // Check user role for status filtering
+  const { data: membership } = await supabase
+    .from('user_groups')
+    .select('role')
+    .eq('user_id', session.user.id)
+    .eq('group_id', activeGroupId)
+    .single()
+
+  const userRole = membership?.role ?? 'viewer'
+
   let query = supabase
     .from('documents')
     .select('*')
@@ -32,6 +42,11 @@ export async function GET(request: Request) {
   if (company)               query = query.eq('company_id', company)
   if (docType)               query = query.eq('document_type', docType)
   if (status)                query = query.eq('status', status)
+
+  // Viewers can only see published documents
+  if (userRole === 'viewer') {
+    query = query.eq('status', 'published')
+  }
 
   const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

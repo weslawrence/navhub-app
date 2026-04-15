@@ -102,11 +102,22 @@ export async function PATCH(
   const updates: Record<string, unknown> = {}
 
   if (Array.isArray(body.tags)) {
-    // Sanitise: lowercase, trim, remove empties, deduplicate
     const sanitised = (body.tags as string[])
       .map((t: string) => t.toLowerCase().trim())
       .filter((t: string) => t.length > 0 && t.length <= 40)
     updates.tags = sanitised.filter((v, i, a) => a.indexOf(v) === i)
+  }
+
+  if (typeof body.status === 'string' && ['draft', 'published'].includes(body.status)) {
+    updates.status = body.status
+  }
+
+  if (typeof body.name === 'string' && body.name.trim()) {
+    updates.name = body.name.trim()
+  }
+
+  if (typeof body.description === 'string') {
+    updates.description = body.description.trim() || null
   }
 
   if (Object.keys(updates).length === 0) {

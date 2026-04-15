@@ -60,15 +60,17 @@ function DocumentCard({
   companies,
   onDelete,
   onMoveToFolder,
+  onToggleStatus,
   folders,
   isAdmin,
 }: {
-  doc:           DocWithMeta
-  companies:     Company[]
-  folders:       DocumentFolder[]
-  onDelete:      (id: string) => void
-  onMoveToFolder:(id: string, folderId: string | null) => void
-  isAdmin:       boolean
+  doc:             DocWithMeta
+  companies:       Company[]
+  folders:         DocumentFolder[]
+  onDelete:        (id: string) => void
+  onMoveToFolder:  (id: string, folderId: string | null) => void
+  onToggleStatus:  (id: string, status: string) => void
+  isAdmin:         boolean
 }) {
   const [menuOpen,   setMenuOpen]   = useState(false)
   const [moveOpen,   setMoveOpen]   = useState(false)
@@ -174,6 +176,16 @@ function DocumentCard({
                   <>
                     <div className="border-t my-1" />
                     <button
+                      className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left"
+                      onClick={() => {
+                        onToggleStatus(doc.id, doc.status === 'published' ? 'draft' : 'published')
+                        setMenuOpen(false)
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />
+                      {doc.status === 'published' ? 'Unpublish' : 'Publish'}
+                    </button>
+                    <button
                       className="w-full flex items-center gap-2 px-3 py-1.5 hover:bg-muted text-left text-destructive"
                       onClick={() => { onDelete(doc.id); setMenuOpen(false) }}
                     >
@@ -253,6 +265,15 @@ export default function DocumentsPage() {
     setDocuments(prev => prev.filter(d => d.id !== id))
   }
 
+  async function handleToggleStatus(docId: string, status: string) {
+    await fetch(`/api/documents/${docId}`, {
+      method:  'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ status }),
+    })
+    setDocuments(prev => prev.map(d => d.id === docId ? { ...d, status: status as 'draft' | 'published' } : d))
+  }
+
   async function handleMoveToFolder(docId: string, folderId: string | null) {
     await fetch(`/api/documents/${docId}`, {
       method:  'PATCH',
@@ -293,6 +314,10 @@ export default function DocumentsPage() {
       try {
         const formData = new FormData()
         formData.append('file', file)
+        // Pass current folder so uploads land in the selected folder
+        if (activeFolder && activeFolder !== 'unfiled') {
+          formData.append('folder_id', activeFolder)
+        }
         const res  = await fetch('/api/documents/upload', { method: 'POST', body: formData })
         const json = await res.json() as { data?: { document: DocWithMeta }; error?: string }
         if (!res.ok) {
@@ -580,18 +605,48 @@ export default function DocumentsPage() {
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filtered.map(doc => (
-              <DocumentCard
-                key={doc.id}
-                doc={doc}
-                companies={companies}
-                folders={folders}
-                onDelete={handleDelete}
-                onMoveToFolder={handleMoveToFolder}
-                isAdmin={isAdmin}
-              />
-            ))}
+          <div className="space-y-8">
+            {/* Published section */}
+            {(() => {
+              const published = filtered.filter(d => d.status === 'published')
+              if (published.length === 0) return null
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    <h2 className="text-sm font-semibold text-foreground">Published</h2>
+                    <span className="text-xs text-muted-foreground">({published.length})</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {published.map(doc => (
+                      <DocumentCard key={doc.id} doc={doc} companies={companies} folders={folders}
+                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
+
+            {/* Drafts section */}
+            {(() => {
+              const drafts = filtered.filter(d => d.status !== 'published')
+              if (drafts.length === 0) return null
+              return (
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-muted-foreground/40" />
+                    <h2 className="text-sm font-semibold text-muted-foreground">Drafts &amp; Working Documents</h2>
+                    <span className="text-xs text-muted-foreground">({drafts.length})</span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 opacity-90">
+                    {drafts.map(doc => (
+                      <DocumentCard key={doc.id} doc={doc} companies={companies} folders={folders}
+                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} />
+                    ))}
+                  </div>
+                </div>
+              )
+            })()}
           </div>
         )}
       </div>
@@ -601,6 +656,7 @@ export default function DocumentsPage() {
         <NewDocumentModal
           folders={folders}
           companies={companies}
+          defaultFolderId={activeFolder && activeFolder !== 'unfiled' ? activeFolder : undefined}
           onClose={() => setShowModal(false)}
           onCreated={() => { setShowModal(false); void loadData() }}
         />

@@ -19,12 +19,29 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
 
-  const { data: reports, error } = await supabase
+  // Check user role for status filtering
+  const { data: membership } = await supabase
+    .from('user_groups')
+    .select('role')
+    .eq('user_id', session.user.id)
+    .eq('group_id', activeGroupId)
+    .single()
+
+  const userRole = membership?.role ?? 'viewer'
+
+  let query = supabase
     .from('custom_reports')
     .select('*')
     .eq('group_id', activeGroupId)
     .eq('is_active', true)
     .order('sort_order', { ascending: true })
+
+  // Viewers can only see published reports
+  if (userRole === 'viewer') {
+    query = query.eq('status', 'published')
+  }
+
+  const { data: reports, error } = await query
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 

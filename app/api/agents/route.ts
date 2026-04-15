@@ -23,7 +23,7 @@ export async function GET() {
     .select('*')
     .eq('group_id', activeGroupId)
     .eq('is_active', true)
-    .or(`visibility.eq.public,created_by.eq.${session.user.id}`)
+    .or(`visibility.eq.public,created_by.eq.${session.user.id},created_by.is.null`)
     .order('created_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

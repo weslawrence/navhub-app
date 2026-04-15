@@ -682,14 +682,22 @@ export interface DocumentFolder {
   created_at:  string
 }
 
+export interface KnowledgeLink {
+  url:          string
+  label:        string
+  description?: string
+}
+
 export interface AgentKnowledgeDocument {
-  id:          string
-  agent_id:    string
-  document_id: string | null
-  file_path:   string | null
-  file_name:   string
-  file_type:   string | null
-  created_at:  string
+  id:              string
+  agent_id:        string
+  document_id:     string | null
+  file_path:       string | null
+  file_name:       string
+  file_type:       string | null
+  file_size:       number | null
+  created_at:      string
+  document_title?: string | null
 }
 
 export interface Document {

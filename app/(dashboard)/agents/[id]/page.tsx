@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Calendar, Sparkles, KeyRound, Loader2,
   Check, Clock, Eye, EyeOff, Trash2, Plus, Shield,
-  BookOpen, Link2, FileText, X, Globe, Lock,
+  BookOpen, Link2, FileText, X, Globe, Lock, Upload, Search, Pencil,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -14,7 +14,7 @@ import { Input }     from '@/components/ui/input'
 import { Label }     from '@/components/ui/label'
 import { Badge }     from '@/components/ui/badge'
 import { cn }        from '@/lib/utils'
-import type { Agent, AgentCredential, ScheduledRunLog, AgentKnowledgeDocument } from '@/lib/types'
+import type { Agent, AgentCredential, ScheduledRunLog, AgentKnowledgeDocument, KnowledgeLink } from '@/lib/types'
 import { getNextRunTime, formatNextRun } from '@/lib/scheduling'
 import type { ScheduleConfig as LibScheduleConfig } from '@/lib/scheduling'
 
@@ -80,10 +80,18 @@ export default function AgentDetailPage() {
 
   // Knowledge state
   const [knowledgeText,   setKnowledgeText]   = useState('')
-  const [knowledgeLinks,  setKnowledgeLinks]  = useState<Array<{ url: string; label?: string }>>([])
+  const [knowledgeLinks,  setKnowledgeLinks]  = useState<KnowledgeLink[]>([])
   const [knowledgeDocs,   setKnowledgeDocs]   = useState<AgentKnowledgeDocument[]>([])
   const [newLinkUrl,      setNewLinkUrl]      = useState('')
   const [newLinkLabel,    setNewLinkLabel]    = useState('')
+  const [newLinkDesc,     setNewLinkDesc]     = useState('')
+  const [editingLinkIdx,  setEditingLinkIdx]  = useState<number | null>(null)
+  const [showLinkForm,    setShowLinkForm]    = useState(false)
+  const [showDocPicker,   setShowDocPicker]   = useState(false)
+  const [availableDocs,   setAvailableDocs]   = useState<Array<{ id: string; title: string; document_type: string }>>([])
+  const [docSearch,       setDocSearch]       = useState('')
+  const [docUploading,    setDocUploading]    = useState(false)
+  const [knowledgeSaved,  setKnowledgeSaved]  = useState(false)
 
   // API Keys state
   const [anthropicKey,  setAnthropicKey]  = useState('')
@@ -118,7 +126,7 @@ export default function AgentDetailPage() {
 
       // Hydrate knowledge state
       setKnowledgeText(a.knowledge_text ?? '')
-      setKnowledgeLinks(a.knowledge_links ?? [])
+      setKnowledgeLinks((a.knowledge_links ?? []).map(l => ({ url: l.url, label: l.label ?? l.url, description: (l as KnowledgeLink).description })))
 
       // Credentials
       if (credsRes.ok) {
@@ -220,25 +228,89 @@ export default function AgentDetailPage() {
       knowledge_text:  knowledgeText || null,
       knowledge_links: knowledgeLinks,
     })
+    setKnowledgeSaved(true)
+    setTimeout(() => setKnowledgeSaved(false), 2000)
+  }
+
+  async function saveKnowledgeText() {
+    setSaving(true)
+    try {
+      await fetch(`/api/agents/${agentId}/knowledge`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ knowledge_text: knowledgeText || null }),
+      })
+      setKnowledgeSaved(true)
+      setTimeout(() => setKnowledgeSaved(false), 2000)
+    } finally { setSaving(false) }
   }
 
   function handleAddLink() {
     if (!newLinkUrl.trim()) return
-    setKnowledgeLinks(prev => [...prev, { url: newLinkUrl.trim(), label: newLinkLabel.trim() || undefined }])
-    setNewLinkUrl('')
-    setNewLinkLabel('')
+    const newLink: KnowledgeLink = { url: newLinkUrl.trim(), label: newLinkLabel.trim() || newLinkUrl.trim(), description: newLinkDesc.trim() || undefined }
+    if (editingLinkIdx !== null) {
+      setKnowledgeLinks(prev => prev.map((l, i) => i === editingLinkIdx ? newLink : l))
+      setEditingLinkIdx(null)
+    } else {
+      setKnowledgeLinks(prev => [...prev, newLink])
+    }
+    setNewLinkUrl(''); setNewLinkLabel(''); setNewLinkDesc(''); setShowLinkForm(false)
+  }
+
+  function handleEditLink(idx: number) {
+    const link = knowledgeLinks[idx]
+    setNewLinkUrl(link.url); setNewLinkLabel(link.label ?? ''); setNewLinkDesc(link.description ?? '')
+    setEditingLinkIdx(idx); setShowLinkForm(true)
   }
 
   function handleRemoveLink(idx: number) {
     setKnowledgeLinks(prev => prev.filter((_, i) => i !== idx))
   }
 
-
   async function handleRemoveKnowledgeDoc(id: string) {
     try {
-      await fetch(`/api/agents/${agentId}/knowledge-documents?doc_id=${id}`, { method: 'DELETE' })
+      await fetch(`/api/agents/${agentId}/knowledge/documents/${id}`, { method: 'DELETE' })
       setKnowledgeDocs(prev => prev.filter(d => d.id !== id))
     } catch { /* ignore */ }
+  }
+
+  async function handleLinkDocument(docId: string) {
+    try {
+      const res = await fetch(`/api/agents/${agentId}/knowledge/documents`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_id: docId }),
+      })
+      if (res.ok) {
+        const json = await res.json()
+        setKnowledgeDocs(prev => [json.data, ...prev])
+      }
+    } catch { /* ignore */ }
+    setShowDocPicker(false)
+  }
+
+  async function handleUploadKnowledgeFile(file: File) {
+    setDocUploading(true)
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch(`/api/agents/${agentId}/knowledge/documents`, {
+        method: 'POST', body: formData,
+      })
+      if (res.ok) {
+        const json = await res.json()
+        setKnowledgeDocs(prev => [json.data, ...prev])
+      }
+    } finally { setDocUploading(false) }
+  }
+
+  async function loadAvailableDocs() {
+    const res = await fetch('/api/documents')
+    if (res.ok) {
+      const json = await res.json()
+      setAvailableDocs((json.data ?? []).map((d: { id: string; title: string; document_type: string }) => ({
+        id: d.id, title: d.title, document_type: d.document_type,
+      })))
+    }
+    setShowDocPicker(true)
   }
 
   // ── API Key operations ────────────────────────────────────────────────────
@@ -462,113 +534,169 @@ export default function AgentDetailPage() {
       {/* ── Knowledge tab ────────────────────────────────────────────────── */}
       {tab === 'Knowledge' && (
         <div className="space-y-4">
-          {/* Background Knowledge */}
+          {/* Section 1 — Background Knowledge */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Background Knowledge</CardTitle>
               <CardDescription>
-                What should this agent know? Include context, background, specific instructions, or domain knowledge.
+                Provide context, background information, domain knowledge, or specific instructions this agent should always have available.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-3">
               <textarea
                 value={knowledgeText}
                 onChange={e => setKnowledgeText(e.target.value)}
                 rows={6}
                 className="w-full resize-y rounded-md border border-input bg-transparent p-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                placeholder="E.g. Our financial year runs July–June. When analysing revenue, always include the division breakdown. Key contacts: CFO is Sarah Chen..."
+                placeholder="E.g. Our financial year runs July–June. When analysing revenue, always include the division breakdown..."
               />
+              <div className="flex items-center justify-end gap-2">
+                {knowledgeSaved && <span className="text-xs text-green-600">Saved</span>}
+                <Button size="sm" onClick={saveKnowledgeText} disabled={saving}>
+                  {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                  Save
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
-          {/* Reference Documents */}
+          {/* Section 2 — Reference Documents */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Reference Documents</CardTitle>
-              <CardDescription>
-                Link documents from your Documents library. The agent can read these during runs.
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Reference Documents</CardTitle>
+                  <CardDescription>Documents this agent can reference when completing tasks. Content is included in the agent&apos;s context.</CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void loadAvailableDocs()}>
+                    <FileText className="h-3.5 w-3.5" /> Link from Documents
+                  </Button>
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={docUploading}
+                    onClick={() => {
+                      const input = document.createElement('input')
+                      input.type = 'file'
+                      input.accept = '.pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.png,.jpg,.jpeg'
+                      input.onchange = () => { if (input.files?.[0]) void handleUploadKnowledgeFile(input.files[0]) }
+                      input.click()
+                    }}>
+                    <Upload className="h-3.5 w-3.5" /> {docUploading ? 'Uploading…' : 'Upload File'}
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
               {knowledgeDocs.length > 0 ? (
                 <div className="divide-y divide-border rounded-md border overflow-hidden">
                   {knowledgeDocs.map(kd => (
-                    <div key={kd.id} className="flex items-center gap-3 px-3 py-2 bg-background">
+                    <div key={kd.id} className="flex items-center gap-3 px-3 py-2.5 bg-background">
                       <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{kd.file_name}</p>
-                        <p className="text-xs text-muted-foreground">{kd.file_type ?? 'document'}</p>
+                        <p className="text-sm truncate">{kd.document_title ?? kd.file_name}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <span className="text-[10px] text-muted-foreground">{kd.file_type ?? 'document'}</span>
+                          <Badge variant="outline" className="text-[9px] px-1 py-0">
+                            {kd.document_id ? 'From Documents' : 'Uploaded'}
+                          </Badge>
+                        </div>
                       </div>
-                      <button
-                        onClick={() => void handleRemoveKnowledgeDoc(kd.id)}
-                        className="text-muted-foreground hover:text-destructive shrink-0"
-                      >
+                      <button onClick={() => void handleRemoveKnowledgeDoc(kd.id)}
+                        className="text-muted-foreground hover:text-destructive shrink-0">
                         <X className="h-4 w-4" />
                       </button>
                     </div>
                   ))}
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">No documents linked yet.</p>
+                <p className="text-sm text-muted-foreground py-4 text-center">No reference documents added yet.</p>
               )}
-              <p className="text-xs text-muted-foreground">
-                To add documents, link them from the{' '}
-                <Link href="/documents" className="text-primary hover:underline">Documents</Link> section
-                using the document ID.
-              </p>
             </CardContent>
           </Card>
 
-          {/* Reference Links */}
+          {/* Document Picker Modal */}
+          {showDocPicker && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+              <div className="bg-background border rounded-xl shadow-xl w-full max-w-md max-h-[70vh] flex flex-col">
+                <div className="px-4 py-3 border-b flex items-center justify-between">
+                  <h3 className="font-semibold text-sm">Link a Document</h3>
+                  <button onClick={() => setShowDocPicker(false)}><X className="h-4 w-4 text-muted-foreground" /></button>
+                </div>
+                <div className="px-4 py-2">
+                  <div className="relative">
+                    <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input value={docSearch} onChange={e => setDocSearch(e.target.value)} placeholder="Search documents…" className="pl-8 text-sm" />
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto px-2 pb-2">
+                  {availableDocs
+                    .filter(d => !docSearch || d.title.toLowerCase().includes(docSearch.toLowerCase()))
+                    .map(d => (
+                      <button key={d.id} onClick={() => void handleLinkDocument(d.id)}
+                        className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-md hover:bg-muted text-sm">
+                        <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                        <span className="truncate flex-1">{d.title}</span>
+                        <Badge variant="outline" className="text-[9px] shrink-0">{d.document_type}</Badge>
+                      </button>
+                    ))}
+                  {availableDocs.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No documents available.</p>}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Section 3 — Reference Links */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Reference Links</CardTitle>
-              <CardDescription>
-                Add web links the agent should be aware of during runs.
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base">Reference Links</CardTitle>
+                  <CardDescription>Web links the agent can reference for context. Included as reference URLs in the agent&apos;s knowledge base.</CardDescription>
+                </div>
+                <Button size="sm" variant="outline" className="gap-1.5"
+                  onClick={() => { setEditingLinkIdx(null); setNewLinkUrl(''); setNewLinkLabel(''); setNewLinkDesc(''); setShowLinkForm(true) }}>
+                  <Plus className="h-3.5 w-3.5" /> Add Link
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              {knowledgeLinks.length > 0 && (
+              {showLinkForm && (
+                <div className="rounded-md border p-3 space-y-2 bg-muted/30">
+                  <Input value={newLinkLabel} onChange={e => setNewLinkLabel(e.target.value)} placeholder="Label" className="text-sm" />
+                  <Input value={newLinkUrl} onChange={e => setNewLinkUrl(e.target.value)} placeholder="https://…" className="text-sm" />
+                  <Input value={newLinkDesc} onChange={e => setNewLinkDesc(e.target.value)} placeholder="Description (optional)" className="text-sm" />
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={handleAddLink} disabled={!newLinkUrl.trim()}>
+                      {editingLinkIdx !== null ? 'Update' : 'Add'}
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => { setShowLinkForm(false); setEditingLinkIdx(null) }}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+
+              {knowledgeLinks.length > 0 ? (
                 <div className="divide-y divide-border rounded-md border overflow-hidden">
                   {knowledgeLinks.map((link, idx) => (
-                    <div key={idx} className="flex items-center gap-3 px-3 py-2 bg-background">
-                      <Link2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <div key={idx} className="flex items-start gap-3 px-3 py-2.5 bg-background">
+                      <Link2 className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm truncate">{link.label || link.url}</p>
-                        {link.label && <p className="text-xs text-muted-foreground truncate">{link.url}</p>}
+                        <p className="text-sm font-medium truncate">{link.label || link.url}</p>
+                        <p className="text-xs text-muted-foreground truncate">{link.url}</p>
+                        {link.description && <p className="text-xs text-muted-foreground mt-0.5">{link.description}</p>}
                       </div>
-                      <button
-                        onClick={() => handleRemoveLink(idx)}
-                        className="text-muted-foreground hover:text-destructive shrink-0"
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => handleEditLink(idx)} className="text-muted-foreground hover:text-foreground">
+                          <Pencil className="h-3.5 w-3.5" />
+                        </button>
+                        <button onClick={() => handleRemoveLink(idx)} className="text-muted-foreground hover:text-destructive">
+                          <X className="h-4 w-4" />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
-              )}
-              <div className="flex gap-2">
-                <Input
-                  value={newLinkUrl}
-                  onChange={e => setNewLinkUrl(e.target.value)}
-                  placeholder="https://…"
-                  className="flex-1 text-sm"
-                />
-                <Input
-                  value={newLinkLabel}
-                  onChange={e => setNewLinkLabel(e.target.value)}
-                  placeholder="Label (optional)"
-                  className="w-40 text-sm"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleAddLink}
-                  disabled={!newLinkUrl.trim()}
-                >
-                  <Plus className="h-4 w-4" />
-                </Button>
-              </div>
+              ) : !showLinkForm ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">No reference links added yet.</p>
+              ) : null}
             </CardContent>
           </Card>
 

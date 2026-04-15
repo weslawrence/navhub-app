@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, Calendar, Sparkles, KeyRound, Loader2,
   Check, Clock, Eye, EyeOff, Trash2, Plus, Shield,
-  BookOpen, Link2, FileText, X, Globe, Lock, Upload, Search, Pencil,
+  BookOpen, Link2, FileText, X, Globe, Lock, Upload, Search, Pencil, Settings,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -463,7 +463,9 @@ export default function AgentDetailPage() {
         </div>
         <div className="flex gap-2">
           <Link href={`/agents/${agentId}/edit`}>
-            <Button variant="outline" size="sm">Edit</Button>
+            <Button variant="outline" size="sm" className="gap-1.5">
+              <Settings className="h-3.5 w-3.5" /> Configure
+            </Button>
           </Link>
           <Link href={`/agents/${agentId}/runs`}>
             <Button variant="outline" size="sm">Run History</Button>

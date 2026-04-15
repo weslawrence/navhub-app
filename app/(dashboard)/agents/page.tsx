@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useSearchParams }  from 'next/navigation'
 import Link from 'next/link'
 import {
-  Bot, Plus, Play, Pencil, Clock, Zap, PowerOff,
+  Bot, Plus, Play, Settings, Clock, Zap, PowerOff,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button }  from '@/components/ui/button'
@@ -297,7 +297,7 @@ function AgentCard({
           {isAdmin && (
             <Button size="sm" variant="outline" asChild className={cn(isDisabled && 'ml-auto')}>
               <Link href={`/agents/${agent.id}/edit`}>
-                <Pencil className="h-3.5 w-3.5" />
+                <Settings className="h-3.5 w-3.5" />
               </Link>
             </Button>
           )}

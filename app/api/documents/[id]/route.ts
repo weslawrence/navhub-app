@@ -117,18 +117,46 @@ export async function PATCH(
 
         if (!conn || !conn.drive_id) return
 
+        // Look up folder mapping — folder-specific first, then group default
+        const docFolderId = data.folder_id as string | null
+        const { data: mapping } = await admin
+          .from('folder_sharepoint_mappings')
+          .select('sharepoint_path')
+          .eq('group_id', activeGroupId)
+          .or(docFolderId ? `folder_id.eq.${docFolderId},folder_id.is.null` : 'folder_id.is.null')
+          .order('folder_id', { ascending: false, nullsFirst: false })
+          .limit(1)
+          .maybeSingle()
+
         const { access_token }    = await getValidSharePointToken(conn.id)
         const { data: groupData } = await admin.from('groups').select('name').eq('id', activeGroupId).single()
         const groupName           = groupData?.name ?? 'NavHub'
-        const docxBuffer          = await exportToDocx(data as Document, groupName)
-        const folderPath          = conn.folder_path ?? 'NavHub/Documents'
-        const folderId            = await ensureSharePointFolder(access_token, conn.drive_id, folderPath)
-        const safeName            = (data.title as string).replace(/[^a-zA-Z0-9 \-_]/g, '').trim() || 'Document'
-        const filename            = `${safeName}.docx`
+
+        // Determine file content: uploaded file or generated DOCX
+        let fileBuffer: Buffer
+        let filename: string
+        let mimeType: string
+        const docData = data as Record<string, unknown>
+
+        if (docData.file_path) {
+          // Fetch original uploaded file from Storage
+          const { data: fileData } = await admin.storage.from('documents').download(docData.file_path as string)
+          fileBuffer = Buffer.from(await fileData!.arrayBuffer())
+          filename = (docData.file_name as string) ?? 'document'
+          mimeType = (docData.file_type as string) ?? 'application/octet-stream'
+        } else {
+          // Generate DOCX from content_markdown
+          fileBuffer = await exportToDocx(data as Document, groupName)
+          const safeName = (data.title as string).replace(/[^a-zA-Z0-9 \-_]/g, '').trim() || 'Document'
+          filename = `${safeName}.docx`
+          mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        }
+
+        const folderPath = mapping?.sharepoint_path ?? conn.folder_path ?? 'NavHub/Documents'
+        const folderId   = await ensureSharePointFolder(access_token, conn.drive_id, folderPath)
 
         const uploaded = await uploadFileToSharePoint(
-          access_token, conn.drive_id, folderId, filename, docxBuffer,
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          access_token, conn.drive_id, folderId, filename, fileBuffer, mimeType,
         )
 
         void admin.from('document_sharepoint_sync').upsert({
@@ -141,6 +169,13 @@ export async function PATCH(
         }, { onConflict: 'document_id' })
       } catch (err) {
         console.error('SharePoint auto-sync error:', err)
+        // Record the failure
+        void admin.from('document_sharepoint_sync').upsert({
+          document_id: params.id,
+          sync_status: 'failed',
+          error_message: err instanceof Error ? err.message : 'Unknown error',
+          last_synced_at: new Date().toISOString(),
+        }, { onConflict: 'document_id' }).select()
       }
     })()
   }

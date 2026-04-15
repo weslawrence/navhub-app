@@ -31,7 +31,9 @@ export async function GET() {
     .eq('is_active', true)
     .maybeSingle()
 
-  return NextResponse.json({ data: data ?? null })
+  const configured = !!(process.env.SHAREPOINT_CLIENT_ID && process.env.SHAREPOINT_CLIENT_SECRET)
+
+  return NextResponse.json({ data: data ?? null, configured })
 }
 
 export async function PATCH(req: Request) {

@@ -172,6 +172,9 @@ export default function DocumentPage() {
   const [spConnected, setSpConnected] = useState(false)
   const [spSyncing,   setSpSyncing]   = useState(false)
   const [spSyncMsg,   setSpSyncMsg]   = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [spSyncRecord, setSpSyncRecord] = useState<{
+    sharepoint_url: string | null; last_synced_at: string | null; sync_status: string | null; error_message: string | null
+  } | null>(null)
 
   // File extraction state
   const [extracting,    setExtracting]    = useState(false)
@@ -205,7 +208,15 @@ export default function DocumentPage() {
     setIsAdmin(role === 'super_admin' || role === 'group_admin')
     if (spRes.ok) {
       const spJson = await spRes.json() as { data: { is_active: boolean } | null }
-      setSpConnected(!!spJson.data?.is_active)
+      const connected = !!spJson.data?.is_active
+      setSpConnected(connected)
+      // Fetch sync record if connected
+      if (connected) {
+        fetch(`/api/documents/${docId}/sharepoint-sync`)
+          .then(r => r.json())
+          .then(j => setSpSyncRecord(j.data ?? null))
+          .catch(() => {})
+      }
     }
     setLoading(false)
   }, [docId])
@@ -356,15 +367,15 @@ export default function DocumentPage() {
     setSpSyncing(true)
     setSpSyncMsg(null)
     try {
-      const res = await fetch('/api/integrations/sharepoint/sync', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ document_id: docId }),
+      const res = await fetch(`/api/documents/${docId}/sharepoint-sync`, {
+        method: 'POST',
       })
       const json = await res.json() as { success?: boolean; filename?: string; error?: string }
       if (!res.ok || !json.success) throw new Error(json.error ?? 'Sync failed')
       setSpSyncMsg({ type: 'success', text: `Synced: ${json.filename ?? 'document'}` })
       setTimeout(() => setSpSyncMsg(null), 4000)
+      // Refresh sync record
+      fetch(`/api/documents/${docId}/sharepoint-sync`).then(r => r.json()).then(j => setSpSyncRecord(j.data ?? null)).catch(() => {})
     } catch (err) {
       setSpSyncMsg({ type: 'error', text: err instanceof Error ? err.message : 'Sync failed' })
     } finally {
@@ -533,18 +544,39 @@ export default function DocumentPage() {
                 <Share2 className="h-3.5 w-3.5" /> Share
               </Button>
               {spConnected && (
-                <Button
-                  size="sm" variant="outline"
-                  onClick={() => void handleSyncToSharePoint()}
-                  disabled={spSyncing}
-                  className="gap-1.5"
-                >
-                  {spSyncing
-                    ? <SyncLoader className="h-3.5 w-3.5 animate-spin" />
-                    : <Cloud className="h-3.5 w-3.5" />
-                  }
-                  {spSyncing ? 'Syncing…' : 'SharePoint'}
-                </Button>
+                <div className="flex items-center gap-1.5">
+                  {/* Sync status indicator */}
+                  {spSyncRecord?.last_synced_at && (
+                    <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
+                      <span className={`w-1.5 h-1.5 rounded-full ${
+                        spSyncRecord.sync_status === 'failed' ? 'bg-red-500' : 'bg-green-500'
+                      }`} />
+                      {spSyncRecord.sync_status === 'failed'
+                        ? 'Sync failed'
+                        : `Synced ${(() => { const d = Date.now() - new Date(spSyncRecord.last_synced_at!).getTime(); const h = Math.floor(d / 3600000); return h < 1 ? 'just now' : `${h}h ago` })()}`
+                      }
+                    </span>
+                  )}
+                  {spSyncRecord?.sharepoint_url && (
+                    <a href={spSyncRecord.sharepoint_url} target="_blank" rel="noopener noreferrer">
+                      <Button size="sm" variant="ghost" className="h-7 w-7 p-0">
+                        <ExternalLink className="h-3 w-3 text-muted-foreground" />
+                      </Button>
+                    </a>
+                  )}
+                  <Button
+                    size="sm" variant="outline"
+                    onClick={() => void handleSyncToSharePoint()}
+                    disabled={spSyncing}
+                    className="gap-1.5"
+                  >
+                    {spSyncing
+                      ? <SyncLoader className="h-3.5 w-3.5 animate-spin" />
+                      : <Cloud className="h-3.5 w-3.5" />
+                    }
+                    {spSyncing ? 'Syncing…' : 'Sync'}
+                  </Button>
+                </div>
               )}
               <Button
                 size="sm"

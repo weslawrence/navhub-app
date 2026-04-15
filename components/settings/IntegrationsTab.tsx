@@ -98,8 +98,10 @@ export default function IntegrationsTab() {
 
   // SharePoint state
   const [spConnection,      setSpConnection]      = useState<SharePointConnection | null>(null)
+  const [spConfigured,      setSpConfigured]      = useState(true)
   const [spDisconnecting,   setSpDisconnecting]   = useState(false)
   const [spMappings,        setSpMappings]        = useState<FolderMapping[]>([])
+  const [spFolders,         setSpFolders]         = useState<{ id: string; name: string }[]>([])
   const [spMappingSaving,   setSpMappingSaving]   = useState<string | null>(null)  // folder_id or 'default'
   // Local editable copies of sharepoint paths
   const [spPathEdits,       setSpPathEdits]       = useState<Record<string, string>>({})  // folder_id|'default' -> path
@@ -114,13 +116,17 @@ export default function IntegrationsTab() {
 
   const loadSharePointStatus = useCallback(async () => {
     try {
-      const [spRes, mapRes] = await Promise.all([
+      const [spRes, mapRes, foldersRes] = await Promise.all([
         fetch('/api/integrations/sharepoint/status'),
         fetch('/api/integrations/sharepoint/mappings'),
+        fetch('/api/documents/folders'),
       ])
-      const spJson  = spRes.ok  ? await spRes.json() as { data: SharePointConnection | null } : { data: null }
-      const mapJson = mapRes.ok ? await mapRes.json() as { data: FolderMapping[] }             : { data: [] }
+      const spJson      = spRes.ok      ? await spRes.json() as { data: SharePointConnection | null; configured?: boolean } : { data: null }
+      const mapJson     = mapRes.ok     ? await mapRes.json() as { data: FolderMapping[] }             : { data: [] }
+      const foldersJson = foldersRes.ok ? await foldersRes.json() as { data: { id: string; name: string }[] } : { data: [] }
       setSpConnection(spJson.data)
+      setSpConfigured(spJson.configured !== false)
+      setSpFolders(foldersJson.data ?? [])
       const mappings = mapJson.data ?? []
       setSpMappings(mappings)
       // Initialise path edits from DB
@@ -651,38 +657,40 @@ export default function IntegrationsTab() {
                   </div>
                 </div>
 
-                {/* Per-folder paths */}
-                {companies.length > 0 || divisions.length > 0 ? (
+                {/* Per-folder paths — show all folders */}
+                {spFolders.length > 0 && (
                   <div className="space-y-2">
-                    <p className="text-xs font-medium text-muted-foreground">Per-folder overrides</p>
-                    {spMappings.filter(m => m.folder_id !== null).map(m => {
-                      const folderName = m.document_folders?.name ?? m.folder_id ?? 'Unknown folder'
-                      const key = m.folder_id!
+                    <p className="text-xs font-medium text-muted-foreground">Folder-specific paths</p>
+                    <p className="text-[10px] text-muted-foreground">Documents in each folder will sync to the specified SharePoint path. Leave blank to use the default.</p>
+                    {spFolders.map(folder => {
+                      const key = folder.id
+                      const existingMapping = spMappings.find(m => m.folder_id === folder.id)
+                      const autoSync = existingMapping?.auto_sync ?? false
                       return (
                         <div key={key} className="flex items-center gap-2">
-                          <span className="text-xs text-foreground min-w-[120px] truncate">{folderName}</span>
+                          <span className="text-xs text-foreground min-w-[120px] truncate">{folder.name}</span>
                           <input
                             type="text"
-                            value={spPathEdits[key] ?? m.sharepoint_path}
+                            value={spPathEdits[key] ?? existingMapping?.sharepoint_path ?? ''}
                             onChange={e => setSpPathEdits(prev => ({ ...prev, [key]: e.target.value }))}
-                            placeholder="/NavHub"
+                            placeholder="(uses default)"
                             className="flex-1 h-7 rounded-md border border-input bg-background px-2 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
                           />
                           <label className="flex items-center gap-1 text-xs text-muted-foreground whitespace-nowrap">
                             <input
                               type="checkbox"
-                              checked={m.auto_sync}
-                              onChange={e => void handleSaveMapping(m.folder_id, e.target.checked)}
+                              checked={autoSync}
+                              onChange={e => void handleSaveMapping(folder.id, e.target.checked)}
                               className="h-3.5 w-3.5"
                             />
-                            Auto-sync
+                            Auto
                           </label>
                           <Button
                             size="sm"
                             variant="outline"
                             className="h-7 px-2 gap-1"
                             disabled={spMappingSaving === key}
-                            onClick={() => void handleSaveMapping(m.folder_id, m.auto_sync)}
+                            onClick={() => void handleSaveMapping(folder.id, autoSync)}
                           >
                             {spMappingSaving === key
                               ? <Loader2 className="h-3 w-3 animate-spin" />
@@ -693,23 +701,35 @@ export default function IntegrationsTab() {
                       )
                     })}
                   </div>
-                ) : null}
+                )}
               </CardContent>
             </Card>
           </>
         ) : (
-          <div className="rounded-lg border border-border bg-card px-4 py-4 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="text-2xl">📎</span>
-              <div>
-                <p className="text-sm font-medium text-foreground">Microsoft SharePoint / OneDrive</p>
-                <p className="text-xs text-muted-foreground">Not connected</p>
+          <div className="space-y-3">
+            {!spConfigured && (
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950 px-4 py-3 text-sm text-amber-700 dark:text-amber-300 flex items-start gap-2">
+                <span className="shrink-0 mt-0.5">⚠️</span>
+                <p className="text-xs">SharePoint is not configured. Add <code className="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">SHAREPOINT_CLIENT_ID</code> and <code className="font-mono bg-amber-100 dark:bg-amber-900 px-1 rounded">SHAREPOINT_CLIENT_SECRET</code> to your environment variables.</p>
               </div>
+            )}
+            <div className="rounded-lg border border-border bg-card px-4 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <span className="text-2xl">📎</span>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Microsoft SharePoint / OneDrive</p>
+                  <p className="text-xs text-muted-foreground">
+                    {spConfigured ? 'Not connected — sync documents to your SharePoint site' : 'Not configured'}
+                  </p>
+                </div>
+              </div>
+              {spConfigured && (
+                <Button size="sm" className="gap-1.5" onClick={connectSharePoint}>
+                  <Link2 className="h-3.5 w-3.5" />
+                  Connect
+                </Button>
+              )}
             </div>
-            <Button size="sm" className="gap-1.5" onClick={connectSharePoint}>
-              <Link2 className="h-3.5 w-3.5" />
-              Connect
-            </Button>
           </div>
         )}
       </div>

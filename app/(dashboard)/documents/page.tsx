@@ -5,7 +5,7 @@ import Link from 'next/link'
 import {
   Plus, FolderOpen, FileText, Sparkles, Lock, Share2, MoreHorizontal,
   Folder, Trash2, MoveRight, Search, SlidersHorizontal, Upload,
-  LayoutTemplate, Tag, ChevronDown,
+  LayoutTemplate, Tag, ChevronDown, Cloud,
 } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { cn }       from '@/lib/utils'
@@ -63,6 +63,7 @@ function DocumentCard({
   onToggleStatus,
   folders,
   isAdmin,
+  spConnected,
 }: {
   doc:             DocWithMeta
   companies:       Company[]
@@ -71,6 +72,7 @@ function DocumentCard({
   onMoveToFolder:  (id: string, folderId: string | null) => void
   onToggleStatus:  (id: string, status: string) => void
   isAdmin:         boolean
+  spConnected:     boolean
 }) {
   const [menuOpen,   setMenuOpen]   = useState(false)
   const [moveOpen,   setMoveOpen]   = useState(false)
@@ -122,6 +124,11 @@ function DocumentCard({
           {doc.is_shareable && (
             <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 ml-auto">
               <Share2 className="h-3 w-3" /> Shared
+            </span>
+          )}
+          {spConnected && (
+            <span className="ml-auto" title="SharePoint connected">
+              <Cloud className="h-3 w-3 text-muted-foreground/40" />
             </span>
           )}
         </div>
@@ -232,20 +239,26 @@ export default function DocumentsPage() {
   const [newFolderName, setNewFolderName] = useState('')
   const [addingFolder,  setAddingFolder]  = useState(false)
   const [folderLoading, setFolderLoading] = useState(false)
+  const [spConnected,   setSpConnected]   = useState(false)
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [docsRes, foldersRes, companiesRes, roleRes, tagsRes] = await Promise.all([
+      const [docsRes, foldersRes, companiesRes, roleRes, tagsRes, spRes] = await Promise.all([
         fetch('/api/documents'),
         fetch('/api/documents/folders'),
         fetch('/api/companies'),
         fetch('/api/groups/active'),
         fetch('/api/documents/tags'),
+        fetch('/api/integrations/sharepoint/status'),
       ])
       const [docsJson, foldersJson, companiesJson, roleJson, tagsJson] = await Promise.all([
         docsRes.json(), foldersRes.json(), companiesRes.json(), roleRes.json(), tagsRes.json(),
       ])
+      if (spRes.ok) {
+        const spJson = await spRes.json() as { data: { is_active: boolean } | null }
+        setSpConnected(!!spJson.data?.is_active)
+      }
       setDocuments(docsJson.data ?? [])
       setFolders(foldersJson.data ?? [])
       setCompanies((companiesJson.data ?? []).filter((c: Company) => c.is_active))
@@ -620,7 +633,7 @@ export default function DocumentsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
                     {published.map(doc => (
                       <DocumentCard key={doc.id} doc={doc} companies={companies} folders={folders}
-                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} />
+                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} spConnected={spConnected} />
                     ))}
                   </div>
                 </div>
@@ -641,7 +654,7 @@ export default function DocumentsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 opacity-90">
                     {drafts.map(doc => (
                       <DocumentCard key={doc.id} doc={doc} companies={companies} folders={folders}
-                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} />
+                        onDelete={handleDelete} onMoveToFolder={handleMoveToFolder} onToggleStatus={handleToggleStatus} isAdmin={isAdmin} spConnected={spConnected} />
                     ))}
                   </div>
                 </div>

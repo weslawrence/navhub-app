@@ -10,7 +10,7 @@ const MAX_SIZE_BYTES = 5 * 1024 * 1024  // 5 MB
 // ─── GET /api/reports/custom ──────────────────────────────────────────────────
 // Returns all active custom reports for the active group, sorted by sort_order.
 
-export async function GET() {
+export async function GET(request: Request) {
   const supabase      = createClient()
   const cookieStore   = cookies()
   const activeGroupId = cookieStore.get('active_group_id')?.value
@@ -18,6 +18,9 @@ export async function GET() {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
+
+  const url      = new URL(request.url)
+  const folderId = url.searchParams.get('folder_id')
 
   // Check user role for status filtering
   const { data: membership } = await supabase
@@ -35,6 +38,9 @@ export async function GET() {
     .eq('group_id', activeGroupId)
     .eq('is_active', true)
     .order('sort_order', { ascending: true })
+
+  if (folderId === 'unfiled') query = query.is('folder_id', null)
+  else if (folderId)           query = query.eq('folder_id', folderId)
 
   // Viewers can only see published reports
   if (userRole === 'viewer') {

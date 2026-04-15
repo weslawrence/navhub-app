@@ -6,6 +6,7 @@ import {
   FileText, Upload, Plus, X, Check, Loader2, BookOpen, Share2,
   Search, LayoutGrid, List, ChevronDown, Sparkles, Tag,
   ArrowUpDown, MoreHorizontal, Pencil, Download, Eye, Trash2,
+  Folder, FolderOpen, LayoutTemplate,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -58,6 +59,14 @@ export default function ReportsLibraryPage() {
   const [showUpload, setShowUpload] = useState(false)
   const [allTags,    setAllTags]    = useState<string[]>([])
 
+  // Folder state
+  type ReportFolder = { id: string; name: string; is_system: boolean; folder_type: string }
+  const [folders,       setFolders]       = useState<ReportFolder[]>([])
+  const [activeFolder,  setActiveFolder]  = useState<string | null>(null)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [addingFolder,  setAddingFolder]  = useState(false)
+  const [folderLoading, setFolderLoading] = useState(false)
+
   // Filters & view
   const [view,         setView]         = useState<ViewMode>('grid')
   const [search,       setSearch]       = useState('')
@@ -94,18 +103,21 @@ export default function ReportsLibraryPage() {
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [rRes, gRes, tRes] = await Promise.all([
+      const [rRes, gRes, tRes, fRes] = await Promise.all([
         fetch('/api/reports/custom'),
         fetch('/api/groups/active'),
         fetch('/api/reports/custom/tags'),
+        fetch('/api/report-folders'),
       ])
       const rJson = await rRes.json()
       const gJson = await gRes.json()
       const tJson = await tRes.json()
+      const fJson = fRes.ok ? await fRes.json() : { data: [] }
 
       if (rJson.data) setReports(rJson.data as CustomReport[])
       if (gJson.data) setIsAdmin(gJson.data.is_admin)
       if (tJson.data) setAllTags(tJson.data as string[])
+      setFolders(fJson.data ?? [])
     } catch { /* silent */ } finally {
       setLoading(false)
     }
@@ -134,6 +146,10 @@ export default function ReportsLibraryPage() {
   // ── Filtered + sorted reports ────────────────────────────────────────────────
   const filtered = useMemo(() => {
     let r = [...reports]
+
+    // Folder filter
+    if (activeFolder === 'unfiled') r = r.filter(rep => !rep.folder_id)
+    else if (activeFolder) r = r.filter(rep => rep.folder_id === activeFolder)
 
     // Search
     if (search.trim()) {
@@ -260,6 +276,22 @@ export default function ReportsLibraryPage() {
       body: JSON.stringify({ tags }),
     })
     setReports(rs => rs.map(r => r.id === report.id ? { ...r, tags } : r))
+  }
+
+  async function handleAddFolder() {
+    if (!newFolderName.trim()) return
+    setFolderLoading(true)
+    try {
+      const res = await fetch('/api/report-folders', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newFolderName.trim() }),
+      })
+      const json = await res.json()
+      if (res.ok) {
+        setFolders(prev => [...prev, json.data])
+        setNewFolderName(''); setAddingFolder(false)
+      }
+    } finally { setFolderLoading(false) }
   }
 
   async function handleDelete(report: CustomReport) {
@@ -493,8 +525,73 @@ export default function ReportsLibraryPage() {
 
   // ── Render ───────────────────────────────────────────────────────────────────
 
+  const countAll     = reports.length
+  const countUnfiled = reports.filter(r => !r.folder_id).length
+  const folderCounts = folders.reduce<Record<string, number>>((acc, f) => {
+    acc[f.id] = reports.filter(r => r.folder_id === f.id).length
+    return acc
+  }, {})
+
   return (
-    <div className="space-y-5">
+    <div className="flex min-h-[calc(100vh-3.5rem)]">
+      {/* ── Folder sidebar ── */}
+      <aside className="hidden lg:flex flex-col w-52 border-r shrink-0 py-4 px-3 space-y-1">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide px-2 mb-2">Folders</p>
+        <button onClick={() => setActiveFolder(null)}
+          className={cn('flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+            activeFolder === null ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}>
+          <FolderOpen className="h-4 w-4 shrink-0" /><span className="flex-1 truncate">All Reports</span>
+          <span className="text-xs text-muted-foreground">{countAll}</span>
+        </button>
+        <button onClick={() => setActiveFolder('unfiled')}
+          className={cn('flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+            activeFolder === 'unfiled' ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}>
+          <Folder className="h-4 w-4 shrink-0" /><span className="flex-1 truncate">Unfiled</span>
+          <span className="text-xs text-muted-foreground">{countUnfiled}</span>
+        </button>
+        {folders.filter(f => f.folder_type === 'templates').map(f => (
+          <button key={f.id} onClick={() => setActiveFolder(f.id)}
+            className={cn('flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+              activeFolder === f.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}>
+            <LayoutTemplate className="h-4 w-4 shrink-0" /><span className="flex-1 truncate">{f.name}</span>
+            <span className="text-xs text-muted-foreground">{folderCounts[f.id] ?? 0}</span>
+          </button>
+        ))}
+        {folders.filter(f => f.folder_type !== 'templates').map(f => (
+          <button key={f.id} onClick={() => setActiveFolder(f.id)}
+            className={cn('flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+              activeFolder === f.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted')}>
+            <Folder className="h-4 w-4 shrink-0" /><span className="flex-1 truncate">{f.name}</span>
+            <span className="text-xs text-muted-foreground">{folderCounts[f.id] ?? 0}</span>
+          </button>
+        ))}
+        {isAdmin && (
+          <div className="pt-2 border-t mt-2">
+            {addingFolder ? (
+              <div className="space-y-1.5">
+                <input autoFocus value={newFolderName} onChange={e => setNewFolderName(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') void handleAddFolder(); if (e.key === 'Escape') setAddingFolder(false) }}
+                  placeholder="Folder name…"
+                  className="flex h-7 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+                <div className="flex gap-1">
+                  <Button size="sm" className="h-6 text-xs flex-1" onClick={() => void handleAddFolder()} disabled={folderLoading}>
+                    {folderLoading ? '…' : 'Add'}
+                  </Button>
+                  <Button size="sm" variant="outline" className="h-6 text-xs" onClick={() => setAddingFolder(false)}>×</Button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setAddingFolder(true)}
+                className="flex items-center gap-1.5 w-full text-xs text-muted-foreground hover:text-foreground px-2 py-1 rounded-md hover:bg-muted transition-colors">
+                <Plus className="h-3 w-3" /> New Folder
+              </button>
+            )}
+          </div>
+        )}
+      </aside>
+
+      {/* ── Main content ── */}
+      <div className="flex-1 min-w-0 px-6 py-6 space-y-5">
 
       {/* ── Header ─────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-4">
@@ -903,6 +1000,7 @@ export default function ReportsLibraryPage() {
             : `${filtered.length} of ${reports.length} reports`}
         </p>
       )}
+      </div> {/* end main content */}
     </div>
   )
 }

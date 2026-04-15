@@ -120,6 +120,10 @@ export async function PATCH(
     updates.description = body.description.trim() || null
   }
 
+  if ('folder_id' in body) {
+    updates.folder_id = body.folder_id ?? null
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No valid fields to update' }, { status: 400 })
   }

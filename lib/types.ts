@@ -253,6 +253,7 @@ export interface CustomReport {
   is_active:              boolean
   is_draft:               boolean
   status:                 'draft' | 'published'
+  folder_id:              string | null
   sort_order:             number
   is_shareable:           boolean
   share_token:            string | null

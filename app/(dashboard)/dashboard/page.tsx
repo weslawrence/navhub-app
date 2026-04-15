@@ -3,462 +3,366 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
-  LayoutDashboard,
-  Banknote,
-  TrendingUp,
-  RefreshCw,
-  Building2,
-  Bot,
-  AlertTriangle,
-  Plug,
-  AlertCircle,
-  CheckCircle2,
+  Building2, Bot, FileText, TrendingUp, DollarSign,
+  BarChart2, ArrowRight,
 } from 'lucide-react'
-import { DashboardCard }  from '@/components/dashboard/DashboardCard'
-import { Button }         from '@/components/ui/button'
-import { Badge }          from '@/components/ui/badge'
-import { Separator }      from '@/components/ui/separator'
-import {
-  formatCurrency,
-  formatPeriodLabel,
-  getCurrentPeriod,
-  getCurrentQuarterMonths,
-  getYTDMonths,
-  formatPeriod,
-} from '@/lib/utils'
-import type { DashboardSummary, NumberFormat } from '@/lib/types'
-import PeriodSelector from '@/components/ui/PeriodSelector'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge }  from '@/components/ui/badge'
+import { cn }     from '@/lib/utils'
+import { formatCurrency } from '@/lib/utils'
+import type { NumberFormat } from '@/lib/types'
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ── Types ────────────────────────────────────────────────────────────────────
 
-interface UserPrefs { currency: string; number_format: NumberFormat }
-
-interface CompanyStatus {
-  id:       string
-  name:     string
-  hasXero:  boolean
-  lastSync: string | null
+interface CompanyCard {
+  id: string; name: string
+  revenueMTD: number; grossMargin: number
+  cashPosition: number; health: 'healthy' | 'review' | 'at_risk'
 }
 
-// ─── Helper: relative time ────────────────────────────────────────────────────
-
-function relativeTime(isoDate: string | null): string {
-  if (!isoDate) return 'Never'
-  const diff  = Date.now() - new Date(isoDate).getTime()
-  const mins  = Math.floor(diff / 60000)
-  if (mins < 2)   return 'Just now'
-  if (mins < 60)  return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days  = Math.floor(hours / 24)
-  return `${days}d ago`
+interface AgentRun {
+  id: string; agent_name: string; status: string; created_at: string
 }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function MetricRow({
-  label,
-  value,
-  bold     = false,
-  divider  = false,
-}: {
-  label:   string
-  value:   string
-  bold?:   boolean
-  divider?: boolean
-}) {
-  return (
-    <>
-      {divider && <Separator className="my-1" />}
-      <div className={`flex items-center justify-between py-0.5 ${bold ? 'font-semibold' : ''}`}>
-        <span className="text-xs text-muted-foreground truncate pr-2">{label}</span>
-        <span className={`text-xs tabular-nums shrink-0 ${bold ? 'text-foreground' : 'text-muted-foreground'}`}>
-          {value}
-        </span>
-      </div>
-    </>
-  )
+interface RecentDoc {
+  id: string; title: string; type: 'document' | 'report'; updated_at: string
 }
 
-function NoDataBanner({ message, linkLabel, href }: { message: string; linkLabel: string; href: string }) {
-  return (
-    <div className="rounded-md bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3 mb-3">
-      <p className="text-xs text-amber-700 dark:text-amber-300 mb-2">{message}</p>
-      <Button size="sm" variant="outline" asChild className="h-7 text-xs">
-        <Link href={href}>{linkLabel}</Link>
-      </Button>
-    </div>
-  )
+interface FeatureAccess {
+  financials: boolean; reports: boolean; documents: boolean
+  agents: boolean; marketing: boolean
 }
 
-// ─── Dashboard Page ───────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function greeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return 'Good morning'
+  if (h < 17) return 'Good afternoon'
+  return 'Good evening'
+}
+
+function todayFormatted(): string {
+  return new Date().toLocaleDateString('en-AU', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
+}
+
+function relativeTime(iso: string): string {
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000
+  if (diff < 60) return 'just now'
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
+const HEALTH_BADGE: Record<string, { label: string; cls: string }> = {
+  healthy:  { label: 'Healthy',  cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+  review:   { label: 'Review',   cls: 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300' },
+  at_risk:  { label: 'At Risk',  cls: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' },
+}
+
+const STATUS_DOT: Record<string, string> = {
+  completed: 'bg-green-500', running: 'bg-blue-500', awaiting_input: 'bg-amber-500', failed: 'bg-red-500',
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [period,    setPeriod]    = useState('month:' + getCurrentPeriod())
-  const [summary,   setSummary]   = useState<DashboardSummary | null>(null)
-  const [prefs,     setPrefs]     = useState<UserPrefs>({ currency: 'AUD', number_format: 'thousands' })
-  const [companies, setCompanies] = useState<CompanyStatus[]>([])
-  const [groupName, setGroupName] = useState<string | null>(null)
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState<string | null>(null)
-  const [syncing,   setSyncing]   = useState(false)
-  const [syncMsg,   setSyncMsg]   = useState<string | null>(null)
+  const [userName,   setUserName]   = useState('')
+  const [features,   setFeatures]   = useState<FeatureAccess>({ financials: false, reports: false, documents: false, agents: false, marketing: false })
+  const [companies,  setCompanies]  = useState<CompanyCard[]>([])
+  const [agentRuns,  setAgentRuns]  = useState<AgentRun[]>([])
+  const [recentDocs, setRecentDocs] = useState<RecentDoc[]>([])
+  const [metrics,    setMetrics]    = useState({ revenueMTD: 0, cashPosition: 0, agentRuns7d: 0, docsPublished: 0 })
+  const [loading,    setLoading]    = useState(true)
+  const [numFmt,     setNumFmt]     = useState<NumberFormat>('smart')
+  const [currency,   setCurrency]   = useState('AUD')
 
-   // ── Fetch data ──────────────────────────────────────────────────────────────
+  const fmt = useCallback((v: number) => formatCurrency(v, numFmt, currency), [currency, numFmt])
 
-  const fetchAll = useCallback(async (p: string) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const [summaryRes, prefsRes, companiesRes, groupRes] = await Promise.all([
-        fetch(`/api/dashboard/summary?period=${encodeURIComponent(p)}`),
-        fetch('/api/settings'),
-        fetch('/api/companies?include_inactive=false'),
-        fetch('/api/groups/active'),
-      ])
+  useEffect(() => {
+    async function load() {
+      try {
+        const [groupRes, prefsRes, permRes] = await Promise.all([
+          fetch('/api/groups/active'),
+          fetch('/api/user/preferences'),
+          fetch('/api/user/permissions'),
+        ])
+        const groupJson = await groupRes.json()
+        const prefsJson = prefsRes.ok ? await prefsRes.json() : { data: null }
+        const permJson  = permRes.ok ? await permRes.json() : { data: null }
 
-      const [summaryJson, prefsJson, companiesJson, groupJson] = await Promise.all([
-        summaryRes.json(),
-        prefsRes.json(),
-        companiesRes.json(),
-        groupRes.json(),
-      ])
+        if (prefsJson.data) {
+          if (prefsJson.data.currency) setCurrency(prefsJson.data.currency)
+          if (prefsJson.data.number_format) setNumFmt(prefsJson.data.number_format)
+        }
 
-      if (!summaryRes.ok)   throw new Error(summaryJson.error ?? 'Failed to load dashboard')
-      if (!prefsRes.ok)     setPrefs({ currency: 'AUD', number_format: 'thousands' })
-      else                  setPrefs(prefsJson.data)
+        // User name from group data
+        setUserName(groupJson.data?.user_name?.split(' ')[0] ?? 'there')
 
-      setSummary(summaryJson.data)
-      setGroupName(groupJson.data?.group?.name ?? null)
+        // Feature access
+        const isAdmin = groupJson.data?.is_admin ?? false
+        const perms: string[] = permJson.data?.features ?? []
+        setFeatures({
+          financials: isAdmin || perms.includes('financials'),
+          reports:    isAdmin || perms.includes('reports'),
+          documents:  isAdmin || perms.includes('documents'),
+          agents:     isAdmin || perms.includes('agents'),
+          marketing:  isAdmin || perms.includes('marketing'),
+        })
 
-      // Build company status list with real Xero status from companies API
-      setCompanies((companiesJson.data ?? []).map((c: {
-        id:             string
-        name:           string
-        has_xero?:      boolean
-        last_synced_at?: string | null
-      }) => ({
-        id:       c.id,
-        name:     c.name,
-        hasXero:  c.has_xero      ?? false,
-        lastSync: c.last_synced_at ?? null,
-      })))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load dashboard data. Try refreshing.')
-    } finally {
+        // Fetch data in parallel
+        const fetches: Promise<void>[] = []
+
+        // Companies + financial snapshots
+        if (isAdmin || perms.includes('financials')) {
+          fetches.push(
+            fetch('/api/companies?include_inactive=false').then(r => r.json()).then(json => {
+              const cards: CompanyCard[] = (json.data ?? []).map((c: { id: string; name: string }) => ({
+                id: c.id, name: c.name, revenueMTD: 0, grossMargin: 0, cashPosition: 0, health: 'healthy' as const,
+              }))
+              setCompanies(cards)
+            })
+          )
+        }
+
+        // Agent runs
+        if (isAdmin || perms.includes('agents')) {
+          fetches.push(
+            fetch('/api/agents/runs?limit=3').then(r => r.ok ? r.json() : { data: [] }).then(json => {
+              setAgentRuns((json.data ?? []).slice(0, 3))
+              setMetrics(prev => ({ ...prev, agentRuns7d: json.data?.length ?? 0 }))
+            })
+          )
+        }
+
+        // Recent docs + reports
+        if (isAdmin || perms.includes('documents') || perms.includes('reports')) {
+          fetches.push(
+            Promise.all([
+              fetch('/api/documents?status=published').then(r => r.ok ? r.json() : { data: [] }),
+              fetch('/api/reports/custom?status=published').then(r => r.ok ? r.json() : { data: [] }),
+            ]).then(([docsJson, repsJson]) => {
+              const docs: RecentDoc[] = (docsJson.data ?? []).slice(0, 3).map((d: { id: string; title: string; updated_at: string }) => ({
+                id: d.id, title: d.title, type: 'document' as const, updated_at: d.updated_at,
+              }))
+              const reps: RecentDoc[] = (repsJson.data ?? []).slice(0, 3).map((r: { id: string; name: string; updated_at: string }) => ({
+                id: r.id, title: r.name, type: 'report' as const, updated_at: r.updated_at,
+              }))
+              const combined = [...docs, ...reps].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()).slice(0, 3)
+              setRecentDocs(combined)
+              setMetrics(prev => ({ ...prev, docsPublished: (docsJson.data?.length ?? 0) + (repsJson.data?.length ?? 0) }))
+            })
+          )
+        }
+
+        await Promise.allSettled(fetches)
+      } catch { /* silent */ }
       setLoading(false)
     }
+    void load()
   }, [])
 
-  useEffect(() => { fetchAll(period) }, [fetchAll, period])
+  const hasAnyFeature = Object.values(features).some(Boolean)
 
-  // ── Sync all ────────────────────────────────────────────────────────────────
-
-  async function handleSyncAll() {
-    setSyncing(true)
-    setSyncMsg(null)
-    try {
-      const res  = await fetch('/api/xero/sync/all', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ period }),
-      })
-      const json = await res.json()
-      const d    = json.data
-      if (d?.synced !== undefined) {
-        const msg = d.errors?.length > 0
-          ? `Synced ${d.synced} reports · ${d.errors.length} error(s)`
-          : `Synced ${d.synced} reports`
-        setSyncMsg(msg)
-      } else {
-        setSyncMsg('Sync complete')
-      }
-      // Re-fetch dashboard data for the current period
-      await fetchAll(period)
-    } catch {
-      setSyncMsg('Sync failed')
-    } finally {
-      setSyncing(false)
-    }
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div className="h-8 bg-muted rounded w-64 animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map(i => <div key={i} className="h-24 bg-muted rounded-xl animate-pulse" />)}
+        </div>
+      </div>
+    )
   }
-
-  // ── Derived ─────────────────────────────────────────────────────────────────
-
-  const fmt = (v: number | null) => formatCurrency(v, prefs.number_format, prefs.currency)
-  const ap  = summary?.app_summary
-  const cp  = summary?.current_position
-  const perf = summary?.performance
-
-  const hasBalanceData = cp && (cp.cash !== null || cp.total_current_assets !== null)
-  const hasPLData      = perf && (perf.ytd.revenue !== null || perf.qtd.revenue !== null)
-
-  const qtdRange  = getCurrentQuarterMonths(period)
-  const ytdRange  = getYTDMonths(period)
-
-  function periodRangeLabel(months: string[]): string {
-    if (months.length === 0) return ''
-    if (months.length === 1) return formatPeriod(months[0])
-    return `${formatPeriod(months[0])} – ${formatPeriod(months[months.length - 1])}`
-  }
-
-  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            {groupName && (
-              <span className="font-medium text-foreground">{groupName} · </span>
-            )}
-            Financial overview · <span className="font-medium text-foreground">{formatPeriodLabel(period)}</span>
-          </p>
-        </div>
-        {/* Period selector + Refresh */}
-        <div className="flex items-center gap-2">
-          <PeriodSelector value={period} onChange={setPeriod} />
-          <Button variant="outline" size="sm" onClick={handleSyncAll} disabled={syncing}>
-            <RefreshCw className={`h-4 w-4 mr-1 ${syncing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-        </div>
+    <div className="space-y-8">
+      {/* Greeting */}
+      <div>
+        <h1 className="text-2xl font-bold tracking-tight">{greeting()}, {userName}</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">{todayFormatted()}</p>
       </div>
 
-      {/* Top row: 4 equal cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {!hasAnyFeature && (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">Contact your administrator to get access to features.</p>
+          </CardContent>
+        </Card>
+      )}
 
-        {/* ── Card 1: App Summary ─────────────────────────────────────────── */}
-        <DashboardCard
-          title="NavHub Overview"
-          icon={LayoutDashboard}
-          isLoading={loading}
-          error={error}
-          footer={
-            ap ? (
-              <p className="text-xs text-muted-foreground">
-                <Link href="/integrations" className="hover:text-primary underline-offset-2 hover:underline">
-                  {ap.companies_with_xero} of {ap.company_count} companies connected to Xero
-                </Link>
-              </p>
-            ) : null
-          }
-        >
-          {ap && (
-            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-              <div>
-                <Link href="/companies" className="block hover:text-primary transition-colors">
-                  <p className="text-2xl font-bold">{ap.company_count}</p>
-                  <p className="text-xs text-muted-foreground">Companies</p>
-                </Link>
-              </div>
-              <div>
-                <Link href="/companies" className="block hover:text-primary transition-colors">
-                  <p className="text-2xl font-bold">{ap.division_count}</p>
-                  <p className="text-xs text-muted-foreground">Divisions</p>
-                </Link>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-muted-foreground/50">{ap.active_agent_count}</p>
-                <p className="text-xs text-muted-foreground">
-                  Agents
-                  <Badge variant="secondary" className="ml-1.5 text-[9px] py-0">Soon</Badge>
-                </p>
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-muted-foreground/50">{ap.alert_count}</p>
-                <p className="text-xs text-muted-foreground">
-                  Alerts
-                  <Badge variant="secondary" className="ml-1.5 text-[9px] py-0">Soon</Badge>
-                </p>
-              </div>
-            </div>
-          )}
-        </DashboardCard>
-
-        {/* ── Card 2: Current Position ─────────────────────────────────────── */}
-        <DashboardCard
-          title="Current Position"
-          icon={Banknote}
-          subtitle={cp ? `As at ${formatPeriod(cp.as_at_period)}` : undefined}
-          isLoading={loading}
-          error={error}
-          footer={
-            cp ? (
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">
-                  Across {cp.companies_included} {cp.companies_included === 1 ? 'company' : 'companies'}
-                </p>
-                {cp.companies_missing_data > 0 && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                    <AlertTriangle className="h-3 w-3" />
-                    {cp.companies_missing_data} {cp.companies_missing_data === 1 ? 'company' : 'companies'} missing balance sheet data ·{' '}
-                    <Link href="/integrations" className="underline underline-offset-2">Connect</Link>
-                  </p>
-                )}
-              </div>
-            ) : null
-          }
-        >
-          {cp && (
-            <div className="space-y-0.5">
-              {!hasBalanceData && (
-                <NoDataBanner
-                  message="Connect Xero to see balance sheet data"
-                  linkLabel="Connect Xero"
-                  href="/integrations"
-                />
-              )}
-              <MetricRow label="Cash & Equivalents"         value={fmt(cp.cash)} />
-              <MetricRow label="Accounts Receivable"        value={fmt(cp.receivables)} />
-              <MetricRow label="Total Current Assets"       value={fmt(cp.total_current_assets)} bold divider />
-              <MetricRow label="Total Non-Current Assets"   value={fmt(cp.total_non_current_assets)} />
-              <MetricRow label="Accounts Payable"           value={fmt(cp.payables)} divider />
-              <MetricRow label="Total Current Liabilities"  value={fmt(cp.total_current_liabilities)} />
-              <MetricRow label="Total Non-Current Liab."    value={fmt(cp.total_non_current_liabilities)} />
-              <MetricRow label="Net Position"               value={fmt(cp.net_position)} bold divider />
-            </div>
-          )}
-        </DashboardCard>
-
-        {/* ── Card 3: Performance ─────────────────────────────────────────── */}
-        <DashboardCard
-          title="Performance"
-          icon={TrendingUp}
-          isLoading={loading}
-          error={error}
-          footer={
-            perf ? (
-              <p className="text-xs text-muted-foreground">
-                QTD {periodRangeLabel(qtdRange)} · YTD from Jul {ytdRange[0]?.split('-')[0] ?? ''}
-              </p>
-            ) : null
-          }
-        >
-          {perf && (
-            <div>
-              {!hasPLData && (
-                <NoDataBanner
-                  message="Connect Xero or upload Excel to see P&L data"
-                  linkLabel="Get started"
-                  href="/integrations"
-                />
-              )}
-              {/* Three-column table */}
-              <div className="overflow-x-auto -mx-1">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr>
-                      <th className="text-left text-muted-foreground font-medium pb-2 pr-2 whitespace-nowrap">Metric</th>
-                      <th className="text-right text-muted-foreground font-medium pb-2 px-1 whitespace-nowrap">QTD</th>
-                      <th className="text-right text-muted-foreground font-medium pb-2 px-1 whitespace-nowrap">Last Qtr</th>
-                      <th className="text-right text-muted-foreground font-medium pb-2 pl-1 whitespace-nowrap">YTD</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-border/50">
-                    {[
-                      { label: 'Revenue',        qtd: perf.qtd.revenue,            lq: perf.last_qtr.revenue,            ytd: perf.ytd.revenue },
-                      { label: 'COGS',           qtd: perf.qtd.cogs,               lq: perf.last_qtr.cogs,               ytd: perf.ytd.cogs },
-                      { label: 'Gross Profit',   qtd: perf.qtd.gross_profit,       lq: perf.last_qtr.gross_profit,       ytd: perf.ytd.gross_profit,  bold: true },
-                      { label: 'Op. Expenses',   qtd: perf.qtd.operating_expenses, lq: perf.last_qtr.operating_expenses, ytd: perf.ytd.operating_expenses },
-                      { label: 'EBITDA',         qtd: perf.qtd.ebitda,             lq: perf.last_qtr.ebitda,             ytd: perf.ytd.ebitda,        bold: true },
-                    ].map(row => (
-                      <tr key={row.label} className={row.bold ? 'font-semibold' : ''}>
-                        <td className="py-1 pr-2 text-muted-foreground whitespace-nowrap">{row.label}</td>
-                        <td className="py-1 px-1 text-right tabular-nums">{fmt(row.qtd)}</td>
-                        <td className="py-1 px-1 text-right tabular-nums text-muted-foreground">{fmt(row.lq)}</td>
-                        <td className="py-1 pl-1 text-right tabular-nums">{fmt(row.ytd)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </DashboardCard>
-
-        {/* ── Card 4: Data Status ──────────────────────────────────────────── */}
-        <DashboardCard
-          title="Data Status"
-          icon={RefreshCw}
-          isLoading={loading}
-          error={error}
-          footer={
-            ap ? (
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground">
-                  Last sync: {relativeTime(ap.last_synced_at)}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs"
-                    onClick={handleSyncAll}
-                    disabled={syncing}
-                  >
-                    {syncing ? (
-                      <RefreshCw className="h-3 w-3 mr-1.5 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-3 w-3 mr-1.5" />
-                    )}
-                    {syncing ? 'Syncing…' : 'Sync all'}
-                  </Button>
-                  {syncMsg && (
-                    <p className="text-xs text-muted-foreground">{syncMsg}</p>
-                  )}
-                </div>
-              </div>
-            ) : null
-          }
-        >
-          {ap && (
-            <div className="space-y-2">
-              {companies.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-20 text-muted-foreground">
-                  <Plug className="h-6 w-6 mb-2 opacity-30" />
-                  <p className="text-xs">No integrations connected yet</p>
-                  <Button size="sm" variant="outline" asChild className="mt-2 h-7 text-xs">
-                    <Link href="/integrations">Connect your first company</Link>
-                  </Button>
-                </div>
-              ) : (
-                companies.map(company => (
-                  <div key={company.id} className="flex items-center justify-between gap-2 py-1 border-b last:border-0">
-                    <div className="min-w-0">
-                      <p className="text-xs font-medium truncate">{company.name}</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        {relativeTime(company.lastSync)}
-                      </p>
-                    </div>
-                    {company.hasXero ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 text-green-500 flex-shrink-0" />
-                    ) : (
-                      <AlertCircle className="h-3.5 w-3.5 text-muted-foreground/50 flex-shrink-0" />
-                    )}
+      {/* Overview metrics */}
+      {hasAnyFeature && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {features.financials && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                    <DollarSign className="h-5 w-5 text-blue-600 dark:text-blue-400" />
                   </div>
-                ))
-              )}
-            </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Revenue MTD</p>
+                    <p className="text-lg font-bold">{fmt(metrics.revenueMTD)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
           )}
-        </DashboardCard>
+          {features.financials && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                    <TrendingUp className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Cash Position</p>
+                    <p className="text-lg font-bold">{fmt(metrics.cashPosition)}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {features.agents && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center">
+                    <Bot className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Agent Runs (7d)</p>
+                    <p className="text-lg font-bold">{metrics.agentRuns7d}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+          {(features.documents || features.reports) && (
+            <Card>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                    <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Published</p>
+                    <p className="text-lg font-bold">{metrics.docsPublished}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
-      </div>
+      {/* Companies */}
+      {features.financials && companies.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">Companies</h2>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" asChild>
+              <Link href="/reports/profit-loss">View financials <ArrowRight className="h-3 w-3 ml-1" /></Link>
+            </Button>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {companies.map(c => {
+              const hb = HEALTH_BADGE[c.health] ?? HEALTH_BADGE.healthy
+              return (
+                <Card key={c.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Building2 className="h-4 w-4 text-muted-foreground" />
+                        <p className="font-medium text-sm">{c.name}</p>
+                      </div>
+                      <Badge className={cn('text-[10px]', hb.cls)}>{hb.label}</Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div><p className="text-muted-foreground">Revenue MTD</p><p className="font-medium">{fmt(c.revenueMTD)}</p></div>
+                      <div><p className="text-muted-foreground">Gross Margin</p><p className="font-medium">{c.grossMargin > 0 ? `${c.grossMargin.toFixed(1)}%` : '—'}</p></div>
+                      <div><p className="text-muted-foreground">Cash</p><p className="font-medium">{fmt(c.cashPosition)}</p></div>
+                      <div><p className="text-muted-foreground">Overdue AR</p><p className="font-medium">{fmt(0)}</p></div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
-      {/* Quick links row */}
-      <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-        <Link href="/companies" className="flex items-center gap-1 hover:text-primary transition-colors">
-          <Building2 className="h-3.5 w-3.5" /> Companies
-        </Link>
-        <span>·</span>
-        <Link href="/integrations" className="flex items-center gap-1 hover:text-primary transition-colors">
-          <Plug className="h-3.5 w-3.5" /> Integrations
-        </Link>
-        <span>·</span>
-        <Link href="/agents" className="flex items-center gap-1 hover:text-primary transition-colors">
-          <Bot className="h-3.5 w-3.5" /> Agents <Badge variant="secondary" className="text-[9px] py-0 ml-0.5">Soon</Badge>
-        </Link>
+      {/* Widgets row */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Agent Activity */}
+        {features.agents && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Bot className="h-4 w-4" /> Agent Activity
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {agentRuns.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">No recent agent runs.</p>
+              ) : agentRuns.map(run => (
+                <div key={run.id} className="flex items-center gap-2 text-xs py-1">
+                  <span className={cn('w-2 h-2 rounded-full shrink-0', STATUS_DOT[run.status] ?? 'bg-gray-400')} />
+                  <span className="font-medium truncate flex-1">{run.agent_name ?? 'Agent'}</span>
+                  <span className="text-muted-foreground shrink-0">{relativeTime(run.created_at)}</span>
+                </div>
+              ))}
+              <Button variant="ghost" size="sm" className="w-full h-7 text-xs mt-1" asChild>
+                <Link href="/agents">View all <ArrowRight className="h-3 w-3 ml-1" /></Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Cash Flow Preview */}
+        {features.financials && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <BarChart2 className="h-4 w-4" /> Cash Flow
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xs text-muted-foreground py-4 text-center">Connect Xero to see cash flow forecasts.</p>
+              <Button variant="ghost" size="sm" className="w-full h-7 text-xs" asChild>
+                <Link href="/cashflow">View forecast <ArrowRight className="h-3 w-3 ml-1" /></Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Recent Documents & Reports */}
+        {(features.documents || features.reports) && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <FileText className="h-4 w-4" /> Recent Published
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {recentDocs.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-4 text-center">No published documents yet.</p>
+              ) : recentDocs.map(doc => (
+                <Link key={doc.id} href={doc.type === 'document' ? `/documents/${doc.id}` : `/reports/custom/${doc.id}`}
+                  className="flex items-center gap-2 text-xs py-1 hover:bg-muted rounded px-1 -mx-1 transition-colors">
+                  <FileText className="h-3 w-3 text-muted-foreground shrink-0" />
+                  <span className="font-medium truncate flex-1">{doc.title}</span>
+                  <Badge variant="outline" className="text-[9px] shrink-0">{doc.type === 'document' ? 'Doc' : 'Report'}</Badge>
+                </Link>
+              ))}
+              <Button variant="ghost" size="sm" className="w-full h-7 text-xs mt-1" asChild>
+                <Link href="/documents">View all <ArrowRight className="h-3 w-3 ml-1" /></Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   )

@@ -19,6 +19,7 @@ import {
   type Agent, type AgentModel, type AgentTool, type PersonaPreset,
   type AgentCredential, type Company, type KnowledgeLink, type AgentKnowledgeDocument,
 } from '@/lib/types'
+import { AVATAR_PRESETS } from '@/lib/agent-presets'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
 
@@ -53,13 +54,6 @@ const TOOL_OPTIONS: {
   { value: 'summarise_marketing',      label: 'Summarise Marketing',   emoji: '📈', description: 'AI-powered marketing performance summary with trends and recommendations' },
   { value: 'ask_user',                 label: 'Ask User',              emoji: '❓', description: 'Pause and ask the user a clarifying question (always enabled)' },
   { value: 'read_attachment',          label: 'Read Attachment',        emoji: '📎', description: 'Read the content of files attached to a run' },
-]
-
-const AVATAR_PRESETS = [
-  { key: 'robot', emoji: '🤖' }, { key: 'analyst', emoji: '📊' }, { key: 'lawyer', emoji: '⚖️' },
-  { key: 'engineer', emoji: '🧑‍💻' }, { key: 'manager', emoji: '👔' }, { key: 'assistant', emoji: '💼' },
-  { key: 'finance', emoji: '💰' }, { key: 'hr', emoji: '👥' }, { key: 'marketing', emoji: '📣' },
-  { key: 'legal', emoji: '📋' }, { key: 'support', emoji: '🎧' }, { key: 'doctor', emoji: '👩‍⚕️' },
 ]
 
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [
@@ -108,8 +102,14 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [companies,  setCompanies]  = useState<Company[]>([])
   const [creds,      setCreds]      = useState<AgentCredential[]>([])
   const [saving,     setSaving]     = useState(false)
+  const [savedRecently, setSavedRecently] = useState(false)
   const [toast,      setToast]      = useState<string | null>(null)
   const [loading,    setLoading]    = useState(mode === 'edit')
+
+  function showSaved() {
+    setSavedRecently(true)
+    setTimeout(() => setSavedRecently(false), 2000)
+  }
 
   // Credential form
   const [credName,   setCredName]   = useState('')
@@ -257,8 +257,23 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         body: JSON.stringify({ knowledge_text: knowledgeText || null, knowledge_links: knowledgeLinks }),
       })
       setKnowledgeSaved(true)
+      showSaved()
       setTimeout(() => setKnowledgeSaved(false), 2000)
     } finally { setSaving(false) }
+  }
+
+  // Save current tab's changes then switch to the target tab.
+  // In create mode, just switches tabs (no agent ID yet).
+  async function handleTabChange(target: Tab) {
+    if (mode === 'edit' && agentId) {
+      // Auto-save agent fields before switching
+      await handleSave()
+      // Also persist knowledge if we're leaving the Knowledge tab
+      if (tab === 'Knowledge') {
+        await saveKnowledgeAll()
+      }
+    }
+    setTab(target)
   }
 
   function handleAddLink() {
@@ -340,6 +355,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         description:        description.trim() || null,
         avatar_color:       avatarColor,
         avatar_preset:      avatarPreset,
+        avatar_url:         avatarUrl,
         visibility,
         model,
         model_provider:     modelProvider,
@@ -369,6 +385,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to save')
       setToast('Agent saved')
+      showSaved()
       if (mode === 'create') router.push('/agents')
     } catch (err) {
       setToast(err instanceof Error ? err.message : 'Failed to save')
@@ -465,11 +482,11 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       )}
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b">
+      <div className="flex items-center gap-1 border-b">
         {(['Identity', 'Behaviour', 'Tools', 'Knowledge', 'Credentials'] as Tab[]).map(t => (
           <button
             key={t}
-            onClick={() => setTab(t)}
+            onClick={() => void handleTabChange(t)}
             className={cn(
               'px-4 py-2 text-sm font-medium transition-colors -mb-px border-b-2',
               tab === t
@@ -483,6 +500,19 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
             )}
           </button>
         ))}
+        {/* Save indicator — fills the empty right side of the tab bar */}
+        <div className="ml-auto pr-2 pb-1.5">
+          {saving && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" /> Saving…
+            </span>
+          )}
+          {!saving && savedRecently && (
+            <span className="text-xs text-green-600 flex items-center gap-1">
+              <Check className="h-3 w-3" /> Saved
+            </span>
+          )}
+        </div>
       </div>
 
       {/* ═════ TAB: Identity ═════ */}
@@ -620,7 +650,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={() => setTab('Behaviour')}>Next: Behaviour →</Button>
+            <Button onClick={() => void handleTabChange('Behaviour')} disabled={saving}>
+              {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
+            </Button>
           </div>
         </div>
       )}
@@ -724,8 +756,10 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
           </Card>
 
           <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setTab('Identity')}>← Identity</Button>
-            <Button onClick={() => setTab('Tools')}>Next: Tools →</Button>
+            <Button variant="outline" onClick={() => void handleTabChange('Identity')}>← Identity</Button>
+            <Button onClick={() => void handleTabChange('Tools')} disabled={saving}>
+              {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
+            </Button>
           </div>
         </div>
       )}
@@ -885,14 +919,10 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
               </Card>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setTab('Tools')}>← Tools</Button>
-                <div className="flex gap-2">
-                  <Button onClick={saveKnowledgeAll} disabled={saving} className="gap-2">
-                    {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : knowledgeSaved ? <Check className="h-4 w-4" /> : null}
-                    {knowledgeSaved ? 'Saved' : 'Save Knowledge'}
-                  </Button>
-                  <Button onClick={() => setTab('Credentials')}>Next: Credentials →</Button>
-                </div>
+                <Button variant="outline" onClick={() => void handleTabChange('Tools')}>← Tools</Button>
+                <Button onClick={() => void handleTabChange('Credentials')} disabled={saving}>
+                  {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
+                </Button>
               </div>
             </>
           )}
@@ -981,9 +1011,11 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
           )}
 
           <div className="flex justify-between">
-            <Button variant="outline" onClick={() => setTab('Behaviour')}>← Behaviour</Button>
+            <Button variant="outline" onClick={() => void handleTabChange('Behaviour')}>← Behaviour</Button>
             {mode === 'edit'
-              ? <Button onClick={() => setTab('Credentials')}>Next: Credentials →</Button>
+              ? <Button onClick={() => void handleTabChange('Credentials')} disabled={saving}>
+                  {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
+                </Button>
               : <Button onClick={handleSave} disabled={saving}>
                   {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Create Agent'}
                 </Button>
@@ -1098,9 +1130,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
           )}
 
           <div className="flex justify-between items-center">
-            <Button variant="outline" onClick={() => setTab('Tools')}>← Tools</Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : <><Check className="h-4 w-4 mr-1.5" /> Save agent</>}
+            <Button variant="outline" onClick={() => void handleTabChange('Tools')}>← Tools</Button>
+            <Button onClick={async () => { await handleSave(); router.push('/agents') }} disabled={saving}>
+              {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : <><Check className="h-4 w-4 mr-1.5" /> Save & Close</>}
             </Button>
           </div>
         </div>

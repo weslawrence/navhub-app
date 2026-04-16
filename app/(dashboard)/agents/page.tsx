@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter }  from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -14,6 +14,7 @@ import { cn }      from '@/lib/utils'
 import RunModal            from '@/components/agents/RunModal'
 import ScheduledRunsPanel  from '@/components/agents/ScheduledRunsPanel'
 import type { Agent, AgentTool } from '@/lib/types'
+import { AVATAR_PRESET_MAP } from '@/lib/agent-presets'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
 
@@ -47,12 +48,6 @@ const TOOL_LABELS: Record<AgentTool, string> = {
 
 // ─── Agent avatar ─────────────────────────────────────────────────────────────
 
-const AVATAR_PRESETS: Record<string, string> = {
-  robot: '🤖', analyst: '📊', lawyer: '⚖️', engineer: '🧑‍💻', manager: '👔',
-  assistant: '💼', finance: '💰', hr: '👥', marketing: '📣', legal: '📋',
-  support: '🎧', doctor: '👩‍⚕️',
-}
-
 function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' | 'lg' }) {
   const dims = size === 'sm' ? 32 : size === 'lg' ? 56 : 40
   const fontSize = size === 'sm' ? 14 : size === 'lg' ? 28 : 18
@@ -65,11 +60,11 @@ function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' 
     )
   }
 
-  if (agent.avatar_preset && AVATAR_PRESETS[agent.avatar_preset]) {
+  if (agent.avatar_preset && AVATAR_PRESET_MAP[agent.avatar_preset]) {
     return (
       <div className="rounded-full flex items-center justify-center shrink-0"
         style={{ width: dims, height: dims, backgroundColor: agent.avatar_color + '20', fontSize: fontSize * 1.2 }}>
-        {AVATAR_PRESETS[agent.avatar_preset]}
+        {AVATAR_PRESET_MAP[agent.avatar_preset]}
       </div>
     )
   }
@@ -107,20 +102,26 @@ export default function AgentsPage() {
     if (saved === 'tiles' || saved === 'list' || saved === 'avatar') setView(saved)
   }, [])
 
-  useEffect(() => {
-    async function load() {
-      const [agRes, grRes] = await Promise.all([
-        fetch('/api/agents'),
-        fetch('/api/groups/active'),
-      ])
-      const agJson = await agRes.json()
-      const grJson = await grRes.json()
-      if (agJson.data) setAgents(agJson.data)
-      if (grJson.data) setIsAdmin(grJson.data.is_admin)
-      setLoading(false)
-    }
-    void load()
+  const loadAgents = useCallback(async () => {
+    const [agRes, grRes] = await Promise.all([
+      fetch('/api/agents'),
+      fetch('/api/groups/active'),
+    ])
+    const agJson = await agRes.json()
+    const grJson = await grRes.json()
+    if (agJson.data) setAgents(agJson.data)
+    if (grJson.data) setIsAdmin(grJson.data.is_admin)
+    setLoading(false)
   }, [])
+
+  useEffect(() => { void loadAgents() }, [loadAgents])
+
+  // Re-fetch agents when window regains focus (e.g. after returning from edit page)
+  useEffect(() => {
+    function handleFocus() { void loadAgents() }
+    window.addEventListener('focus', handleFocus)
+    return () => window.removeEventListener('focus', handleFocus)
+  }, [loadAgents])
 
   // Auto-open RunModal when ?brief= param is present and agents are loaded
   useEffect(() => {

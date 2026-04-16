@@ -1,10 +1,11 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useSearchParams }  from 'next/navigation'
+import { useSearchParams, useRouter }  from 'next/navigation'
 import Link from 'next/link'
 import {
   Bot, Plus, Play, Settings, Clock, Zap, PowerOff, CalendarClock,
+  LayoutGrid, List, UserCircle2,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button }  from '@/components/ui/button'
@@ -84,8 +85,11 @@ function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' 
 
 // ─── Agents list page ─────────────────────────────────────────────────────────
 
+type AgentView = 'tiles' | 'list' | 'avatar'
+
 export default function AgentsPage() {
   const searchParams   = useSearchParams()
+  const router         = useRouter()
   const briefParam     = searchParams.get('brief') ?? ''
   const agentNameParam = searchParams.get('agent_name') ?? ''
 
@@ -95,6 +99,13 @@ export default function AgentsPage() {
   const [runTarget,        setRunTarget]        = useState<Agent | null>(null)
   const [initialBrief,     setInitialBrief]     = useState(briefParam)
   const [scheduleAgentId,  setScheduleAgentId]  = useState<string | null>(null)
+  const [view,             setView]             = useState<AgentView>('tiles')
+
+  // Restore view from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('navhub:agents:view') as AgentView | null
+    if (saved === 'tiles' || saved === 'list' || saved === 'avatar') setView(saved)
+  }, [])
 
   useEffect(() => {
     async function load() {
@@ -163,13 +174,28 @@ export default function AgentsPage() {
             Configure and run AI agents that analyse your financial data and take action
           </p>
         </div>
-        {isAdmin && (
-          <Button size="sm" asChild>
-            <Link href="/agents/new">
-              <Plus className="h-4 w-4 mr-1.5" /> New Agent
-            </Link>
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          {/* View selector */}
+          <div className="flex items-center border rounded-md overflow-hidden">
+            <button onClick={() => { setView('tiles'); localStorage.setItem('navhub:agents:view','tiles') }} title="Tile view"
+              className={cn('px-2 py-1.5', view === 'tiles' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
+              <LayoutGrid className="h-4 w-4" />
+            </button>
+            <button onClick={() => { setView('list'); localStorage.setItem('navhub:agents:view','list') }} title="List view"
+              className={cn('px-2 py-1.5 border-x', view === 'list' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
+              <List className="h-4 w-4" />
+            </button>
+            <button onClick={() => { setView('avatar'); localStorage.setItem('navhub:agents:view','avatar') }} title="Avatar view"
+              className={cn('px-2 py-1.5', view === 'avatar' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted')}>
+              <UserCircle2 className="h-4 w-4" />
+            </button>
+          </div>
+          {isAdmin && (
+            <Button size="sm" asChild>
+              <Link href="/agents/new"><Plus className="h-4 w-4 mr-1.5" /> New Agent</Link>
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Content */}
@@ -205,7 +231,51 @@ export default function AgentsPage() {
             )}
           </CardContent>
         </Card>
+      ) : view === 'list' ? (
+        /* List view */
+        <div className="divide-y border rounded-lg">
+          {agents.map(agent => (
+            <div key={agent.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
+              <AgentAvatar agent={agent} size="sm" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium truncate">{agent.name}</p>
+                {agent.description && <p className="text-xs text-muted-foreground truncate">{agent.description}</p>}
+              </div>
+              <span className={cn('text-xs px-2 py-0.5 rounded-full', agent.visibility === 'public' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-muted text-muted-foreground')}>
+                {agent.visibility === 'public' ? 'Public' : 'Private'}
+              </span>
+              <Badge variant="outline" className="text-[10px] shrink-0">{agent.model_name ?? agent.model}</Badge>
+              <div className="flex gap-1 shrink-0">
+                {!agent.is_active ? null : (
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setRunTarget(agent)} title="Run"><Play className="h-3.5 w-3.5" /></Button>
+                )}
+                {isAdmin && (
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" asChild title="Configure">
+                    <Link href={`/agents/${agent.id}/edit`}><Settings className="h-3.5 w-3.5" /></Link>
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : view === 'avatar' ? (
+        /* Avatar view */
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
+          {agents.map(agent => (
+            <div key={agent.id}
+              onClick={() => router.push(`/agents/${agent.id}/edit`)}
+              className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-card hover:bg-muted/50 cursor-pointer transition-colors group">
+              <AgentAvatar agent={agent} size="lg" />
+              <p className="text-sm font-medium text-center leading-tight">{agent.name}</p>
+              <span className={cn('text-[10px] px-2 py-0.5 rounded-full', agent.visibility === 'public' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-muted text-muted-foreground')}>
+                {agent.visibility === 'public' ? 'Public' : 'Private'}
+              </span>
+              <Button size="sm" variant="outline" className="h-7 text-xs opacity-0 group-hover:opacity-100 transition-opacity">Configure</Button>
+            </div>
+          ))}
+        </div>
       ) : (
+        /* Tiles view (default) */
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {agents.map(agent => (
             <AgentCard

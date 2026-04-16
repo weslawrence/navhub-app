@@ -57,10 +57,12 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
   const [attachmentError,   setAttachmentError]   = useState<string | null>(null)
 
   // Run name + output controls
-  const [runName,       setRunName]       = useState('')
+  const [runName,        setRunName]        = useState('')
+  const [outputType,     setOutputType]     = useState<'document' | 'report' | ''>('')
   const [outputFolderId, setOutputFolderId] = useState('')
-  const [outputStatus,  setOutputStatus]  = useState<'draft' | 'published'>('draft')
-  const [folders,       setFolders]       = useState<{ id: string; name: string }[]>([])
+  const [outputName,     setOutputName]     = useState('')
+  const [outputStatus,   setOutputStatus]   = useState<'draft' | 'published'>('draft')
+  const [outputFolders,  setOutputFolders]  = useState<{ id: string; name: string }[]>([])
 
   // Recurring schedule
   const [isRecurring,   setIsRecurring]   = useState(false)
@@ -83,10 +85,13 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
     if (saved === 'true') setIncludePeriod(true)
   }, [agent.id])
 
-  // Load document folders for output controls
+  // Load folders when output type changes
   useEffect(() => {
-    fetch('/api/documents/folders').then(r => r.json()).then(json => setFolders(json.data ?? [])).catch(() => {})
-  }, [])
+    if (!outputType) { setOutputFolders([]); return }
+    const url = outputType === 'report' ? '/api/report-folders' : '/api/documents/folders'
+    fetch(url).then(r => r.json()).then(json => setOutputFolders(json.data ?? [])).catch(() => {})
+    setOutputFolderId('')
+  }, [outputType])
 
   // Load companies for scope selection
   useEffect(() => {
@@ -194,8 +199,10 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
           company_ids:          selectedCompanyIds.length > 0 ? selectedCompanyIds : undefined,
           extra_instructions:   extraInstructions.trim() || undefined,
           run_name:             runName.trim() || undefined,
+          output_type:          outputType || undefined,
           output_folder_id:     outputFolderId || undefined,
           output_status:        outputStatus,
+          output_name_override: outputName.trim() || undefined,
         }),
       })
       const json = await res.json()
@@ -514,23 +521,41 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
             </div>
 
             {/* Output controls */}
-            <div className="space-y-2 border-t pt-3">
-              <p className="text-xs font-medium text-muted-foreground">Output settings</p>
-              <div className="flex gap-3">
-                {folders.length > 0 && (
+            <div className="space-y-2.5 border-t pt-3">
+              <p className="text-xs font-medium text-muted-foreground">Output settings <span className="font-normal">(optional)</span></p>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="text-[10px] text-muted-foreground">Save as</label>
+                  <select value={outputType} onChange={e => setOutputType(e.target.value as typeof outputType)}
+                    className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground">
+                    <option value="">Auto</option>
+                    <option value="document">Document</option>
+                    <option value="report">Report</option>
+                  </select>
+                </div>
+                {outputFolders.length > 0 && (
                   <div className="flex-1">
+                    <label className="text-[10px] text-muted-foreground">Folder</label>
                     <select value={outputFolderId} onChange={e => setOutputFolderId(e.target.value)}
                       className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground">
                       <option value="">Unfiled</option>
-                      {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      {outputFolders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                     </select>
                   </div>
                 )}
-                <select value={outputStatus} onChange={e => setOutputStatus(e.target.value as 'draft' | 'published')}
-                  className="flex h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground">
-                  <option value="draft">Draft</option>
-                  <option value="published">Published</option>
-                </select>
+                <div className="w-24">
+                  <label className="text-[10px] text-muted-foreground">Status</label>
+                  <select value={outputStatus} onChange={e => setOutputStatus(e.target.value as 'draft' | 'published')}
+                    className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground">
+                    <option value="draft">Draft</option>
+                    <option value="published">Published</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] text-muted-foreground">Name override</label>
+                <input value={outputName} onChange={e => setOutputName(e.target.value)} placeholder="Auto-generated if blank"
+                  className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground" />
               </div>
             </div>
 

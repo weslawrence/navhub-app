@@ -344,6 +344,9 @@ export interface Agent {
   avatar_url:            string | null
   avatar_preset:         string | null
   model:                 AgentModel
+  model_provider:        string | null
+  model_name:            string | null
+  model_api_key:         string | null
   persona_preset:        PersonaPreset
   persona:               string | null
   instructions:          string | null

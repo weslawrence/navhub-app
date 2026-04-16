@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -15,7 +15,7 @@ import { Badge }     from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { cn }        from '@/lib/utils'
 import {
-  MODEL_OPTIONS, PERSONA_PRESETS,
+  PERSONA_PRESETS,
   type Agent, type AgentModel, type AgentTool, type PersonaPreset,
   type AgentCredential, type Company, type KnowledgeLink, type AgentKnowledgeDocument,
 } from '@/lib/types'
@@ -98,6 +98,11 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [emailDisplayName, setEmailDisplayName] = useState('')
   const [emailRecipients,  setEmailRecipients]  = useState('')  // comma-separated
   const [slackChannel,     setSlackChannel]     = useState('')
+  const [modelProvider,    setModelProvider]    = useState('anthropic')
+  const [modelName,        setModelName]        = useState('claude-haiku-4-5-20251001')
+  const [modelApiKey,      setModelApiKey]      = useState('')
+  const [showModelKey,     setShowModelKey]     = useState(false)
+  const avatarInputRef = useRef<HTMLInputElement>(null)
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [companies,  setCompanies]  = useState<Company[]>([])
@@ -156,6 +161,8 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       setAvatarUrl(a.avatar_url ?? null)
       setVisibility(a.visibility ?? 'private')
       setModel(a.model)
+      setModelProvider(a.model_provider ?? 'anthropic')
+      setModelName(a.model_name ?? a.model ?? 'claude-haiku-4-5-20251001')
       setPersonaPreset(a.persona_preset)
       setPersona(a.persona ?? '')
       setInstructions(a.instructions ?? '')
@@ -202,6 +209,16 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     if (preset !== 'custom') {
       setPersona(PERSONA_PRESETS[preset])
     }
+  }
+
+  async function handleAvatarUpload(file: File) {
+    if (file.size > 2 * 1024 * 1024) { setToast('Image must be under 2MB'); return }
+    const id = agentId
+    if (!id) { setToast('Save agent first'); return }
+    const fd = new FormData(); fd.append('file', file)
+    const res = await fetch(`/api/agents/${id}/avatar`, { method: 'POST', body: fd })
+    const json = await res.json()
+    if (json.data?.avatar_url) { setAvatarUrl(json.data.avatar_url); setAvatarPreset(null) }
   }
 
   function toggleTool(tool: AgentTool) {
@@ -325,6 +342,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         avatar_preset:      avatarPreset,
         visibility,
         model,
+        model_provider:     modelProvider,
+        model_name:         modelName,
+        model_api_key:      modelApiKey.trim() || null,
         persona_preset:     personaPreset,
         persona:            persona.trim() || null,
         instructions:       instructions.trim() || null,
@@ -517,6 +537,11 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   <input type="color" value={avatarColor} onChange={e => setAvatarColor(e.target.value)}
                     className="h-7 w-10 rounded border border-input cursor-pointer" />
                   <span className="text-xs text-muted-foreground">Colour accent</span>
+                  <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"
+                    onChange={e => { if (e.target.files?.[0]) void handleAvatarUpload(e.target.files[0]); e.target.value = '' }} />
+                  <Button variant="outline" size="sm" type="button" onClick={() => avatarInputRef.current?.click()}>
+                    Upload Image
+                  </Button>
                 </div>
               </div>
             </CardContent>
@@ -524,39 +549,73 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Model</CardTitle>
-              <CardDescription>The AI model that powers this agent</CardDescription>
+              <CardTitle className="text-base">Model Configuration</CardTitle>
+              <CardDescription>Choose the AI model that powers this agent</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {MODEL_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setModel(opt.value)}
-                  className={cn(
-                    'w-full text-left p-3 rounded-lg border-2 transition-all',
-                    model === opt.value
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-muted-foreground/40'
-                  )}
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{opt.label}</span>
-                        <Badge
-                          variant={opt.tier === 'advanced' ? 'default' : opt.tier === 'external' ? 'outline' : 'secondary'}
-                          className="text-[10px] px-1.5 py-0"
-                        >
-                          {opt.tier}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-0.5">{opt.description}</p>
-                    </div>
-                    {model === opt.value && <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />}
+            <CardContent className="space-y-4">
+              {/* Provider quick-select */}
+              <div className="flex flex-wrap gap-1.5">
+                {['anthropic', 'openai', 'google', 'mistral', 'custom'].map(p => (
+                  <button key={p} type="button"
+                    onClick={() => {
+                      setModelProvider(p)
+                      const presets: Record<string, string> = {
+                        anthropic: 'claude-haiku-4-5-20251001', openai: 'gpt-4o', google: 'gemini-1.5-pro', mistral: 'mistral-large-latest',
+                      }
+                      if (presets[p]) setModelName(presets[p])
+                    }}
+                    className={cn('px-3 py-1.5 rounded-md text-xs font-medium border transition-all capitalize',
+                      modelProvider === p ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-primary/40')}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+
+              {/* Model presets for selected provider */}
+              {modelProvider === 'anthropic' && (
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    { label: 'Haiku (fast)', value: 'claude-haiku-4-5-20251001' },
+                    { label: 'Sonnet (smart)', value: 'claude-sonnet-4-6' },
+                    { label: 'Opus (best)', value: 'claude-opus-4-6' },
+                  ].map(m => (
+                    <button key={m.value} type="button" onClick={() => { setModelName(m.value); setModel(m.value as AgentModel) }}
+                      className={cn('px-2.5 py-1 rounded text-xs border', modelName === m.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40')}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {modelProvider === 'openai' && (
+                <div className="flex flex-wrap gap-1.5">
+                  {[{ label: 'GPT-4o', value: 'gpt-4o' }, { label: 'GPT-4o mini', value: 'gpt-4o-mini' }].map(m => (
+                    <button key={m.value} type="button" onClick={() => setModelName(m.value)}
+                      className={cn('px-2.5 py-1 rounded text-xs border', modelName === m.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40')}>
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Model name input */}
+              <div className="space-y-1.5">
+                <Label className="text-xs">Model name</Label>
+                <Input value={modelName} onChange={e => setModelName(e.target.value)} placeholder="e.g. claude-sonnet-4-6" className="text-sm font-mono" />
+              </div>
+
+              {/* API key — only for non-Anthropic */}
+              {modelProvider !== 'anthropic' && (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">API Key <span className="text-muted-foreground font-normal">(leave blank to use NavHub default)</span></Label>
+                  <div className="flex gap-2">
+                    <Input type={showModelKey ? 'text' : 'password'} value={modelApiKey} onChange={e => setModelApiKey(e.target.value)}
+                      placeholder="sk-..." className="text-sm font-mono flex-1" />
+                    <Button type="button" variant="outline" size="sm" onClick={() => setShowModelKey(v => !v)}>
+                      {showModelKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+                    </Button>
                   </div>
-                </button>
-              ))}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -628,22 +687,6 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y"
                 />
               </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Task Instructions</CardTitle>
-              <CardDescription>What should this agent do on each run?</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <textarea
-                value={instructions}
-                onChange={e => setInstructions(e.target.value)}
-                placeholder="Describe what this agent should do...&#10;&#10;Example: Analyse the P&L for each company for the current month. Identify the top 3 revenue drivers and any expenses that are higher than last quarter. Summarise your findings in an executive brief."
-                rows={7}
-                className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-y"
-              />
             </CardContent>
           </Card>
 

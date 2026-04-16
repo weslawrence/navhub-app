@@ -96,7 +96,8 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [modelName,        setModelName]        = useState('claude-haiku-4-5-20251001')
   const [modelApiKey,      setModelApiKey]      = useState('')
   const [showModelKey,     setShowModelKey]     = useState(false)
-  const avatarInputRef = useRef<HTMLInputElement>(null)
+  const avatarInputRef  = useRef<HTMLInputElement>(null)
+  const colorSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [companies,  setCompanies]  = useState<Company[]>([])
@@ -554,7 +555,18 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   <div className="flex flex-wrap gap-1.5">
                     {AVATAR_PRESETS.map(p => (
                       <button key={p.key} type="button"
-                        onClick={() => { setAvatarPreset(p.key); setAvatarUrl(null) }}
+                        onClick={async () => {
+                          setAvatarPreset(p.key)
+                          setAvatarUrl(null)
+                          if (agentId) {
+                            await fetch(`/api/agents/${agentId}`, {
+                              method:  'PATCH',
+                              headers: { 'Content-Type': 'application/json' },
+                              body:    JSON.stringify({ avatar_preset: p.key, avatar_url: null }),
+                            })
+                            showSaved()
+                          }
+                        }}
                         className={cn('w-9 h-9 rounded-full flex items-center justify-center text-lg border-2 transition-all',
                           avatarPreset === p.key ? 'border-primary ring-2 ring-primary/20' : 'border-transparent hover:border-muted-foreground/30'
                         )}>
@@ -564,7 +576,22 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <input type="color" value={avatarColor} onChange={e => setAvatarColor(e.target.value)}
+                  <input type="color" value={avatarColor}
+                    onChange={e => {
+                      const newColor = e.target.value
+                      setAvatarColor(newColor)
+                      if (agentId) {
+                        if (colorSaveTimer.current) clearTimeout(colorSaveTimer.current)
+                        colorSaveTimer.current = setTimeout(async () => {
+                          await fetch(`/api/agents/${agentId}`, {
+                            method:  'PATCH',
+                            headers: { 'Content-Type': 'application/json' },
+                            body:    JSON.stringify({ avatar_color: newColor }),
+                          })
+                          showSaved()
+                        }, 500)
+                      }
+                    }}
                     className="h-7 w-10 rounded border border-input cursor-pointer" />
                   <span className="text-xs text-muted-foreground">Colour accent</span>
                   <input ref={avatarInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden"

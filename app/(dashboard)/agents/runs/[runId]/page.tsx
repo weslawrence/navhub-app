@@ -824,6 +824,83 @@ export default function RunStreamPage() {
         </div>
       </CollapsibleSection>
 
+      {/* ── Chat continuation ── */}
+      {run?.status === 'success' && (
+        <ContinueChat runId={params.runId as string} />
+      )}
+
+    </div>
+  )
+}
+
+// ── Chat continuation component ──────────────────────────────────────────────
+
+function ContinueChat({ runId }: { runId: string }) {
+  const [messages, setMessages] = useState<Array<{ id: string; role: string; content: string; created_at: string }>>([])
+  const [input, setInput]       = useState('')
+  const [sending, setSending]   = useState(false)
+
+  useEffect(() => {
+    fetch(`/api/agents/runs/${runId}/messages`).then(r => r.json()).then(json => setMessages(json.data ?? [])).catch(() => {})
+  }, [runId])
+
+  async function handleSend() {
+    if (!input.trim() || sending) return
+    setSending(true)
+    const content = input.trim()
+    setInput('')
+    // Optimistic user message
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'user', content, created_at: new Date().toISOString() }])
+
+    try {
+      const res = await fetch(`/api/agents/runs/${runId}/messages`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      })
+      if (res.ok) {
+        // Refresh messages
+        const msgRes = await fetch(`/api/agents/runs/${runId}/messages`)
+        if (msgRes.ok) { const json = await msgRes.json(); setMessages(json.data ?? []) }
+      }
+    } catch { /* ignore */ }
+    setSending(false)
+  }
+
+  return (
+    <div className="border-t pt-6 mt-6 space-y-4">
+      <h3 className="text-sm font-semibold">Continue this run</h3>
+
+      {messages.length > 0 && (
+        <div className="space-y-3 max-h-80 overflow-y-auto">
+          {messages.map(msg => (
+            <div key={msg.id} className={cn('flex', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+              <div className={cn(
+                'rounded-lg px-3 py-2 max-w-[80%] text-sm',
+                msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+              )}>
+                <p className="whitespace-pre-wrap">{msg.content}</p>
+                <p className="text-[10px] opacity-60 mt-1">
+                  {new Date(msg.created_at).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        <input
+          value={input}
+          onChange={e => setInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void handleSend() } }}
+          placeholder="Type a follow-up message…"
+          className="flex-1 h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          disabled={sending}
+        />
+        <Button size="sm" onClick={() => void handleSend()} disabled={sending || !input.trim()}>
+          {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+        </Button>
+      </div>
     </div>
   )
 }

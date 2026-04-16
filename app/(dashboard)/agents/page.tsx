@@ -46,21 +46,37 @@ const TOOL_LABELS: Record<AgentTool, string> = {
 
 // ─── Agent avatar ─────────────────────────────────────────────────────────────
 
+const AVATAR_PRESETS: Record<string, string> = {
+  robot: '🤖', analyst: '📊', lawyer: '⚖️', engineer: '🧑‍💻', manager: '👔',
+  assistant: '💼', finance: '💰', hr: '👥', marketing: '📣', legal: '📋',
+  support: '🎧', doctor: '👩‍⚕️',
+}
+
 function AgentAvatar({ agent, size = 'md' }: { agent: Agent; size?: 'sm' | 'md' | 'lg' }) {
-  const initials = agent.name
-    .split(' ')
-    .slice(0, 2)
-    .map(w => w[0])
-    .join('')
-    .toUpperCase()
+  const dims = size === 'sm' ? 32 : size === 'lg' ? 56 : 40
+  const fontSize = size === 'sm' ? 14 : size === 'lg' ? 28 : 18
 
-  const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : size === 'lg' ? 'h-14 w-14 text-xl' : 'h-10 w-10 text-sm'
+  if (agent.avatar_url) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img src={agent.avatar_url} alt={agent.name}
+        className="rounded-full object-cover shrink-0" style={{ width: dims, height: dims }} />
+    )
+  }
 
+  if (agent.avatar_preset && AVATAR_PRESETS[agent.avatar_preset]) {
+    return (
+      <div className="rounded-full flex items-center justify-center shrink-0"
+        style={{ width: dims, height: dims, backgroundColor: agent.avatar_color + '20', fontSize: fontSize * 1.2 }}>
+        {AVATAR_PRESETS[agent.avatar_preset]}
+      </div>
+    )
+  }
+
+  const initials = agent.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
   return (
-    <div
-      className={cn('rounded-full flex items-center justify-center font-semibold text-white shrink-0', sizeClass)}
-      style={{ backgroundColor: agent.avatar_color }}
-    >
+    <div className="rounded-full flex items-center justify-center font-semibold text-white shrink-0"
+      style={{ width: dims, height: dims, backgroundColor: agent.avatar_color, fontSize }}>
       {initials}
     </div>
   )
@@ -306,23 +322,23 @@ function AgentCard({
         {/* Actions */}
         <div className="flex gap-2 pt-1">
           {!isDisabled && (
-            <Button size="sm" className="flex-1" onClick={onRun}>
+            <Button size="sm" className="flex-1" onClick={onRun} title="Run agent">
               <Play className="h-3.5 w-3.5 mr-1.5" /> Run
             </Button>
           )}
           {isAdmin && (
-            <Button size="sm" variant="outline" asChild className={cn(isDisabled && 'ml-auto')}>
+            <Button size="sm" variant="outline" asChild className={cn(isDisabled && 'ml-auto')} title="Configure">
               <Link href={`/agents/${agent.id}/edit`}>
                 <Settings className="h-3.5 w-3.5" />
               </Link>
             </Button>
           )}
-          <Button size="sm" variant="outline"
+          <Button size="sm" variant="outline" title="Scheduled runs"
             onClick={onSchedule}
             className={cn(agent.schedule_enabled && 'border-amber-300 text-amber-600')}>
             <CalendarClock className="h-3.5 w-3.5" />
           </Button>
-          <Button size="sm" variant="outline" asChild>
+          <Button size="sm" variant="outline" asChild title="Run history">
             <Link href={`/agents/${agent.id}/runs`}>
               <Clock className="h-3.5 w-3.5" />
             </Link>

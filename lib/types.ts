@@ -341,6 +341,8 @@ export interface Agent {
   name:                  string
   description:           string | null
   avatar_color:          string
+  avatar_url:            string | null
+  avatar_preset:         string | null
   model:                 AgentModel
   persona_preset:        PersonaPreset
   persona:               string | null
@@ -416,6 +418,14 @@ export interface AgentRun {
   started_at:              string | null
   completed_at:            string | null
   created_at:              string
+}
+
+export interface AgentRunMessage {
+  id:         string
+  run_id:     string
+  role:       'user' | 'assistant'
+  content:    string
+  created_at: string
 }
 
 export interface AgentRunInteraction {

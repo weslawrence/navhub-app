@@ -31,6 +31,8 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
   const [editing, setEditing] = useState(false)
 
   // Edit form
+  const [schedName, setSchedName] = useState('')
+  const [taskBrief, setTaskBrief] = useState('')
   const [freq, setFreq]     = useState<'daily' | 'weekly' | 'monthly'>('daily')
   const [time, setTime]     = useState('09:00')
   const [dow, setDow]       = useState(1)
@@ -47,7 +49,9 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
       const a = json.data as Agent
       setAgent(a)
       if (a.schedule_config) {
-        const sc = a.schedule_config as unknown as ScheduleConfig
+        const sc = a.schedule_config as unknown as ScheduleConfig & { schedule_name?: string; task_brief?: string }
+        setSchedName(sc.schedule_name ?? '')
+        setTaskBrief(sc.task_brief ?? '')
         setFreq((sc.frequency ?? 'daily') as 'daily' | 'weekly' | 'monthly')
         setTime(sc.time ?? '09:00')
         setDow(sc.day_of_week ?? 1)
@@ -77,9 +81,11 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
 
   async function saveSchedule() {
     setSaving(true)
-    const config: ScheduleConfig = {
+    const config = {
+      schedule_name: schedName.trim() || `${agentName} — ${freq}`,
+      task_brief: taskBrief.trim(),
       frequency: freq, time, day_of_week: dow, day_of_month: dom, timezone: 'Australia/Brisbane',
-    }
+    } as unknown as ScheduleConfig
     const nextRun = getNextRunTime(config)
     await fetch(`/api/agents/${agentId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
@@ -158,6 +164,15 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
               {/* Edit form */}
               {editing && (
                 <div className="rounded-lg border p-4 space-y-3 bg-muted/30">
+                  <div>
+                    <Label className="text-xs">Schedule Name</Label>
+                    <Input value={schedName} onChange={e => setSchedName(e.target.value)} placeholder="Weekly Board Report" className="text-sm h-8" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Task Brief</Label>
+                    <textarea value={taskBrief} onChange={e => setTaskBrief(e.target.value)} rows={3} placeholder="What should the agent do each run…"
+                      className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none" />
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="text-xs">Frequency</Label>

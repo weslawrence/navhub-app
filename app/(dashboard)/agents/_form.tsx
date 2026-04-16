@@ -55,6 +55,13 @@ const TOOL_OPTIONS: {
   { value: 'read_attachment',          label: 'Read Attachment',        emoji: '📎', description: 'Read the content of files attached to a run' },
 ]
 
+const AVATAR_PRESETS = [
+  { key: 'robot', emoji: '🤖' }, { key: 'analyst', emoji: '📊' }, { key: 'lawyer', emoji: '⚖️' },
+  { key: 'engineer', emoji: '🧑‍💻' }, { key: 'manager', emoji: '👔' }, { key: 'assistant', emoji: '💼' },
+  { key: 'finance', emoji: '💰' }, { key: 'hr', emoji: '👥' }, { key: 'marketing', emoji: '📣' },
+  { key: 'legal', emoji: '📋' }, { key: 'support', emoji: '🎧' }, { key: 'doctor', emoji: '👩‍⚕️' },
+]
+
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [
   { value: 'executive_analyst',    label: 'Executive Analyst',    description: 'Formal, concise — for C-suite audiences' },
   { value: 'business_writer',      label: 'Business Writer',      description: 'Clear prose, narrative-driven reporting' },
@@ -77,6 +84,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [name,             setName]             = useState('')
   const [description,      setDescription]      = useState('')
   const [avatarColor,      setAvatarColor]      = useState('#6366f1')
+  const [avatarPreset,     setAvatarPreset]     = useState<string | null>(null)
+  const [avatarUrl,        setAvatarUrl]        = useState<string | null>(null)
+  const [visibility,       setVisibility]       = useState<'private' | 'public'>('private')
   const [model,            setModel]            = useState<AgentModel>('claude-sonnet-4-20250514')
   const [personaPreset,    setPersonaPreset]    = useState<PersonaPreset>('custom')
   const [persona,          setPersona]          = useState('')
@@ -142,6 +152,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       setName(a.name)
       setDescription(a.description ?? '')
       setAvatarColor(a.avatar_color)
+      setAvatarPreset(a.avatar_preset ?? null)
+      setAvatarUrl(a.avatar_url ?? null)
+      setVisibility(a.visibility ?? 'private')
       setModel(a.model)
       setPersonaPreset(a.persona_preset)
       setPersona(a.persona ?? '')
@@ -309,6 +322,8 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         name:               name.trim(),
         description:        description.trim() || null,
         avatar_color:       avatarColor,
+        avatar_preset:      avatarPreset,
+        visibility,
         model,
         persona_preset:     personaPreset,
         persona:            persona.trim() || null,
@@ -431,7 +446,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
-        {(['Identity', 'Behaviour', 'Knowledge', 'Tools', 'Credentials'] as Tab[]).map(t => (
+        {(['Identity', 'Behaviour', 'Tools', 'Knowledge', 'Credentials'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -470,16 +485,38 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   className="flex w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring resize-none"
                 />
               </div>
-              <div className="space-y-1.5">
-                <Label>Avatar colour</Label>
+              <div className="space-y-2">
+                <Label>Avatar</Label>
+                <div className="flex items-center gap-4">
+                  {/* Preview */}
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center shrink-0 border-2 border-border"
+                    style={{ backgroundColor: avatarColor + '20' }}>
+                    {avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={avatarUrl} alt="" className="w-full h-full rounded-full object-cover" />
+                    ) : avatarPreset ? (
+                      <span className="text-3xl">{AVATAR_PRESETS.find(p => p.key === avatarPreset)?.emoji ?? '🤖'}</span>
+                    ) : (
+                      <span className="text-lg font-bold" style={{ color: avatarColor }}>{name.slice(0, 2).toUpperCase() || 'AG'}</span>
+                    )}
+                  </div>
+                  {/* Presets */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {AVATAR_PRESETS.map(p => (
+                      <button key={p.key} type="button"
+                        onClick={() => { setAvatarPreset(p.key); setAvatarUrl(null) }}
+                        className={cn('w-9 h-9 rounded-full flex items-center justify-center text-lg border-2 transition-all',
+                          avatarPreset === p.key ? 'border-primary ring-2 ring-primary/20' : 'border-transparent hover:border-muted-foreground/30'
+                        )}>
+                        {p.emoji}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex items-center gap-3">
-                  <input
-                    type="color"
-                    value={avatarColor}
-                    onChange={e => setAvatarColor(e.target.value)}
-                    className="h-9 w-16 rounded-md border border-input cursor-pointer"
-                  />
-                  <span className="text-sm text-muted-foreground font-mono">{avatarColor}</span>
+                  <input type="color" value={avatarColor} onChange={e => setAvatarColor(e.target.value)}
+                    className="h-7 w-10 rounded border border-input cursor-pointer" />
+                  <span className="text-xs text-muted-foreground">Colour accent</span>
                 </div>
               </div>
             </CardContent>
@@ -532,6 +569,27 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       {/* ═════ TAB: Behaviour ═════ */}
       {tab === 'Behaviour' && (
         <div className="space-y-5">
+          {/* Visibility toggle */}
+          <div className="flex items-center justify-between p-4 rounded-lg border bg-muted/30">
+            <div>
+              <p className="text-sm font-medium">Agent Visibility</p>
+              <p className="text-xs text-muted-foreground">
+                {visibility === 'public' ? 'All users with Agents access can see and run this agent' : 'Only you can see and run this agent'}
+              </p>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span>Private</span>
+              <button type="button" role="switch" aria-checked={visibility === 'public'}
+                onClick={() => setVisibility(visibility === 'public' ? 'private' : 'public')}
+                className={cn('relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors',
+                  visibility === 'public' ? 'bg-primary' : 'bg-input')}>
+                <span className={cn('pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow-lg ring-0 transition-transform',
+                  visibility === 'public' ? 'translate-x-4' : 'translate-x-0')} />
+              </button>
+              <span>Public</span>
+            </div>
+          </div>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Persona</CardTitle>
@@ -624,7 +682,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => setTab('Identity')}>← Identity</Button>
-            <Button onClick={() => setTab('Knowledge')}>Next: Knowledge →</Button>
+            <Button onClick={() => setTab('Tools')}>Next: Tools →</Button>
           </div>
         </div>
       )}
@@ -784,13 +842,13 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
               </Card>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => setTab('Behaviour')}>← Behaviour</Button>
+                <Button variant="outline" onClick={() => setTab('Tools')}>← Tools</Button>
                 <div className="flex gap-2">
                   <Button onClick={saveKnowledgeAll} disabled={saving} className="gap-2">
                     {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : knowledgeSaved ? <Check className="h-4 w-4" /> : null}
                     {knowledgeSaved ? 'Saved' : 'Save Knowledge'}
                   </Button>
-                  <Button onClick={() => setTab('Tools')}>Next: Tools →</Button>
+                  <Button onClick={() => setTab('Credentials')}>Next: Credentials →</Button>
                 </div>
               </div>
             </>

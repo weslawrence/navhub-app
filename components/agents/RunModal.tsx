@@ -56,6 +56,12 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
   const [attachments,       setAttachments]       = useState<File[]>([])
   const [attachmentError,   setAttachmentError]   = useState<string | null>(null)
 
+  // Run name + output controls
+  const [runName,       setRunName]       = useState('')
+  const [outputFolderId, setOutputFolderId] = useState('')
+  const [outputStatus,  setOutputStatus]  = useState<'draft' | 'published'>('draft')
+  const [folders,       setFolders]       = useState<{ id: string; name: string }[]>([])
+
   // Recurring schedule
   const [isRecurring,   setIsRecurring]   = useState(false)
   const [schedFreq,     setSchedFreq]     = useState<'daily' | 'weekly' | 'monthly'>('daily')
@@ -76,6 +82,11 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
     const saved = localStorage.getItem(periodKey(agent.id))
     if (saved === 'true') setIncludePeriod(true)
   }, [agent.id])
+
+  // Load document folders for output controls
+  useEffect(() => {
+    fetch('/api/documents/folders').then(r => r.json()).then(json => setFolders(json.data ?? [])).catch(() => {})
+  }, [])
 
   // Load companies for scope selection
   useEffect(() => {
@@ -179,10 +190,12 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          // Only include period when toggle is on
           ...(includePeriod ? { period } : {}),
-          company_ids:        selectedCompanyIds.length > 0 ? selectedCompanyIds : undefined,
-          extra_instructions: extraInstructions.trim() || undefined,
+          company_ids:          selectedCompanyIds.length > 0 ? selectedCompanyIds : undefined,
+          extra_instructions:   extraInstructions.trim() || undefined,
+          run_name:             runName.trim() || undefined,
+          output_folder_id:     outputFolderId || undefined,
+          output_status:        outputStatus,
         }),
       })
       const json = await res.json()
@@ -341,6 +354,13 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
               </button>
             </div>
 
+            {/* Run name */}
+            <div className="space-y-1.5">
+              <Label>Run name <span className="text-muted-foreground text-xs font-normal">(optional)</span></Label>
+              <input value={runName} onChange={e => setRunName(e.target.value)} placeholder="e.g. Q1 Board Report"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring" />
+            </div>
+
             {/* ── Period context toggle ── */}
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -491,6 +511,27 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
               <p className="text-xs text-muted-foreground">
                 Paste images directly into the instructions field. Files are available to the agent via read_attachment.
               </p>
+            </div>
+
+            {/* Output controls */}
+            <div className="space-y-2 border-t pt-3">
+              <p className="text-xs font-medium text-muted-foreground">Output settings</p>
+              <div className="flex gap-3">
+                {folders.length > 0 && (
+                  <div className="flex-1">
+                    <select value={outputFolderId} onChange={e => setOutputFolderId(e.target.value)}
+                      className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground">
+                      <option value="">Unfiled</option>
+                      {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <select value={outputStatus} onChange={e => setOutputStatus(e.target.value as 'draft' | 'published')}
+                  className="flex h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground">
+                  <option value="draft">Draft</option>
+                  <option value="published">Published</option>
+                </select>
+              </div>
             </div>
 
             {/* Recurring schedule toggle */}

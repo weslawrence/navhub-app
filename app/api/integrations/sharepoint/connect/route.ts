@@ -39,5 +39,6 @@ export async function GET() {
       state:         JSON.stringify({ group_id: activeGroupId, user_id: session.user.id }),
     })
 
-  return Response.redirect(authUrl)
+  // Pure HTTP redirect — not HTML. Popup must be allowed to navigate.
+  return Response.redirect(authUrl, 302)
 }

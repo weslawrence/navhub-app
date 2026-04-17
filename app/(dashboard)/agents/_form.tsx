@@ -63,7 +63,8 @@ const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: strin
   { value: 'custom',               label: 'Custom',               description: 'Write your own persona instructions' },
 ]
 
-type Tab = 'Identity' | 'Behaviour' | 'Knowledge' | 'Tools' | 'Credentials'
+type Tab = 'Identity' | 'Behaviour' | 'Access' | 'Knowledge' | 'Credentials'
+type CompanyAccessLevel = 'none' | 'read' | 'write'
 
 interface AgentFormProps {
   mode:      'create' | 'edit'
@@ -88,6 +89,10 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [tools,            setTools]            = useState<AgentTool[]>([])
   const [allCompanies,     setAllCompanies]     = useState(true)  // true = all companies in scope
   const [companyScopeIds,  setCompanyScopeIds]  = useState<string[]>([])
+  const [accessMode,       setAccessMode]       = useState<'all' | 'specific'>('all')
+  const [accessMap,        setAccessMap]        = useState<Record<string, CompanyAccessLevel>>({}) // companyId → level
+  const [accessLoading,    setAccessLoading]    = useState(false)
+  const [accessSaving,     setAccessSaving]     = useState(false)
   const [emailAddress,     setEmailAddress]     = useState('')
   const [emailDisplayName, setEmailDisplayName] = useState('')
   const [emailRecipients,  setEmailRecipients]  = useState('')  // comma-separated
@@ -228,11 +233,55 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     )
   }
 
-  function toggleScopeCompany(id: string) {
-    setCompanyScopeIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
-    )
+  // ── Company access grid (Access tab) ─────────────────────────────────────
+  const loadCompanyAccess = useCallback(async () => {
+    if (!agentId) return
+    setAccessLoading(true)
+    try {
+      const res  = await fetch(`/api/agents/${agentId}/company-access`)
+      const json = await res.json() as { data?: Array<{ company_id: string | null; access: CompanyAccessLevel }> }
+      const rows = json.data ?? []
+      if (rows.length === 0) {
+        setAccessMode('all')
+        setAccessMap({})
+      } else {
+        setAccessMode('specific')
+        const map: Record<string, CompanyAccessLevel> = {}
+        for (const r of rows) {
+          if (r.company_id) map[r.company_id] = r.access
+        }
+        setAccessMap(map)
+      }
+    } catch { /* ignore */ } finally { setAccessLoading(false) }
+  }, [agentId])
+
+  async function saveCompanyAccess() {
+    if (!agentId) return
+    setAccessSaving(true)
+    try {
+      await fetch(`/api/agents/${agentId}/company-access`, {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ mode: accessMode, access: accessMap }),
+      })
+      showSaved()
+    } finally { setAccessSaving(false) }
   }
+
+  function setAllCompaniesAccess(level: CompanyAccessLevel) {
+    const next: Record<string, CompanyAccessLevel> = {}
+    companies.forEach(c => { next[c.id] = level })
+    setAccessMap(next)
+  }
+
+  function setCompanyAccess(companyId: string, level: CompanyAccessLevel) {
+    setAccessMap(prev => ({ ...prev, [companyId]: level }))
+  }
+
+  // Load company access when Access tab becomes active (edit mode only)
+  useEffect(() => {
+    if (tab === 'Access' && agentId) void loadCompanyAccess()
+  }, [tab, agentId, loadCompanyAccess])
 
   // ── Knowledge handlers ───────────────────────────────────────────────────
 
@@ -272,6 +321,10 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       // Also persist knowledge if we're leaving the Knowledge tab
       if (tab === 'Knowledge') {
         await saveKnowledgeAll()
+      }
+      // Persist company access when leaving the Access tab
+      if (tab === 'Access') {
+        await saveCompanyAccess()
       }
     }
     setTab(target)
@@ -484,7 +537,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 border-b">
-        {(['Identity', 'Behaviour', 'Tools', 'Knowledge', 'Credentials'] as Tab[]).map(t => (
+        {(['Identity', 'Behaviour', 'Access', 'Knowledge', 'Credentials'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => void handleTabChange(t)}
@@ -749,42 +802,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Company Scope</CardTitle>
-              <CardDescription>Which companies can this agent access?</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={allCompanies}
-                  onChange={e => setAllCompanies(e.target.checked)}
-                  className="rounded"
-                />
-                <span className="text-sm">All companies in group</span>
-              </label>
-              {!allCompanies && companies.length > 0 && (
-                <div className="max-h-40 overflow-y-auto space-y-1.5 rounded-md border p-2">
-                  {companies.map(company => (
-                    <label key={company.id} className="flex items-center gap-2 cursor-pointer px-1">
-                      <input
-                        type="checkbox"
-                        checked={companyScopeIds.includes(company.id)}
-                        onChange={() => toggleScopeCompany(company.id)}
-                        className="rounded"
-                      />
-                      <span className="text-sm">{company.name}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
           <div className="flex justify-between">
             <Button variant="outline" onClick={() => void handleTabChange('Identity')}>← Identity</Button>
-            <Button onClick={() => void handleTabChange('Tools')} disabled={saving}>
+            <Button onClick={() => void handleTabChange('Access')} disabled={saving}>
               {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
             </Button>
           </div>
@@ -946,7 +966,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
               </Card>
 
               <div className="flex justify-between">
-                <Button variant="outline" onClick={() => void handleTabChange('Tools')}>← Tools</Button>
+                <Button variant="outline" onClick={() => void handleTabChange('Access')}>← Access</Button>
                 <Button onClick={() => void handleTabChange('Credentials')} disabled={saving}>
                   {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
                 </Button>
@@ -956,8 +976,8 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         </div>
       )}
 
-      {/* ═════ TAB: Tools ═════ */}
-      {tab === 'Tools' && (
+      {/* ═════ TAB: Access ═════ */}
+      {tab === 'Access' && (
         <div className="space-y-5">
           <Card>
             <CardHeader>
@@ -985,6 +1005,120 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   {tools.includes(opt.value) && <Check className="h-4 w-4 text-primary shrink-0" />}
                 </button>
               ))}
+            </CardContent>
+          </Card>
+
+          {/* Company Access */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Company Access</CardTitle>
+              <CardDescription>
+                Which companies can this agent access, and at what level?
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Mode selector */}
+              <div className="space-y-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="access-mode"
+                    checked={accessMode === 'all'}
+                    onChange={() => setAccessMode('all')}
+                  />
+                  <span className="text-sm">All companies &mdash; full access to every company in the group</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio" name="access-mode"
+                    checked={accessMode === 'specific'}
+                    onChange={() => setAccessMode('specific')}
+                  />
+                  <span className="text-sm">Specific access per company</span>
+                </label>
+              </div>
+
+              {accessMode === 'specific' && companies.length > 0 && (
+                <div className="rounded-lg border overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="bg-muted/50 border-b">
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Company</th>
+                        <th className="text-center px-3 py-2 font-medium text-muted-foreground w-36">Access</th>
+                      </tr>
+                      <tr className="bg-muted/20 border-b">
+                        <td className="px-3 py-1.5 text-xs text-muted-foreground italic">All companies</td>
+                        <td className="px-3 py-1.5 text-center">
+                          <select
+                            value=""
+                            onChange={e => { if (e.target.value) setAllCompaniesAccess(e.target.value as CompanyAccessLevel) }}
+                            className="h-7 rounded border text-xs px-2 w-28 bg-background text-foreground border-border"
+                          >
+                            <option value="">Set all…</option>
+                            <option value="none">None</option>
+                            <option value="read">Read</option>
+                            <option value="write">Write</option>
+                          </select>
+                        </td>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {companies.map(company => {
+                        const level = accessMap[company.id] ?? 'none'
+                        return (
+                          <tr key={company.id} className="hover:bg-muted/30">
+                            <td className="px-3 py-2 font-medium text-foreground">{company.name}</td>
+                            <td className="px-3 py-2 text-center">
+                              <select
+                                value={level}
+                                onChange={e => setCompanyAccess(company.id, e.target.value as CompanyAccessLevel)}
+                                className={cn(
+                                  'h-7 rounded border text-xs px-2 w-28',
+                                  level === 'write' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700' :
+                                  level === 'read'  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700' :
+                                                       'bg-muted text-muted-foreground border-border',
+                                )}
+                              >
+                                <option value="none">None</option>
+                                <option value="read">Read</option>
+                                <option value="write">Write</option>
+                              </select>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <div className="flex items-center justify-between pt-1">
+                <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-3 w-3 rounded bg-green-200 dark:bg-green-800 border border-green-400" />
+                    Write
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-3 w-3 rounded bg-blue-200 dark:bg-blue-800 border border-blue-400" />
+                    Read
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block h-3 w-3 rounded bg-muted border border-border" />
+                    None
+                  </span>
+                </div>
+                {agentId && (
+                  <Button
+                    size="sm" variant="outline"
+                    onClick={() => void saveCompanyAccess()}
+                    disabled={accessSaving || accessLoading}
+                    className="gap-1.5"
+                  >
+                    {accessSaving
+                      ? <><Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving…</>
+                      : <><Check className="h-3.5 w-3.5" /> Save Access</>}
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
 
@@ -1157,7 +1291,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
           )}
 
           <div className="flex justify-between items-center">
-            <Button variant="outline" onClick={() => void handleTabChange('Tools')}>← Tools</Button>
+            <Button variant="outline" onClick={() => void handleTabChange('Access')}>← Access</Button>
             <Button onClick={async () => { await handleSave(); router.push('/agents') }} disabled={saving}>
               {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : <><Check className="h-4 w-4 mr-1.5" /> Save & Close</>}
             </Button>

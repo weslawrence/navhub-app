@@ -6,6 +6,23 @@ import { encrypt }                   from '@/lib/encryption'
  * Handles the Microsoft OAuth2 callback, stores encrypted tokens.
  * Uses multi-tenant 'common' endpoint and extracts tenant_id from id_token.
  */
+
+function errorPage(code: string, message: string) {
+  const safeMsg  = message.replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const safeCode = JSON.stringify(code)
+  return new Response(`
+    <html><body style="font-family: system-ui; padding: 24px; max-width: 480px;">
+      <h3 style="color: #b91c1c;">Connection failed</h3>
+      <p>${safeMsg}</p>
+      <p style="color: #71717a; font-size: 13px;">This window will close automatically in a few seconds.</p>
+      <script>
+        window.opener?.postMessage({ type: 'sharepoint-error', error: ${safeCode} }, '*');
+        setTimeout(() => window.close(), 3000);
+      </script>
+    </body></html>
+  `, { headers: { 'Content-Type': 'text/html' } })
+}
+
 export async function GET(req: Request) {
   const url    = new URL(req.url)
   const code   = url.searchParams.get('code')
@@ -15,27 +32,11 @@ export async function GET(req: Request) {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.navhub.co'
 
   if (error) {
-    return new Response(`
-      <html><body>
-      <script>
-        window.opener?.postMessage({ type: 'sharepoint-error', error: ${JSON.stringify(error)} }, '*');
-        window.close();
-      </script>
-      <p>Error: ${error}. You can close this window.</p>
-      </body></html>
-    `, { headers: { 'Content-Type': 'text/html' } })
+    return errorPage(error, `Microsoft returned: ${error}`)
   }
 
   if (!code || !state) {
-    return new Response(`
-      <html><body>
-      <script>
-        window.opener?.postMessage({ type: 'sharepoint-error', error: 'missing_code' }, '*');
-        window.close();
-      </script>
-      <p>Missing code or state. You can close this window.</p>
-      </body></html>
-    `, { headers: { 'Content-Type': 'text/html' } })
+    return errorPage('missing_code', 'Missing authorisation code or state from Microsoft.')
   }
 
   // Parse state (JSON string from connect route)
@@ -44,15 +45,7 @@ export async function GET(req: Request) {
     const parsed = JSON.parse(state) as { group_id: string }
     groupId = parsed.group_id
   } catch {
-    return new Response(`
-      <html><body>
-      <script>
-        window.opener?.postMessage({ type: 'sharepoint-error', error: 'invalid_state' }, '*');
-        window.close();
-      </script>
-      <p>Invalid state. You can close this window.</p>
-      </body></html>
-    `, { headers: { 'Content-Type': 'text/html' } })
+    return errorPage('invalid_state', 'Invalid OAuth state parameter.')
   }
 
   try {
@@ -72,15 +65,7 @@ export async function GET(req: Request) {
     if (!tokenRes.ok) {
       const text = await tokenRes.text()
       console.error('SharePoint token exchange failed:', text)
-      return new Response(`
-        <html><body>
-        <script>
-          window.opener?.postMessage({ type: 'sharepoint-error', error: 'token_exchange_failed' }, '*');
-          window.close();
-        </script>
-        <p>Token exchange failed. You can close this window.</p>
-        </body></html>
-      `, { headers: { 'Content-Type': 'text/html' } })
+      return errorPage('token_exchange_failed', `Token exchange failed: ${text.slice(0, 200)}`)
     }
 
     const tokens = await tokenRes.json() as {
@@ -122,39 +107,23 @@ export async function GET(req: Request) {
 
     if (upsertError) {
       console.error('SharePoint connection upsert error:', upsertError)
-      return new Response(`
-        <html><body>
-        <script>
-          window.opener?.postMessage({ type: 'sharepoint-error', error: 'db_error' }, '*');
-          window.close();
-        </script>
-        <p>Database error. You can close this window.</p>
-        </body></html>
-      `, { headers: { 'Content-Type': 'text/html' } })
+      return errorPage('db_error', `Database error: ${upsertError.message}`)
     }
 
-    // Close popup and notify parent window
+    // Success — close popup quickly and notify parent
     return new Response(`
-      <html><body>
-      <script>
-        window.opener?.postMessage({ type: 'sharepoint-connected' }, '*');
-        window.close();
-      </script>
-      <p>Connected! You can close this window.</p>
+      <html><body style="font-family: system-ui; padding: 24px;">
+        <h3 style="color: #16a34a;">Connected!</h3>
+        <p>SharePoint is now linked to NavHub. You can close this window.</p>
+        <script>
+          window.opener?.postMessage({ type: 'sharepoint-connected' }, '*');
+          setTimeout(() => window.close(), 800);
+        </script>
       </body></html>
     `, { headers: { 'Content-Type': 'text/html' } })
   } catch (err) {
     console.error('SharePoint callback error:', err)
     const msg = err instanceof Error ? err.message : 'Unknown error'
-    return new Response(`
-      <html><body>
-      <script>
-        window.opener?.postMessage({ type: 'sharepoint-error', error: ${JSON.stringify(msg)} }, '*');
-        window.close();
-      </script>
-      <p>Error: ${msg}. You can close this window.</p>
-      </body></html>
-    `, { headers: { 'Content-Type': 'text/html' } })
+    return errorPage('callback_error', msg)
   }
 }
-

@@ -69,9 +69,22 @@ export async function PATCH(
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() }
 
-  const textFields = ['name', 'description', 'avatar_color', 'model', 'persona_preset', 'persona', 'instructions', 'email_address', 'email_display_name', 'slack_channel'] as const
+  // Trimmed text fields — empty string becomes null
+  const textFields = [
+    'name', 'description', 'avatar_color', 'avatar_preset', 'avatar_url',
+    'model', 'model_provider', 'model_name', 'model_api_key',
+    'persona_preset', 'persona', 'instructions',
+    'email_address', 'email_display_name', 'slack_channel',
+    'visibility', 'knowledge_text',
+    'communication_style', 'response_length',
+  ] as const
   for (const f of textFields) {
-    if (f in body) updates[f] = typeof body[f] === 'string' ? (body[f] as string).trim() || null : null
+    if (f in body) {
+      const val = body[f]
+      if (val === null)                       updates[f] = null
+      else if (typeof val === 'string')       updates[f] = val.trim() || null
+      else                                     updates[f] = null
+    }
   }
   if ('name' in body && (!updates.name || (updates.name as string).length < 1)) {
     return NextResponse.json({ error: 'Name cannot be empty' }, { status: 422 })
@@ -79,7 +92,12 @@ export async function PATCH(
   if ('tools' in body)          updates.tools          = Array.isArray(body.tools) ? body.tools : []
   if ('company_scope' in body)  updates.company_scope  = Array.isArray(body.company_scope) && (body.company_scope as unknown[]).length > 0 ? body.company_scope : null
   if ('email_recipients' in body) updates.email_recipients = Array.isArray(body.email_recipients) && (body.email_recipients as unknown[]).length > 0 ? body.email_recipients : null
+  if ('knowledge_links' in body) updates.knowledge_links = Array.isArray(body.knowledge_links) ? body.knowledge_links : []
   if ('is_active' in body)      updates.is_active      = !!body.is_active
+  if ('schedule_enabled' in body) updates.schedule_enabled = !!body.schedule_enabled
+  if ('schedule_config' in body)  updates.schedule_config  = body.schedule_config ?? null
+  if ('next_scheduled_run_at' in body) updates.next_scheduled_run_at = body.next_scheduled_run_at ?? null
+  if ('last_scheduled_run_at' in body) updates.last_scheduled_run_at = body.last_scheduled_run_at ?? null
 
   const admin = createAdminClient()
   const { data: agent, error } = await admin

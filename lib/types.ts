@@ -301,7 +301,6 @@ export type AgentModel =
 
 export type AgentTool =
   | 'read_financials'
-  | 'read_companies'
   | 'generate_report'
   | 'send_slack'
   | 'send_email'
@@ -370,6 +369,11 @@ export interface Agent {
   // Knowledge base (migration 030)
   knowledge_text:        string | null
   knowledge_links:       Array<{ url: string; label?: string }>
+  // Notifications (migration 038)
+  notify_on_completion:  boolean
+  notify_on_output:      boolean
+  notify_email:          string | null
+  notify_slack_channel:  string | null
   created_at:            string
   updated_at:            string
 }
@@ -420,6 +424,9 @@ export interface AgentRun {
   awaiting_input_at:       string | null
   started_at:              string | null
   completed_at:            string | null
+  // Per-run notification overrides (migration 038)
+  notify_email:            string | null
+  notify_slack_channel:    string | null
   created_at:              string
 }
 

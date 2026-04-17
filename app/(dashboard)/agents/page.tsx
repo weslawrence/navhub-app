@@ -20,7 +20,6 @@ import { AVATAR_PRESET_MAP } from '@/lib/agent-presets'
 
 const TOOL_LABELS: Record<AgentTool, string> = {
   read_financials:          'Financials',
-  read_companies:           'Companies',
   generate_report:          'Reports',
   send_slack:               'Slack',
   send_email:               'Email',

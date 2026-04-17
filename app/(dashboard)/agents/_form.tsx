@@ -30,7 +30,6 @@ const TOOL_OPTIONS: {
   description: string
 }[] = [
   { value: 'read_financials',        label: 'Read Financials',       emoji: '📊', description: 'Access P&L and balance sheet data' },
-  { value: 'read_companies',         label: 'Read Companies',        emoji: '🏢', description: 'Access company and division info' },
   { value: 'generate_report',        label: 'Generate Report',       emoji: '📄', description: 'Create draft reports in the library' },
   { value: 'send_slack',             label: 'Send to Slack',         emoji: '💬', description: 'Post output to a Slack channel' },
   { value: 'send_email',             label: 'Send Email',            emoji: '📧', description: 'Send output via email (Resend)' },
@@ -63,7 +62,7 @@ const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: strin
   { value: 'custom',               label: 'Custom',               description: 'Write your own persona instructions' },
 ]
 
-type Tab = 'Identity' | 'Behaviour' | 'Access' | 'Knowledge' | 'Credentials'
+type Tab = 'Identity' | 'Behaviour' | 'Access' | 'Knowledge' | 'Credentials' | 'Notifications'
 type CompanyAccessLevel = 'none' | 'read' | 'write'
 
 interface AgentFormProps {
@@ -126,6 +125,13 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [credSaving, setCredSaving] = useState(false)
   const [deleteCredConfirm, setDeleteCredConfirm] = useState<string | null>(null)
 
+  // Notifications state
+  const [notifyOnCompletion, setNotifyOnCompletion] = useState(false)
+  const [notifyOnOutput,     setNotifyOnOutput]     = useState(false)
+  const [notifyEmail,        setNotifyEmail]        = useState('')
+  const [notifySlack,        setNotifySlack]        = useState('')
+  const [slackStatus,        setSlackStatus]        = useState<{ connected: boolean; team_name?: string }>({ connected: false })
+
   // Knowledge state
   const [knowledgeText,   setKnowledgeText]   = useState('')
   const [knowledgeLinks,  setKnowledgeLinks]  = useState<KnowledgeLink[]>([])
@@ -147,6 +153,14 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     fetch('/api/companies')
       .then(r => r.json())
       .then(json => setCompanies((json.data ?? []).filter((c: Company) => c.is_active)))
+      .catch(() => {})
+
+    fetch('/api/integrations/slack/status')
+      .then(r => r.json())
+      .then((j: { data?: { team_name?: string } | null }) => {
+        if (j.data) setSlackStatus({ connected: true, team_name: j.data.team_name })
+        else        setSlackStatus({ connected: false })
+      })
       .catch(() => {})
   }, [])
 
@@ -187,6 +201,12 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     setKnowledgeLinks((agJson.data?.knowledge_links ?? []).map((l: { url: string; label?: string; description?: string }) => ({
       url: l.url, label: l.label ?? l.url, description: l.description,
     })))
+
+    // Load notifications
+    setNotifyOnCompletion(!!agJson.data?.notify_on_completion)
+    setNotifyOnOutput(!!agJson.data?.notify_on_output)
+    setNotifyEmail(agJson.data?.notify_email ?? '')
+    setNotifySlack(agJson.data?.notify_slack_channel ?? '')
     try {
       const kdRes = await fetch(`/api/agents/${agentId}/knowledge/documents`)
       if (kdRes.ok) {
@@ -424,6 +444,10 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         email_display_name: emailDisplayName.trim() || null,
         email_recipients:   emailRecipients.split(',').map(e => e.trim()).filter(Boolean),
         slack_channel:      slackChannel.trim() || null,
+        notify_on_completion: notifyOnCompletion,
+        notify_on_output:     notifyOnOutput,
+        notify_email:         notifyEmail.trim()  || null,
+        notify_slack_channel: notifySlack.trim()  || null,
       }
 
       let res: Response
@@ -537,7 +561,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 border-b">
-        {(['Identity', 'Behaviour', 'Access', 'Knowledge', 'Credentials'] as Tab[]).map(t => (
+        {(['Identity', 'Behaviour', 'Access', 'Knowledge', 'Credentials', 'Notifications'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => void handleTabChange(t)}
@@ -1292,6 +1316,92 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
           <div className="flex justify-between items-center">
             <Button variant="outline" onClick={() => void handleTabChange('Access')}>← Access</Button>
+            <Button onClick={() => void handleTabChange('Notifications')} disabled={saving}>
+              {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : 'Save & Continue →'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* ═════ TAB: Notifications ═════ */}
+      {tab === 'Notifications' && (
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Run Completion</CardTitle>
+              <CardDescription>Notify when this agent finishes a run.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={notifyOnCompletion}
+                  onChange={e => setNotifyOnCompletion(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-sm">Send notification when this agent finishes a run</span>
+              </label>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Output Created</CardTitle>
+              <CardDescription>Notify when this agent creates a document or report.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={notifyOnOutput}
+                  onChange={e => setNotifyOnOutput(e.target.checked)}
+                  className="rounded"
+                />
+                <span className="text-sm">Send notification when agent creates a document or report</span>
+              </label>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Recipients</CardTitle>
+              <CardDescription>Where notifications are sent. Both triggers share these recipients.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-1.5">
+                <Label>Email</Label>
+                <Input
+                  value={notifyEmail}
+                  onChange={e => setNotifyEmail(e.target.value)}
+                  placeholder="recipient@company.com"
+                />
+                <p className="text-xs text-muted-foreground">Comma-separated for multiple recipients.</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Slack channel</Label>
+                <Input
+                  value={notifySlack}
+                  onChange={e => setNotifySlack(e.target.value)}
+                  placeholder="#channel-name"
+                  disabled={!slackStatus.connected}
+                />
+                {slackStatus.connected ? (
+                  <p className="text-xs text-muted-foreground">
+                    Connected to <span className="font-medium text-foreground">{slackStatus.team_name ?? 'Slack workspace'}</span>.
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Slack not connected —{' '}
+                    <Link href="/integrations" className="text-primary hover:underline">Connect in Integrations →</Link>
+                  </p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex justify-between items-center">
+            <Button variant="outline" onClick={() => void handleTabChange('Credentials')}>← Credentials</Button>
             <Button onClick={async () => { await handleSave(); router.push('/agents') }} disabled={saving}>
               {saving ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Saving…</> : <><Check className="h-4 w-4 mr-1.5" /> Save & Close</>}
             </Button>

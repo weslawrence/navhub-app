@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
   Plug, Upload, FileText, Loader2, Check, ExternalLink, Trash2, Lock,
+  Briefcase, Mail, Hash,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -14,7 +15,7 @@ import IntegrationsTab from '@/components/settings/IntegrationsTab'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-type Tab = 'financials' | 'marketing' | 'documents'
+type Tab = 'financials' | 'marketing' | 'documents' | 'workspace'
 
 interface Company { id: string; name: string; is_active: boolean }
 interface Folder  { id: string; name: string; folder_type?: string }
@@ -338,6 +339,11 @@ export default function IntegrationsPage() {
   const [folders,      setFolders]      = useState<Folder[]>([])
   const [imports,      setImports]      = useState<FinancialImport[]>([])
 
+  // Slack workspace state
+  const [slackStatus,  setSlackStatus]  = useState<{ connected: boolean; team_name?: string; configured: boolean }>({ connected: false, configured: false })
+  const [slackWorking, setSlackWorking] = useState(false)
+  const [slackMsg,     setSlackMsg]     = useState<string | null>(null)
+
   const [tab, setTab] = useState<Tab>('financials')
 
   useEffect(() => {
@@ -366,18 +372,63 @@ export default function IntegrationsPage() {
   }, [])
 
   const loadData = useCallback(async () => {
-    const [cRes, fRes, iRes] = await Promise.all([
+    const [cRes, fRes, iRes, sRes] = await Promise.all([
       fetch('/api/companies'),
       fetch('/api/documents/folders'),
       fetch('/api/integrations/financial-imports'),
+      fetch('/api/integrations/slack/status'),
     ])
-    const [cJ, fJ, iJ] = await Promise.all([cRes.json(), fRes.json(), iRes.json()])
+    const [cJ, fJ, iJ, sJ] = await Promise.all([cRes.json(), fRes.json(), iRes.json(), sRes.json()])
     setCompanies(((cJ.data ?? []) as Company[]).filter(c => c.is_active))
     setFolders(fJ.data ?? [])
     setImports(iJ.data ?? [])
+    const slackData = (sJ as { data?: { team_name?: string } | null; configured?: boolean })
+    setSlackStatus({
+      connected:  !!slackData.data,
+      team_name:  slackData.data?.team_name,
+      configured: !!slackData.configured,
+    })
   }, [])
 
   useEffect(() => { void loadData() }, [loadData])
+
+  // Listen for Slack popup postMessage
+  useEffect(() => {
+    function handler(e: MessageEvent) {
+      const payload = e.data as { type?: string }
+      if (payload?.type === 'slack-connected') {
+        setSlackMsg('Slack connected')
+        void loadData()
+      }
+      if (payload?.type === 'slack-error') {
+        setSlackMsg('Slack connection failed')
+      }
+    }
+    window.addEventListener('message', handler)
+    return () => window.removeEventListener('message', handler)
+  }, [loadData])
+
+  function connectSlack() {
+    setSlackMsg(null)
+    const w = 600, h = 720
+    const left = window.screenX + (window.innerWidth  - w) / 2
+    const top  = window.screenY + (window.innerHeight - h) / 2
+    window.open(
+      '/api/integrations/slack/connect',
+      'slack-connect',
+      `width=${w},height=${h},left=${left},top=${top}`,
+    )
+  }
+
+  async function disconnectSlack() {
+    if (!confirm('Disconnect Slack from this group? Existing agent configs that use Slack will stop sending.')) return
+    setSlackWorking(true)
+    try {
+      await fetch('/api/integrations/slack/status', { method: 'DELETE' })
+      await loadData()
+      setSlackMsg('Slack disconnected')
+    } finally { setSlackWorking(false) }
+  }
 
   const isAdmin        = role === 'super_admin' || role === 'group_admin'
   const showFinancials = isAdmin || visible.includes('financials')
@@ -458,6 +509,16 @@ export default function IntegrationsPage() {
             Reports &amp; Documents
           </button>
         )}
+        {/* Workspace tab — always shown to authenticated group members */}
+        <button
+          onClick={() => setTab('workspace')}
+          className={cn(
+            'px-4 py-2 text-sm font-medium transition-colors -mb-px border-b-2',
+            tab === 'workspace' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground',
+          )}
+        >
+          Workspace
+        </button>
       </div>
 
       {/* Financials tab */}
@@ -546,6 +607,87 @@ export default function IntegrationsPage() {
                 Upload documents from the{' '}
                 <Link href="/documents" className="text-primary hover:underline">Documents</Link>{' '}
                 section — drag-and-drop, folder selection, tags and publishing status are all available there.
+              </CardContent>
+            </Card>
+          </section>
+        </div>
+      )}
+
+      {/* Workspace tab */}
+      {tab === 'workspace' && (
+        <div className="space-y-6">
+          {slackMsg && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-primary">
+              {slackMsg}
+            </div>
+          )}
+
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <Mail className="h-4 w-4 text-primary" /> Email Notifications
+            </h2>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Sending email</CardTitle>
+                <CardDescription>
+                  NavHub sends notifications via Resend using the configured app-level
+                  <code className="mx-1 px-1 rounded bg-muted text-foreground font-mono text-xs">RESEND_FROM_DOMAIN</code>.
+                  Each agent configures its own recipient list on the Notifications tab.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="text-sm text-muted-foreground">
+                No group-level configuration required.
+              </CardContent>
+            </Card>
+          </section>
+
+          <section className="space-y-3">
+            <h2 className="text-base font-semibold flex items-center gap-2">
+              <Hash className="h-4 w-4 text-primary" /> Slack
+            </h2>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Slack workspace</CardTitle>
+                <CardDescription>
+                  Connect your Slack workspace so agents can post notifications to channels.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {!slackStatus.configured && (
+                  <div className="rounded-md border border-amber-300/50 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    Slack OAuth not configured — set <code className="font-mono">SLACK_CLIENT_ID</code> and <code className="font-mono">SLACK_CLIENT_SECRET</code> in env.
+                  </div>
+                )}
+
+                {slackStatus.connected ? (
+                  <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                        <Check className="h-3.5 w-3.5 text-green-600" />
+                        Connected to <span>{slackStatus.team_name ?? 'Slack workspace'}</span>
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Agents can send notifications to any channel the bot is a member of.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm" variant="outline"
+                      onClick={() => void disconnectSlack()}
+                      disabled={slackWorking}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    onClick={connectSlack}
+                    disabled={!slackStatus.configured}
+                    className="gap-2"
+                  >
+                    <Briefcase className="h-4 w-4" />
+                    Connect Slack
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </section>

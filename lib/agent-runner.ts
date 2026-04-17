@@ -9,7 +9,6 @@ import { createAdminClient } from '@/lib/supabase/admin'
 import { decrypt } from '@/lib/encryption'
 import {
   readFinancials,
-  readCompanies,
   generateReport,
   sendSlack,
   sendEmail,
@@ -76,16 +75,6 @@ const ALL_TOOL_DEFS: Record<string, object> = {
         report_types: { type: 'array',  items: { type: 'string', enum: ['profit_loss', 'balance_sheet'] }, description: 'Report types to fetch.' },
       },
       required: ['periods', 'report_types'],
-    },
-  },
-  read_companies: {
-    name:        'read_companies',
-    description: 'List all companies (and optionally divisions) in the active group with their status and integration info.',
-    input_schema: {
-      type: 'object',
-      properties: {
-        include_divisions: { type: 'boolean', description: 'Whether to include divisions under each company.' },
-      },
     },
   },
   generate_report: {
@@ -953,8 +942,6 @@ async function executeTool(
   switch (toolName) {
     case 'read_financials':
       return readFinancials(input as unknown as Parameters<typeof readFinancials>[0], context)
-    case 'read_companies':
-      return readCompanies(input as unknown as Parameters<typeof readCompanies>[0], context)
     case 'generate_report':
       return generateReport(input as unknown as Parameters<typeof generateReport>[0], context)
     case 'send_slack':
@@ -1004,6 +991,106 @@ async function executeTool(
       return 'ask_user is handled by the runner directly.'
     default:
       return `Unknown tool: ${toolName}`
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Notifications
+// ────────────────────────────────────────────────────────────────────────────
+
+interface RunForNotify {
+  id:                   string
+  status:               string
+  run_name?:            string | null
+  output_document_id?:  string | null
+  draft_report_id?:     string | null
+  notify_email?:        string | null
+  notify_slack_channel?: string | null
+}
+
+interface AgentForNotify {
+  name:                 string
+  notify_on_completion?: boolean
+  notify_on_output?:     boolean
+  notify_email?:         string | null
+  notify_slack_channel?: string | null
+}
+
+async function sendRunNotifications(
+  run:     RunForNotify,
+  agent:   AgentForNotify,
+  groupId: string,
+): Promise<void> {
+  try {
+    const emailTo   = run.notify_email         ?? agent.notify_email         ?? null
+    const slackChan = run.notify_slack_channel ?? agent.notify_slack_channel ?? null
+
+    const hasOutput               = !!(run.output_document_id || run.draft_report_id)
+    const shouldNotifyCompletion  = !!agent.notify_on_completion
+    const shouldNotifyOutput      = !!agent.notify_on_output && hasOutput
+    const perRunRequested         = !!(run.notify_email || run.notify_slack_channel)
+
+    if (!shouldNotifyCompletion && !shouldNotifyOutput && !perRunRequested) return
+    if (!emailTo && !slackChan) return
+
+    const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? 'https://app.navhub.co'
+    const runUrl  = `${appUrl}/agents/runs/${run.id}`
+    const subject = `Agent run complete: ${run.run_name ?? agent.name}`
+    const bodyHtml = `
+      <p><strong>${agent.name}</strong> has finished a run.</p>
+      ${run.run_name ? `<p>Run: ${run.run_name}</p>` : ''}
+      <p>Status: ${run.status}</p>
+      <p><a href="${runUrl}">View run →</a></p>
+    `
+
+    // Email via Resend
+    if (emailTo && process.env.RESEND_API_KEY) {
+      try {
+        const { Resend } = await import('resend')
+        const resend = new Resend(process.env.RESEND_API_KEY)
+        const domain = process.env.RESEND_FROM_DOMAIN ?? 'navhub.co'
+        await resend.emails.send({
+          from:    `NavHub <notifications@${domain}>`,
+          to:      emailTo.split(',').map(e => e.trim()).filter(Boolean),
+          subject,
+          html:    bodyHtml,
+        })
+      } catch (err) {
+        console.error('sendRunNotifications: email failed', err)
+      }
+    }
+
+    // Slack via bot token
+    if (slackChan) {
+      try {
+        const admin = createAdminClient()
+        const { data: conn } = await admin
+          .from('slack_connections')
+          .select('bot_token_encrypted')
+          .eq('group_id', groupId)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (conn?.bot_token_encrypted) {
+          const token = decrypt(conn.bot_token_encrypted)
+          await fetch('https://slack.com/api/chat.postMessage', {
+            method: 'POST',
+            headers: {
+              'Content-Type':  'application/json',
+              'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              channel: slackChan,
+              text:    `*${agent.name}* run complete${run.run_name ? ` — ${run.run_name}` : ''}\n<${runUrl}|View run>`,
+            }),
+          })
+        }
+      } catch (err) {
+        console.error('sendRunNotifications: slack failed', err)
+      }
+    }
+  } catch (err) {
+    console.error('sendRunNotifications: unexpected error', err)
   }
 }
 
@@ -1258,6 +1345,16 @@ export async function executeAgentRun(
       })
       .eq('id', runId)
 
+    // Send notifications (fire-and-forget, won't block run)
+    const { data: finalRun } = await admin
+      .from('agent_runs')
+      .select('id, status, run_name, output_document_id, draft_report_id, notify_email, notify_slack_channel')
+      .eq('id', runId)
+      .single()
+    if (finalRun) {
+      void sendRunNotifications(finalRun as RunForNotify, agent as unknown as AgentForNotify, agent.group_id)
+    }
+
     onChunk({ type: 'done', tokens: totalTokens })
 
   } catch (err) {
@@ -1271,6 +1368,16 @@ export async function executeAgentRun(
         completed_at:  new Date().toISOString(),
       })
       .eq('id', runId)
+
+    // Send error notification too
+    const { data: errRun } = await admin
+      .from('agent_runs')
+      .select('id, status, run_name, output_document_id, draft_report_id, notify_email, notify_slack_channel')
+      .eq('id', runId)
+      .single()
+    if (errRun) {
+      void sendRunNotifications(errRun as RunForNotify, agent as unknown as AgentForNotify, agent.group_id)
+    }
 
     onChunk({ type: 'error', message })
   }

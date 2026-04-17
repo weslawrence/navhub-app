@@ -15,7 +15,6 @@ const STATUS_BADGE: Record<string, string> = {
 
 const TOOL_EMOJI: Record<string, string> = {
   read_financials:         '📊',
-  read_companies:          '🏢',
   generate_report:         '📄',
   send_slack:              '💬',
   send_email:              '📧',

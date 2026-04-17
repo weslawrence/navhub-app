@@ -19,7 +19,6 @@ import type { RunEvent } from '@/lib/agent-runner'
 
 const TOOL_EMOJI: Record<string, string> = {
   read_financials:        '📊',
-  read_companies:         '🏢',
   generate_report:        '📄',
   send_slack:             '💬',
   send_email:             '📧',
@@ -39,7 +38,6 @@ const TOOL_EMOJI: Record<string, string> = {
 
 const TOOL_LABEL: Record<string, string> = {
   read_financials:        'Read Financials',
-  read_companies:         'Read Companies',
   generate_report:        'Generate Report',
   send_slack:             'Send Slack',
   send_email:             'Send Email',
@@ -119,10 +117,6 @@ function summariseTool(tool: string, output: string): string {
       }
       case 'read_financials':
         return 'Financial data loaded'
-      case 'read_companies': {
-        const n = Array.isArray(parsed.data) ? (parsed.data as unknown[]).length : 0
-        return `Found ${n} compan${n !== 1 ? 'ies' : 'y'}`
-      }
       case 'send_email':
         return 'Email sent'
       case 'send_slack':

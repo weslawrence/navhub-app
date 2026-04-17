@@ -64,6 +64,16 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
   const [outputStatus,   setOutputStatus]   = useState<'draft' | 'published'>('draft')
   const [outputFolders,  setOutputFolders]  = useState<{ id: string; name: string }[]>([])
 
+  // Per-run notifications (pre-populate from agent defaults)
+  const [notifyEmailOn, setNotifyEmailOn] = useState(false)
+  const [notifySlackOn, setNotifySlackOn] = useState(false)
+  const [notifyEmail,   setNotifyEmail]   = useState(
+    (agent as unknown as { notify_email?: string | null }).notify_email ?? '',
+  )
+  const [notifySlack,   setNotifySlack]   = useState(
+    (agent as unknown as { notify_slack_channel?: string | null }).notify_slack_channel ?? '',
+  )
+
   // Recurring schedule
   const [isRecurring,   setIsRecurring]   = useState(false)
   const [schedFreq,     setSchedFreq]     = useState<'daily' | 'weekly' | 'monthly'>('daily')
@@ -203,6 +213,8 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
           output_folder_id:     outputFolderId || undefined,
           output_status:        outputStatus,
           output_name_override: outputName.trim() || undefined,
+          notify_email:         notifyEmailOn && notifyEmail.trim()  ? notifyEmail.trim()  : null,
+          notify_slack_channel: notifySlackOn && notifySlack.trim()  ? notifySlack.trim()  : null,
         }),
       })
       const json = await res.json()
@@ -556,6 +568,43 @@ export default function RunModal({ agent, onClose, initialInstructions = '' }: R
                 <label className="text-[10px] text-muted-foreground">Name override</label>
                 <input value={outputName} onChange={e => setOutputName(e.target.value)} placeholder="Auto-generated if blank"
                   className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 text-xs text-foreground" />
+              </div>
+            </div>
+
+            {/* Per-run notifications */}
+            <div className="border-t pt-4 space-y-2">
+              <p className="text-xs font-medium text-foreground">Notify on completion (optional)</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={notifyEmailOn}
+                  onChange={e => setNotifyEmailOn(e.target.checked)}
+                  className="rounded border-input"
+                />
+                <span className="text-xs text-muted-foreground w-14">Email</span>
+                <input
+                  value={notifyEmail}
+                  onChange={e => setNotifyEmail(e.target.value)}
+                  placeholder="recipient@company.com"
+                  disabled={!notifyEmailOn}
+                  className="flex-1 h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground disabled:opacity-40"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={notifySlackOn}
+                  onChange={e => setNotifySlackOn(e.target.checked)}
+                  className="rounded border-input"
+                />
+                <span className="text-xs text-muted-foreground w-14">Slack</span>
+                <input
+                  value={notifySlack}
+                  onChange={e => setNotifySlack(e.target.value)}
+                  placeholder="#channel"
+                  disabled={!notifySlackOn}
+                  className="flex-1 h-8 rounded-md border border-input bg-transparent px-2 text-xs text-foreground disabled:opacity-40"
+                />
               </div>
             </div>
 

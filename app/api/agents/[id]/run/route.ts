@@ -36,20 +36,31 @@ export async function POST(
   try { body = await request.json() } catch { /* body optional */ }
 
   const admin = createAdminClient()
+  const insertData: Record<string, unknown> = {
+    agent_id:          params.id,
+    group_id:          activeGroupId,
+    triggered_by:      'manual',
+    triggered_by_user: session.user.id,
+    status:            'queued',
+    input_context:     {
+      period:               typeof body.period              === 'string' ? body.period : undefined,
+      company_ids:          Array.isArray(body.company_ids) ? body.company_ids : undefined,
+      extra_instructions:   typeof body.extra_instructions  === 'string' ? body.extra_instructions : undefined,
+    },
+  }
+  if (typeof body.run_name             === 'string') insertData.run_name             = body.run_name
+  if (typeof body.output_type          === 'string') insertData.output_type          = body.output_type
+  if (typeof body.output_folder_id     === 'string') insertData.output_folder_id     = body.output_folder_id
+  if (typeof body.output_status        === 'string') insertData.output_status        = body.output_status
+  if (typeof body.output_name_override === 'string') insertData.output_name_override = body.output_name_override
+  if (body.notify_email === null || typeof body.notify_email === 'string')
+    insertData.notify_email = body.notify_email
+  if (body.notify_slack_channel === null || typeof body.notify_slack_channel === 'string')
+    insertData.notify_slack_channel = body.notify_slack_channel
+
   const { data: run, error } = await admin
     .from('agent_runs')
-    .insert({
-      agent_id:          params.id,
-      group_id:          activeGroupId,
-      triggered_by:      'manual',
-      triggered_by_user: session.user.id,
-      status:            'queued',
-      input_context:     {
-        period:               typeof body.period              === 'string' ? body.period : undefined,
-        company_ids:          Array.isArray(body.company_ids) ? body.company_ids : undefined,
-        extra_instructions:   typeof body.extra_instructions  === 'string' ? body.extra_instructions : undefined,
-      },
-    })
+    .insert(insertData)
     .select('id')
     .single()
 

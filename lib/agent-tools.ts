@@ -23,10 +23,6 @@ export interface ReadFinancialsParams {
   report_types: ('profit_loss' | 'balance_sheet')[]
 }
 
-export interface ReadCompaniesParams {
-  include_divisions?: boolean
-}
-
 export interface GenerateReportParams {
   title:        string
   content:      string   // markdown
@@ -205,50 +201,6 @@ export async function readFinancials(
   }
 
   return results.join('\n') || 'No financial data found for the requested criteria.'
-}
-
-// ────────────────────────────────────────────────────────────────────────────
-// read_companies
-// ────────────────────────────────────────────────────────────────────────────
-
-export async function readCompanies(
-  params:  ReadCompaniesParams,
-  context: ToolContext
-): Promise<string> {
-  const admin = createAdminClient()
-
-  // Return id + name only for token efficiency; agent can call read_financials for detailed data
-  const { data: companies } = await admin
-    .from('companies')
-    .select('id, name')
-    .eq('group_id', context.groupId)
-    .eq('is_active', true)
-    .order('name')
-
-  if (!companies || companies.length === 0) {
-    return 'No companies found for this group.'
-  }
-
-  const lines: string[] = [`Companies in ${context.groupName}:\n`]
-
-  for (const company of companies as Array<{ id: string; name: string }>) {
-    lines.push(`• ${company.name} (id: ${company.id})`)
-
-    if (params.include_divisions) {
-      const { data: divs } = await admin
-        .from('divisions')
-        .select('id, name')
-        .eq('company_id', company.id)
-        .eq('is_active', true)
-        .order('name')
-
-      for (const div of (divs ?? []) as Array<{ id: string; name: string }>) {
-        lines.push(`  └ ${div.name} (id: ${div.id})`)
-      }
-    }
-  }
-
-  return lines.join('\n')
 }
 
 // ────────────────────────────────────────────────────────────────────────────

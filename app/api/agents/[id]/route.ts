@@ -77,6 +77,7 @@ export async function PATCH(
     'email_address', 'email_display_name', 'slack_channel',
     'visibility', 'knowledge_text',
     'communication_style', 'response_length',
+    'notify_email', 'notify_slack_channel',
   ] as const
   for (const f of textFields) {
     if (f in body) {
@@ -95,6 +96,8 @@ export async function PATCH(
   if ('knowledge_links' in body) updates.knowledge_links = Array.isArray(body.knowledge_links) ? body.knowledge_links : []
   if ('is_active' in body)      updates.is_active      = !!body.is_active
   if ('schedule_enabled' in body) updates.schedule_enabled = !!body.schedule_enabled
+  if ('notify_on_completion' in body) updates.notify_on_completion = !!body.notify_on_completion
+  if ('notify_on_output' in body)     updates.notify_on_output     = !!body.notify_on_output
   if ('schedule_config' in body)  updates.schedule_config  = body.schedule_config ?? null
   if ('next_scheduled_run_at' in body) updates.next_scheduled_run_at = body.next_scheduled_run_at ?? null
   if ('last_scheduled_run_at' in body) updates.last_scheduled_run_at = body.last_scheduled_run_at ?? null

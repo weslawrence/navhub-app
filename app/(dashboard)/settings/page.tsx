@@ -2,22 +2,20 @@
 
 import { useState, useEffect } from 'react'
 import { useSearchParams }      from 'next/navigation'
-import { Settings, SlidersHorizontal, Building2, Plug, Upload, Users } from 'lucide-react'
+import { Settings, SlidersHorizontal, Building2, Upload, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import DisplayTab      from '@/components/settings/DisplayTab'
 import CompaniesTab    from '@/components/settings/CompaniesTab'
-import IntegrationsTab from '@/components/settings/IntegrationsTab'
 import UploadsTab      from '@/components/settings/UploadsTab'
 import MembersTab      from '@/components/settings/MembersTab'
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
 
-type Tab = 'display' | 'companies' | 'integrations' | 'uploads' | 'members'
+type Tab = 'display' | 'companies' | 'uploads' | 'members'
 
 const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'display',      label: 'Display',      Icon: SlidersHorizontal },
   { id: 'companies',    label: 'Companies',    Icon: Building2 },
-  { id: 'integrations', label: 'Integrations', Icon: Plug },
   { id: 'uploads',      label: 'Uploads',      Icon: Upload },
   { id: 'members',      label: 'Members',      Icon: Users },
 ]
@@ -26,7 +24,9 @@ const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: st
 
 export default function SettingsPage() {
   const searchParams = useSearchParams()
-  const initialTab   = (searchParams.get('tab') as Tab | null) ?? 'display'
+  const paramTab     = searchParams.get('tab') as Tab | null
+  // Legacy tab=integrations redirects to /integrations; fall back to 'display'
+  const initialTab: Tab = paramTab && ['display','companies','uploads','members'].includes(paramTab) ? paramTab : 'display'
 
   const [tab,           setTab]           = useState<Tab>(initialTab)
   const [groupId,       setGroupId]       = useState<string | null>(null)
@@ -117,9 +117,6 @@ export default function SettingsPage() {
         )}
         {tab === 'companies' && (
           <CompaniesTab />
-        )}
-        {tab === 'integrations' && (
-          <IntegrationsTab />
         )}
         {tab === 'uploads' && (
           <UploadsTab isAdmin={isAdmin} fyEndMonth={fyEndMonth} />

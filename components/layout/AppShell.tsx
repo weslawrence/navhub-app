@@ -22,6 +22,7 @@ import {
   KeyRound,
   Megaphone,
   Bot,
+  Plug,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -260,6 +261,11 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
 
             {/* Marketing — single item */}
             {show('marketing') && <NavLink href="/marketing" label="Marketing" Icon={Megaphone} mobile={mobile} />}
+
+            {/* Integrations — visible if user has access to any integration tab */}
+            {(show('financials') || show('marketing') || show('documents') || show('reports')) && (
+              <NavLink href="/integrations" label="Integrations" Icon={Plug} mobile={mobile} />
+            )}
 
             {/* Reports & Documents group */}
             <NavGroup label="Reports & Docs" Icon={FileText} open={reportsDocsOpen}

@@ -690,7 +690,7 @@ export interface DocumentFolder {
   group_id:    string
   name:        string
   is_system:   boolean
-  folder_type: 'general' | 'templates'
+  folder_type: 'general' | 'templates' | 'imports'
   created_by:  string | null
   created_at:  string
 }

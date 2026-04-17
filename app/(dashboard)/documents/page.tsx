@@ -420,7 +420,7 @@ export default function DocumentsPage() {
           <span className="text-xs text-muted-foreground">{countUnfiled}</span>
         </button>
 
-        {/* Templates folder — pinned at top */}
+        {/* Templates folder — pinned at top (system) */}
         {folders.filter(f => f.folder_type === 'templates').map(f => (
           <button
             key={f.id}
@@ -436,8 +436,24 @@ export default function DocumentsPage() {
           </button>
         ))}
 
+        {/* Imports folder — pinned (system) */}
+        {folders.filter(f => f.folder_type === 'imports').map(f => (
+          <button
+            key={f.id}
+            onClick={() => setActiveFolder(f.id)}
+            className={cn(
+              'flex items-center gap-2 w-full rounded-md px-2 py-1.5 text-sm text-left transition-colors',
+              activeFolder === f.id ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            )}
+          >
+            <Upload className="h-4 w-4 shrink-0" />
+            <span className="flex-1 truncate">{f.name}</span>
+            <span className="text-xs text-muted-foreground">{folderCounts[f.id] ?? 0}</span>
+          </button>
+        ))}
+
         {/* Regular folders */}
-        {folders.filter(f => f.folder_type !== 'templates').map(f => (
+        {folders.filter(f => f.folder_type !== 'templates' && f.folder_type !== 'imports').map(f => (
           <button
             key={f.id}
             onClick={() => setActiveFolder(f.id)}

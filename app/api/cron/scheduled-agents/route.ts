@@ -57,9 +57,15 @@ export async function GET(request: Request) {
         status:       'triggered',
       })
 
-      // Calculate and update next run time
+      // Calculate and update next run time, using the group's timezone
+      const { data: group } = await admin
+        .from('groups')
+        .select('timezone')
+        .eq('id', agent.group_id)
+        .single()
+      const groupTimezone = group?.timezone ?? 'Australia/Brisbane'
       const config = agent.schedule_config as ScheduleConfig
-      const nextRun = calculateNextRun(config, now)
+      const nextRun = calculateNextRun(config, now, groupTimezone)
       await admin
         .from('agents')
         .update({

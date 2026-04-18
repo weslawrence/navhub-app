@@ -100,9 +100,15 @@ function nowInTz(tz: string, from: Date = new Date()): {
 
 /**
  * Calculate the next run time from a schedule config.
+ * `groupTimezone` (if supplied) takes precedence over the legacy
+ * config.timezone field and the DEFAULT_TZ fallback.
  */
-export function getNextRunTime(config: ScheduleConfig, from: Date = new Date()): Date {
-  const tz = config.timezone ?? DEFAULT_TZ
+export function getNextRunTime(
+  config:        ScheduleConfig,
+  from:          Date   = new Date(),
+  groupTimezone?: string,
+): Date {
+  const tz = groupTimezone ?? config.timezone ?? DEFAULT_TZ
   const { hours, minutes } = parseTime(config.time)
   const local = nowInTz(tz, from)
 
@@ -155,8 +161,8 @@ export function getNextRunTime(config: ScheduleConfig, from: Date = new Date()):
 /**
  * Calculate the next run after a completed run.
  */
-export function calculateNextRun(config: ScheduleConfig, after: Date): Date {
-  return getNextRunTime(config, after)
+export function calculateNextRun(config: ScheduleConfig, after: Date, groupTimezone?: string): Date {
+  return getNextRunTime(config, after, groupTimezone)
 }
 
 /**

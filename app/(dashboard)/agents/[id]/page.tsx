@@ -70,6 +70,7 @@ export default function AgentDetailPage() {
     day_of_week:  1, // Monday
     day_of_month: 1,
   })
+  const [groupTimezone,   setGroupTimezone]   = useState<string>('Australia/Brisbane')
 
   // Personality state
   const [commStyle,     setCommStyle]     = useState<'formal' | 'balanced' | 'casual'>('balanced')
@@ -105,15 +106,21 @@ export default function AgentDetailPage() {
   const loadAgent = useCallback(async () => {
     setLoading(true)
     try {
-      const [agentRes, credsRes, logsRes] = await Promise.all([
+      const [agentRes, credsRes, logsRes, groupRes] = await Promise.all([
         fetch(`/api/agents/${agentId}`),
         fetch(`/api/agents/${agentId}/credentials`),
         fetch(`/api/agents/${agentId}/schedule-logs`),
+        fetch('/api/groups/active'),
       ])
       if (!agentRes.ok) { router.push('/agents'); return }
       const agentData = (await agentRes.json()) as { data: Agent }
       const a = agentData.data
       setAgent(a)
+
+      if (groupRes.ok) {
+        const gJson = await groupRes.json() as { data?: { group?: { timezone?: string } } }
+        if (gJson.data?.group?.timezone) setGroupTimezone(gJson.data.group.timezone)
+      }
 
       // Hydrate schedule state
       setScheduleEnabled(a.schedule_enabled ?? false)
@@ -200,9 +207,9 @@ export default function AgentDetailPage() {
           time:         scheduleConfig.time,
           day_of_week:  scheduleConfig.day_of_week,
           day_of_month: scheduleConfig.day_of_month,
-          timezone:     'Australia/Brisbane',
+          timezone:     groupTimezone,
         }
-        updates.next_scheduled_run_at = getNextRunTime(config).toISOString()
+        updates.next_scheduled_run_at = getNextRunTime(config, new Date(), groupTimezone).toISOString()
       } catch {
         // leave next_scheduled_run_at unset if calculation fails
       }
@@ -382,14 +389,14 @@ export default function AgentDetailPage() {
         time:         scheduleConfig.time,
         day_of_week:  scheduleConfig.day_of_week,
         day_of_month: scheduleConfig.day_of_month,
-        timezone:     'Australia/Brisbane',
+        timezone:     groupTimezone,
       }
-      const next = getNextRunTime(config)
-      return formatNextRun(next)
+      const next = getNextRunTime(config, new Date(), groupTimezone)
+      return formatNextRun(next, groupTimezone)
     } catch {
       return null
     }
-  }, [scheduleEnabled, scheduleConfig])
+  }, [scheduleEnabled, scheduleConfig, groupTimezone])
 
   // ── Next run preview ──────────────────────────────────────────────────────
 

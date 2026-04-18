@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Check, Loader2, Palette } from 'lucide-react'
+import { Check, Loader2, Palette, Clock, MapPin } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Label }     from '@/components/ui/label'
 import { Input }     from '@/components/ui/input'
@@ -32,6 +32,41 @@ const FY_END_MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
   value: i + 1,
   label: monthName(i + 1),
 }))
+
+const TIMEZONE_OPTIONS: { value: string; label: string }[] = [
+  // Australia & Pacific
+  { value: 'Australia/Sydney',     label: 'Sydney, Melbourne (AEST/AEDT) UTC+10/+11' },
+  { value: 'Australia/Brisbane',   label: 'Brisbane (AEST) UTC+10' },
+  { value: 'Australia/Adelaide',   label: 'Adelaide (ACST/ACDT) UTC+9:30/+10:30' },
+  { value: 'Australia/Perth',      label: 'Perth (AWST) UTC+8' },
+  { value: 'Australia/Darwin',     label: 'Darwin (ACST) UTC+9:30' },
+  { value: 'Pacific/Auckland',     label: 'Auckland (NZST/NZDT) UTC+12/+13' },
+  // Asia
+  { value: 'Asia/Singapore',       label: 'Singapore (SGT) UTC+8' },
+  { value: 'Asia/Tokyo',           label: 'Tokyo (JST) UTC+9' },
+  { value: 'Asia/Shanghai',        label: 'Shanghai, Beijing (CST) UTC+8' },
+  { value: 'Asia/Hong_Kong',       label: 'Hong Kong (HKT) UTC+8' },
+  { value: 'Asia/Dubai',           label: 'Dubai (GST) UTC+4' },
+  { value: 'Asia/Kolkata',         label: 'Mumbai, Delhi (IST) UTC+5:30' },
+  // Europe
+  { value: 'Europe/London',        label: 'London (GMT/BST) UTC+0/+1' },
+  { value: 'Europe/Paris',         label: 'Paris, Berlin, Rome (CET/CEST) UTC+1/+2' },
+  { value: 'Europe/Amsterdam',     label: 'Amsterdam (CET/CEST) UTC+1/+2' },
+  { value: 'Europe/Zurich',        label: 'Zurich (CET/CEST) UTC+1/+2' },
+  // Americas
+  { value: 'America/New_York',     label: 'New York (EST/EDT) UTC-5/-4' },
+  { value: 'America/Chicago',      label: 'Chicago (CST/CDT) UTC-6/-5' },
+  { value: 'America/Denver',       label: 'Denver (MST/MDT) UTC-7/-6' },
+  { value: 'America/Los_Angeles',  label: 'Los Angeles (PST/PDT) UTC-8/-7' },
+  { value: 'America/Toronto',      label: 'Toronto (EST/EDT) UTC-5/-4' },
+  { value: 'America/Vancouver',    label: 'Vancouver (PST/PDT) UTC-8/-7' },
+  { value: 'America/Sao_Paulo',    label: 'São Paulo (BRT) UTC-3' },
+  // Africa & Middle East
+  { value: 'Africa/Johannesburg',  label: 'Johannesburg (SAST) UTC+2' },
+  { value: 'Africa/Cairo',         label: 'Cairo (EET) UTC+2' },
+  // UTC
+  { value: 'UTC',                  label: 'UTC (Coordinated Universal Time)' },
+]
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -81,6 +116,12 @@ export default function DisplayTab({
   const [paletteToast,      setPaletteToast]      = useState<string | null>(null)
   const [localPaletteId,    setLocalPaletteId]    = useState(selectedPaletteId)
 
+  // ── Timezone + location state ────────────────────────────────────────────
+  const [timezone,        setTimezone]        = useState('Australia/Brisbane')
+  const [location,        setLocation]        = useState('')
+  const [tzSaving,        setTzSaving]        = useState(false)
+  const [tzToast,         setTzToast]         = useState<string | null>(null)
+
   // Keep edit group name in sync with parent
   useEffect(() => { setEditGroupName(groupName) }, [groupName])
   useEffect(() => { setEditSlug(groupSlug) }, [groupSlug])
@@ -94,6 +135,13 @@ export default function DisplayTab({
         setCurrency(json.data.currency ?? 'AUD')
         setFyEndMonth(json.data.fy_end_month ?? 6)
       }
+    }).catch(() => {})
+
+    // Load group timezone + location
+    fetch('/api/groups/active').then(r => r.json()).then(json => {
+      const grp = json.data?.group as { timezone?: string; location?: string | null } | undefined
+      if (grp?.timezone) setTimezone(grp.timezone)
+      if (grp?.location) setLocation(grp.location)
     }).catch(() => {})
   }, [])
 
@@ -221,6 +269,44 @@ export default function DisplayTab({
       setPaletteSaving(false)
     }
   }
+
+  async function handleSaveTimezone() {
+    if (!groupId) return
+    setTzSaving(true)
+    try {
+      const res  = await fetch(`/api/groups/${groupId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ timezone, location: location.trim() || null }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to save')
+      setTzToast('Timezone saved')
+    } catch (err) {
+      setTzToast(err instanceof Error ? err.message : 'Failed to save timezone')
+    } finally {
+      setTzSaving(false)
+    }
+  }
+
+  // Live preview of current time in selected timezone
+  let tzCurrentTime = ''
+  try {
+    tzCurrentTime = new Intl.DateTimeFormat('en-AU', {
+      timeZone:  timezone,
+      weekday:   'long',
+      hour:      'numeric',
+      minute:    '2-digit',
+      hour12:    true,
+    }).format(new Date())
+  } catch { /* invalid tz — fall through */ }
+
+  // Auto-clear timezone toast
+  useEffect(() => {
+    if (!tzToast) return
+    const t = setTimeout(() => setTzToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [tzToast])
 
   const activePalette = getPalette(localPaletteId)
 
@@ -353,6 +439,66 @@ export default function DisplayTab({
               {paletteToast && (
                 <span className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
                   <Check className="h-3.5 w-3.5" /> {paletteToast}
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Timezone + Location (admin only) ────────────────────────────────── */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              Timezone &amp; Location
+            </CardTitle>
+            <CardDescription>
+              Used for scheduled agent runs and other time-sensitive features.
+              Applies to the whole group.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="group-location" className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                <MapPin className="h-3.5 w-3.5 text-muted-foreground" /> Location
+                <span className="text-xs font-normal text-muted-foreground">(optional)</span>
+              </Label>
+              <Input
+                id="group-location"
+                value={location}
+                onChange={e => setLocation(e.target.value)}
+                placeholder="e.g. Sydney, Australia"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="group-timezone" className="text-sm font-medium text-foreground">Timezone</Label>
+              <select
+                id="group-timezone"
+                value={timezone}
+                onChange={e => setTimezone(e.target.value)}
+                className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {TIMEZONE_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+              {tzCurrentTime && (
+                <p className="text-xs text-muted-foreground">
+                  Current time in this timezone: <span className="text-foreground font-medium">{tzCurrentTime}</span>
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <Button onClick={() => void handleSaveTimezone()} disabled={tzSaving || !groupId} size="sm">
+                {tzSaving ? <><Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> Saving…</> : 'Save'}
+              </Button>
+              {tzToast && (
+                <span className="text-xs flex items-center gap-1 text-green-600 dark:text-green-400">
+                  <Check className="h-3.5 w-3.5" /> {tzToast}
                 </span>
               )}
             </div>

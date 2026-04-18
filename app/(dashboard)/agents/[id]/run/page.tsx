@@ -93,19 +93,25 @@ export default function AgentRunPage() {
   const [submitting,  setSubmitting]  = useState(false)
   const [error,       setError]       = useState<string | null>(null)
 
+  // Group timezone (from /api/groups/active)
+  const [groupTimezone, setGroupTimezone] = useState<string>('Australia/Brisbane')
+
   // ── Load agent + helpers ──
   const loadAgent = useCallback(async () => {
     setLoading(true)
     try {
-      const [agRes, coRes] = await Promise.all([
+      const [agRes, coRes, grRes] = await Promise.all([
         fetch(`/api/agents/${agentId}`),
         fetch('/api/companies'),
+        fetch('/api/groups/active'),
       ])
       if (!agRes.ok) { router.push('/agents'); return }
       const agJson = await agRes.json() as { data: Agent }
       const coJson = await coRes.json() as { data: Array<Company & { is_active?: boolean }> }
+      const grJson = await grRes.json() as { data?: { group?: { timezone?: string } } }
       setAgent(agJson.data)
       setCompanies((coJson.data ?? []).filter(c => (c as { is_active?: boolean }).is_active !== false))
+      if (grJson.data?.group?.timezone) setGroupTimezone(grJson.data.group.timezone)
       // Pre-populate notifications from agent defaults
       const a = agJson.data as unknown as { notify_email?: string | null; notify_slack_channel?: string | null }
       if (a.notify_email)         setNotifyEmail(a.notify_email)
@@ -138,11 +144,11 @@ export default function AgentRunPage() {
         time:         schedTime,
         day_of_week:  schedDow,
         day_of_month: schedDom,
-        timezone:     'Australia/Brisbane',
+        timezone:     groupTimezone,
       }
-      return formatNextRun(getNextRunTime(cfg))
+      return formatNextRun(getNextRunTime(cfg, new Date(), groupTimezone), groupTimezone)
     } catch { return null }
-  }, [isRecurring, schedFreq, schedTime, schedDow, schedDom])
+  }, [isRecurring, schedFreq, schedTime, schedDow, schedDom, groupTimezone])
 
   // ── Launch ──
   async function handleRun() {
@@ -157,7 +163,7 @@ export default function AgentRunPage() {
             time:         schedTime,
             day_of_week:  schedDow,
             day_of_month: schedDom,
-            timezone:     'Australia/Brisbane',
+            timezone:     groupTimezone,
           }
           await fetch(`/api/agents/${agentId}`, {
             method:  'PATCH',
@@ -165,7 +171,7 @@ export default function AgentRunPage() {
             body:    JSON.stringify({
               schedule_enabled:      true,
               schedule_config:       cfg,
-              next_scheduled_run_at: getNextRunTime(cfg).toISOString(),
+              next_scheduled_run_at: getNextRunTime(cfg, new Date(), groupTimezone).toISOString(),
             }),
           })
         } catch { /* non-fatal */ }

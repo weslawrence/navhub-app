@@ -101,6 +101,20 @@ export async function PATCH(request: Request, { params }: Params) {
     updates.web_search_enabled = !!body.web_search_enabled
   }
 
+  if ('timezone' in body) {
+    if (typeof body.timezone === 'string' && body.timezone.trim()) {
+      updates.timezone = body.timezone.trim()
+    }
+  }
+
+  if ('location' in body) {
+    if (body.location === null) {
+      updates.location = null
+    } else if (typeof body.location === 'string') {
+      updates.location = body.location.trim() || null
+    }
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 422 })
   }
@@ -110,7 +124,7 @@ export async function PATCH(request: Request, { params }: Params) {
     .from('groups')
     .update(updates)
     .eq('id', params.id)
-    .select('id, name, slug, primary_color, palette_id, web_search_enabled')
+    .select('id, name, slug, primary_color, palette_id, web_search_enabled, timezone, location')
     .single()
 
   if (error) {

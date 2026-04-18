@@ -38,12 +38,19 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
   const [dow, setDow]       = useState(1)
   const [dom, setDom]       = useState(1)
 
+  const [groupTimezone, setGroupTimezone] = useState<string>('Australia/Brisbane')
+
   const load = useCallback(async () => {
     setLoading(true)
-    const [aRes, lRes] = await Promise.all([
+    const [aRes, lRes, gRes] = await Promise.all([
       fetch(`/api/agents/${agentId}`),
       fetch(`/api/agents/${agentId}/schedule-logs`),
+      fetch('/api/groups/active'),
     ])
+    if (gRes.ok) {
+      const gJson = await gRes.json() as { data?: { group?: { timezone?: string } } }
+      if (gJson.data?.group?.timezone) setGroupTimezone(gJson.data.group.timezone)
+    }
     if (aRes.ok) {
       const json = await aRes.json()
       const a = json.data as Agent
@@ -84,9 +91,9 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
     const config = {
       schedule_name: schedName.trim() || `${agentName} — ${freq}`,
       task_brief: taskBrief.trim(),
-      frequency: freq, time, day_of_week: dow, day_of_month: dom, timezone: 'Australia/Brisbane',
+      frequency: freq, time, day_of_week: dow, day_of_month: dom, timezone: groupTimezone,
     } as unknown as ScheduleConfig
-    const nextRun = getNextRunTime(config)
+    const nextRun = getNextRunTime(config, new Date(), groupTimezone)
     await fetch(`/api/agents/${agentId}`, {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -106,7 +113,7 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
   }
 
   const sc = agent?.schedule_config as unknown as ScheduleConfig | null
-  const nextRunStr = sc ? formatNextRun(getNextRunTime(sc)) : null
+  const nextRunStr = sc ? formatNextRun(getNextRunTime(sc, new Date(), groupTimezone), groupTimezone) : null
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -204,7 +211,10 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
                     </div>
                   )}
                   <p className="text-xs text-muted-foreground">
-                    Next: {formatNextRun(getNextRunTime({ frequency: freq, time, day_of_week: dow, day_of_month: dom, timezone: 'Australia/Brisbane' }))}
+                    Next: {formatNextRun(
+                      getNextRunTime({ frequency: freq, time, day_of_week: dow, day_of_month: dom, timezone: groupTimezone }, new Date(), groupTimezone),
+                      groupTimezone,
+                    )}
                   </p>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => void saveSchedule()} disabled={saving}>

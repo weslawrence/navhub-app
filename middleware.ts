@@ -66,6 +66,8 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/api/marketing/')      ||
     // SharePoint OAuth callback — Microsoft redirects unauthenticated
     pathname.startsWith('/api/integrations/sharepoint/callback') ||
+    // SharePoint setup — called from popup after OAuth, no session cookie guaranteed
+    pathname.startsWith('/api/integrations/sharepoint/setup') ||
     // Slack OAuth callback — Slack redirects unauthenticated
     pathname.startsWith('/api/integrations/slack/callback')
 

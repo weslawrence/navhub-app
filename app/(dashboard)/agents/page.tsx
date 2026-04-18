@@ -11,7 +11,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button }  from '@/components/ui/button'
 import { Badge }   from '@/components/ui/badge'
 import { cn }      from '@/lib/utils'
-import RunModal            from '@/components/agents/RunModal'
 import ScheduledRunsPanel  from '@/components/agents/ScheduledRunsPanel'
 import type { Agent, AgentTool } from '@/lib/types'
 import { AVATAR_PRESET_MAP } from '@/lib/agent-presets'
@@ -90,8 +89,6 @@ export default function AgentsPage() {
   const [agents,       setAgents]       = useState<Agent[]>([])
   const [loading,      setLoading]      = useState(true)
   const [isAdmin,      setIsAdmin]      = useState(false)
-  const [runTarget,        setRunTarget]        = useState<Agent | null>(null)
-  const [initialBrief,     setInitialBrief]     = useState(briefParam)
   const [scheduleAgentId,  setScheduleAgentId]  = useState<string | null>(null)
   const [view,             setView]             = useState<AgentView>('tiles')
 
@@ -122,13 +119,12 @@ export default function AgentsPage() {
     return () => window.removeEventListener('focus', handleFocus)
   }, [loadAgents])
 
-  // Auto-open RunModal when ?brief= param is present and agents are loaded
+  // Redirect to /agents/[id]/run when ?brief= param is present
+  // (used by NavHub Assistant "Launch Agent" flow).
   useEffect(() => {
-    if (loading || !briefParam || runTarget) return
+    if (loading || !briefParam) return
     const activeAgents = agents.filter(a => a.is_active)
     if (activeAgents.length === 0) return
-    setInitialBrief(decodeURIComponent(briefParam))
-    // Try to match agent by name if provided — robust matching
     let targetAgent: Agent | null = null
     if (agentNameParam) {
       const decoded = decodeURIComponent(agentNameParam).toLowerCase().trim()
@@ -138,12 +134,12 @@ export default function AgentsPage() {
         activeAgents.find(a => decoded.includes(a.name.toLowerCase())) ??       // param contains agent
         null
     }
-    // If no match found — fall back to first agent only when no name was provided
     if (!targetAgent) targetAgent = agentNameParam ? null : activeAgents[0]
-    if (targetAgent) setRunTarget(targetAgent)
-    // Clear URL params without page reload
-    window.history.replaceState({}, '', '/agents')
-  }, [loading, briefParam, agentNameParam, agents]) // eslint-disable-line react-hooks/exhaustive-deps
+    if (targetAgent) {
+      const q = new URLSearchParams({ brief: decodeURIComponent(briefParam) })
+      router.push(`/agents/${targetAgent.id}/run?${q.toString()}`)
+    }
+  }, [loading, briefParam, agentNameParam, agents, router]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleToggleActive(agent: Agent) {
     const newValue = !agent.is_active
@@ -235,7 +231,14 @@ export default function AgentsPage() {
         /* List view */
         <div className="divide-y border rounded-lg">
           {agents.map(agent => (
-            <div key={agent.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors">
+            <div
+              key={agent.id}
+              onClick={() => agent.is_active && router.push(`/agents/${agent.id}/run`)}
+              className={cn(
+                'flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors',
+                agent.is_active && 'cursor-pointer',
+              )}
+            >
               <AgentAvatar agent={agent} size="sm" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{agent.name}</p>
@@ -245,9 +248,9 @@ export default function AgentsPage() {
                 {agent.visibility === 'public' ? 'Public' : 'Private'}
               </span>
               <Badge variant="outline" className="text-[10px] shrink-0">{agent.model_name ?? agent.model}</Badge>
-              <div className="flex gap-1 shrink-0">
+              <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                 {!agent.is_active ? null : (
-                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => setRunTarget(agent)} title="Run"><Play className="h-3.5 w-3.5" /></Button>
+                  <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => router.push(`/agents/${agent.id}/run`)} title="Run"><Play className="h-3.5 w-3.5" /></Button>
                 )}
                 {isAdmin && (
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" asChild title="Configure">
@@ -259,18 +262,31 @@ export default function AgentsPage() {
           ))}
         </div>
       ) : view === 'avatar' ? (
-        /* Avatar view */
+        /* Avatar view — click opens run page; Configure button navigates to edit */
         <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-4">
           {agents.map(agent => (
-            <div key={agent.id}
-              onClick={() => router.push(`/agents/${agent.id}/edit`)}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl border bg-card hover:bg-muted/50 cursor-pointer transition-colors group">
+            <div
+              key={agent.id}
+              onClick={() => agent.is_active && router.push(`/agents/${agent.id}/run`)}
+              className={cn(
+                'flex flex-col items-center gap-2 p-4 rounded-xl border bg-card hover:bg-muted/50 transition-colors group',
+                agent.is_active && 'cursor-pointer',
+              )}
+            >
               <AgentAvatar agent={agent} size="lg" />
               <p className="text-sm font-medium text-center leading-tight">{agent.name}</p>
               <span className={cn('text-[10px] px-2 py-0.5 rounded-full', agent.visibility === 'public' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-muted text-muted-foreground')}>
                 {agent.visibility === 'public' ? 'Public' : 'Private'}
               </span>
-              <Button size="sm" variant="outline" className="h-7 text-xs opacity-0 group-hover:opacity-100 transition-opacity">Configure</Button>
+              {isAdmin && (
+                <Button
+                  size="sm" variant="outline"
+                  className="h-7 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={e => { e.stopPropagation(); router.push(`/agents/${agent.id}/edit`) }}
+                >
+                  Configure
+                </Button>
+              )}
             </div>
           ))}
         </div>
@@ -282,21 +298,12 @@ export default function AgentsPage() {
               key={agent.id}
               agent={agent}
               isAdmin={isAdmin}
-              onRun={() => setRunTarget(agent)}
+              onRun={() => router.push(`/agents/${agent.id}/run`)}
               onToggleActive={() => void handleToggleActive(agent)}
               onSchedule={() => setScheduleAgentId(agent.id)}
             />
           ))}
         </div>
-      )}
-
-      {/* Run Modal */}
-      {runTarget && (
-        <RunModal
-          agent={runTarget}
-          initialInstructions={initialBrief}
-          onClose={() => { setRunTarget(null); setInitialBrief('') }}
-        />
       )}
       {scheduleAgentId && (
         <ScheduledRunsPanel
@@ -327,7 +334,13 @@ function AgentCard({
     : 'Sonnet 4'
 
   return (
-    <Card className={cn('transition-colors', isDisabled ? 'opacity-60' : 'hover:border-primary/40')}>
+    <Card
+      onClick={() => { if (!isDisabled) onRun() }}
+      className={cn(
+        'transition-colors',
+        isDisabled ? 'opacity-60' : 'hover:border-primary/40 cursor-pointer',
+      )}
+    >
       <CardContent className="p-5 space-y-4">
         {/* Header */}
         <div className="flex items-start gap-3">
@@ -358,7 +371,7 @@ function AgentCard({
           {/* Active/Disabled toggle pill — admins only */}
           {isAdmin && (
             <button
-              onClick={onToggleActive}
+              onClick={e => { e.stopPropagation(); onToggleActive() }}
               title={isDisabled ? 'Enable agent' : 'Disable agent'}
               className={cn(
                 'shrink-0 text-[10px] font-medium px-2 py-0.5 rounded-full border transition-colors',
@@ -390,7 +403,7 @@ function AgentCard({
         </div>
 
         {/* Actions */}
-        <div className="flex gap-2 pt-1">
+        <div className="flex gap-2 pt-1" onClick={e => e.stopPropagation()}>
           {!isDisabled && (
             <Button size="sm" className="flex-1" onClick={onRun} title="Run agent">
               <Play className="h-3.5 w-3.5 mr-1.5" /> Run

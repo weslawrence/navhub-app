@@ -23,38 +23,6 @@ import { AVATAR_PRESETS } from '@/lib/agent-presets'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
 
-const TOOL_OPTIONS: {
-  value: AgentTool
-  label: string
-  emoji: string
-  description: string
-}[] = [
-  { value: 'read_financials',        label: 'Read Financials',       emoji: '📊', description: 'Access P&L and balance sheet data' },
-  { value: 'generate_report',        label: 'Generate Report',       emoji: '📄', description: 'Create draft reports in the library' },
-  { value: 'send_slack',             label: 'Send to Slack',         emoji: '💬', description: 'Post output to a Slack channel' },
-  { value: 'send_email',             label: 'Send Email',            emoji: '📧', description: 'Send output via email (Resend)' },
-  { value: 'list_report_templates',  label: 'List Templates',        emoji: '📋', description: 'List available report templates' },
-  { value: 'read_report_template',   label: 'Read Template',         emoji: '🔍', description: 'Fetch template definition and slots' },
-  { value: 'create_report_template', label: 'Create Template',       emoji: '✨', description: 'Create a new report template' },
-  { value: 'update_report_template', label: 'Update Template',       emoji: '✏️', description: 'Edit an existing template (auto-versions)' },
-  { value: 'render_report',          label: 'Render Report',         emoji: '🖨️', description: 'Fill a template and save to Reports Library' },
-  { value: 'analyse_document',       label: 'Analyse Document',      emoji: '🔎', description: 'Extract a template proposal from a document' },
-  { value: 'list_documents',         label: 'List Documents',        emoji: '📂', description: 'List documents in the Documents section' },
-  { value: 'read_document',          label: 'Read Document',         emoji: '📖', description: 'Read the full content of a document' },
-  { value: 'create_document',        label: 'Create Document',       emoji: '📝', description: 'Create and save a new document' },
-  { value: 'update_document',          label: 'Update Document',       emoji: '✍️', description: 'Update an existing document (auto-versions)' },
-  { value: 'read_cashflow',            label: 'Read Cash Flow',        emoji: '💰', description: 'Read the 13-week rolling cash flow forecast' },
-  { value: 'read_cashflow_items',      label: 'Read CF Items',         emoji: '🗂️', description: 'List recurring and one-off cash flow line items' },
-  { value: 'suggest_cashflow_item',    label: 'Suggest CF Item',       emoji: '💡', description: 'Suggest a new cash flow line item for review' },
-  { value: 'update_cashflow_item',     label: 'Update CF Item',        emoji: '✅', description: 'Accept, update, or deactivate a cash flow item' },
-  { value: 'create_cashflow_snapshot', label: 'Create CF Snapshot',    emoji: '📸', description: 'Save a named point-in-time cash flow snapshot' },
-  { value: 'summarise_cashflow',       label: 'Summarise Cash Flow',   emoji: '🤖', description: 'AI executive summary with risks and recommendations' },
-  { value: 'read_marketing_data',      label: 'Marketing Data',        emoji: '📊', description: 'Fetch web, social, ads, and email marketing metrics' },
-  { value: 'summarise_marketing',      label: 'Summarise Marketing',   emoji: '📈', description: 'AI-powered marketing performance summary with trends and recommendations' },
-  { value: 'ask_user',                 label: 'Ask User',              emoji: '❓', description: 'Pause and ask the user a clarifying question (always enabled)' },
-  { value: 'read_attachment',          label: 'Read Attachment',        emoji: '📎', description: 'Read the content of files attached to a run' },
-]
-
 const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: string }[] = [
   { value: 'executive_analyst',    label: 'Executive Analyst',    description: 'Formal, concise — for C-suite audiences' },
   { value: 'business_writer',      label: 'Business Writer',      description: 'Clear prose, narrative-driven reporting' },
@@ -256,12 +224,6 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     const res = await fetch(`/api/agents/${id}/avatar`, { method: 'POST', body: fd })
     const json = await res.json()
     if (json.data?.avatar_url) { setAvatarUrl(json.data.avatar_url); setAvatarPreset(null) }
-  }
-
-  function toggleTool(tool: AgentTool) {
-    setTools(prev =>
-      prev.includes(tool) ? prev.filter(t => t !== tool) : [...prev, tool]
-    )
   }
 
   // ── Feature × company access matrix (Access tab) ───────────────────────
@@ -1034,35 +996,6 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       {/* ═════ TAB: Access ═════ */}
       {tab === 'Access' && (
         <div className="space-y-5">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Enabled Tools</CardTitle>
-              <CardDescription>What capabilities does this agent have?</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {TOOL_OPTIONS.map(opt => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => toggleTool(opt.value)}
-                  className={cn(
-                    'w-full text-left p-3 rounded-lg border-2 transition-all flex items-center gap-3',
-                    tools.includes(opt.value)
-                      ? 'border-primary bg-primary/5'
-                      : 'border-border hover:border-muted-foreground/40'
-                  )}
-                >
-                  <span className="text-xl">{opt.emoji}</span>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{opt.label}</p>
-                    <p className="text-xs text-muted-foreground">{opt.description}</p>
-                  </div>
-                  {tools.includes(opt.value) && <Check className="h-4 w-4 text-primary shrink-0" />}
-                </button>
-              ))}
-            </CardContent>
-          </Card>
-
           {/* Feature × Company Access Matrix */}
           <Card>
             <CardHeader>

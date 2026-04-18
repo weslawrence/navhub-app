@@ -86,6 +86,104 @@ const MARKETING_PLATFORM_GROUPS: { label: string; platforms: MarketingPlatform[]
   { label: 'Email & CRM',   platforms: ['mailchimp', 'hubspot', 'freshsales'] },
 ]
 
+// ── SharePoint site+folder picker (inline component) ────────────────────────
+
+function SharePointSitePicker({
+  currentSiteUrl,
+  currentFolderPath,
+  connectionId,
+  onSaved,
+}: {
+  currentSiteUrl:    string | null
+  currentFolderPath: string
+  connectionId:      string
+  onSaved:           () => void
+}) {
+  const [sites,      setSites]      = useState<Array<{ id: string; name: string; webUrl: string }>>([])
+  const [loading,    setLoading]    = useState(true)
+  const [selectedId, setSelectedId] = useState<string>('')
+  const [folderPath, setFolderPath] = useState(currentFolderPath)
+  const [saving,     setSaving]     = useState(false)
+  const [saved,      setSaved]      = useState(false)
+
+  useEffect(() => {
+    fetch('/api/integrations/sharepoint/sites')
+      .then(r => r.json())
+      .then((j: { sites?: Array<{ id: string; name: string; webUrl: string }> }) => {
+        const list = j.sites ?? []
+        setSites(list)
+        const current = list.find(s => s.webUrl === currentSiteUrl)
+        if (current) setSelectedId(current.id)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [currentSiteUrl])
+
+  async function handleSave() {
+    setSaving(true)
+    setSaved(false)
+    try {
+      const site = sites.find(s => s.id === selectedId)
+      await fetch('/api/integrations/sharepoint/setup', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          connection_id: connectionId,
+          site_id:       site?.id   ?? null,
+          site_url:      site?.webUrl ?? null,
+          folder_path:   folderPath.trim() || 'NavHub/Documents',
+        }),
+      })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+      onSaved()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3 space-y-2.5">
+      <p className="text-xs font-medium text-foreground">Site &amp; default folder</p>
+      <div className="space-y-1.5">
+        <label className="text-[11px] text-muted-foreground">SharePoint Site</label>
+        <select
+          value={selectedId}
+          onChange={e => setSelectedId(e.target.value)}
+          disabled={loading || sites.length === 0}
+          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+        >
+          {loading && <option>Loading sites…</option>}
+          {!loading && sites.length === 0 && <option value="">No sites available</option>}
+          {sites.map(s => (
+            <option key={s.id} value={s.id}>{s.name} — {s.webUrl}</option>
+          ))}
+        </select>
+      </div>
+
+      <div className="space-y-1.5">
+        <label className="text-[11px] text-muted-foreground">Default folder path</label>
+        <input
+          value={folderPath}
+          onChange={e => setFolderPath(e.target.value)}
+          placeholder="NavHub/Documents"
+          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground font-mono focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="sm" className="h-7 text-xs gap-1" onClick={() => void handleSave()} disabled={saving}>
+          {saving
+            ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</>
+            : saved
+              ? <><Check className="h-3 w-3" /> Saved</>
+              : <><Save className="h-3 w-3" /> Save Site &amp; Folder</>}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export type IntegrationsScope = 'all' | 'financials' | 'marketing' | 'documents'
@@ -616,19 +714,39 @@ export default function IntegrationsTab({ scope = 'all' }: { scope?: Integration
                     Open SharePoint site
                   </a>
                 )}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 gap-1.5"
-                  onClick={() => void disconnectSharePoint()}
-                  disabled={spDisconnecting}
-                >
-                  {spDisconnecting
-                    ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    : <Link2Off className="h-3.5 w-3.5" />
-                  }
-                  Disconnect
-                </Button>
+
+                <SharePointSitePicker
+                  currentSiteUrl={spConnection.site_url ?? null}
+                  currentFolderPath={spConnection.folder_path ?? 'NavHub/Documents'}
+                  connectionId={spConnection.id}
+                  onSaved={() => void loadSharePointStatus()}
+                />
+
+                <div className="flex items-center gap-2 pt-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={connectSharePoint}
+                    title="Re-authenticate with a different Microsoft account"
+                  >
+                    <Link2 className="h-3.5 w-3.5" />
+                    Reconnect
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-red-600 border-red-200 hover:bg-red-50 dark:border-red-700 dark:text-red-400 dark:hover:bg-red-950 gap-1.5"
+                    onClick={() => void disconnectSharePoint()}
+                    disabled={spDisconnecting}
+                  >
+                    {spDisconnecting
+                      ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      : <Link2Off className="h-3.5 w-3.5" />
+                    }
+                    Disconnect
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 

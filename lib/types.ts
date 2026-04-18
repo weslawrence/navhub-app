@@ -720,6 +720,38 @@ export interface AgentKnowledgeDocument {
   document_title?: string | null
 }
 
+// ── Custom webhook tools (migration 040) ──
+export interface ToolParameter {
+  name:        string
+  type:        'string' | 'number' | 'boolean' | 'array'
+  required:    boolean
+  description: string
+}
+
+export interface CustomTool {
+  id:          string
+  group_id:    string
+  name:        string
+  label:       string
+  description: string
+  webhook_url: string
+  http_method: 'GET' | 'POST' | 'PUT' | 'PATCH'
+  headers:     Record<string, string>
+  parameters:  ToolParameter[]
+  is_active:   boolean
+  created_by:  string | null
+  created_at:  string
+  updated_at:  string
+}
+
+export interface AgentToolOverride {
+  id:         string
+  agent_id:   string
+  tool_name:  string
+  enabled:    boolean
+  created_at: string
+}
+
 export interface Document {
   id:                     string
   group_id:               string

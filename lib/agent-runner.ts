@@ -989,8 +989,58 @@ async function executeTool(
     case 'ask_user':
       // Handled specially in executeAgentRun — should never reach executeTool
       return 'ask_user is handled by the runner directly.'
-    default:
+    default: {
+      // Custom webhook tool (created via Settings → Agents → Custom Tools)
+      const admin = createAdminClient()
+      const { data: customTool } = await admin
+        .from('custom_tools')
+        .select('webhook_url, http_method, headers')
+        .eq('group_id', groupId)
+        .eq('name', toolName)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (customTool) {
+        try {
+          const headers = {
+            'Content-Type': 'application/json',
+            ...((customTool.headers ?? {}) as Record<string, string>),
+          }
+          const controller = new AbortController()
+          const timer = setTimeout(() => controller.abort(), 30_000)
+          const requestInit: RequestInit = {
+            method:  customTool.http_method,
+            headers,
+            signal:  controller.signal,
+          }
+          if (customTool.http_method !== 'GET') {
+            requestInit.body = JSON.stringify(input ?? {})
+          }
+          const res = await fetch(customTool.webhook_url, requestInit)
+          clearTimeout(timer)
+
+          const contentType = res.headers.get('content-type') ?? ''
+          let body: unknown
+          if (contentType.includes('application/json')) {
+            try { body = await res.json() } catch { body = null }
+          } else {
+            body = (await res.text()).slice(0, 4000)
+          }
+          return JSON.stringify({ status: res.status, ok: res.ok, response: body })
+        } catch (err) {
+          return JSON.stringify({ error: `Custom tool "${toolName}" failed: ${String(err)}` })
+        }
+      }
+
+      // Web search (stub — real implementation would call an external search API)
+      if (toolName === 'web_search') {
+        return JSON.stringify({
+          error: 'Web search tool is enabled but the server-side search provider is not yet configured. Ask an admin to set up the search integration.',
+        })
+      }
+
       return `Unknown tool: ${toolName}`
+    }
   }
 }
 
@@ -1131,10 +1181,73 @@ export async function executeAgentRun(
 
     // Build tool list — ask_user is always included regardless of agent.tools setting
     const enabledTools = (agent.tools ?? []) as AgentTool[]
-    const toolDefs = [
-      ...enabledTools.filter(t => ALL_TOOL_DEFS[t] && t !== 'ask_user').map(t => ALL_TOOL_DEFS[t]),
-      ALL_TOOL_DEFS['ask_user'],
+
+    // Fetch per-agent tool overrides (enabled flag per tool_name)
+    const { data: overrideRows } = await admin
+      .from('agent_tool_overrides')
+      .select('tool_name, enabled')
+      .eq('agent_id', agent.id)
+    const disabledToolNames = new Set(
+      (overrideRows ?? []).filter(r => !r.enabled).map(r => r.tool_name as string),
+    )
+    const enabledByOverride = new Set(
+      (overrideRows ?? []).filter(r => r.enabled).map(r => r.tool_name as string),
+    )
+
+    const toolDefs: Array<Record<string, unknown>> = [
+      ...enabledTools
+        .filter(t => ALL_TOOL_DEFS[t] && t !== 'ask_user' && !disabledToolNames.has(t))
+        .map(t => ALL_TOOL_DEFS[t] as Record<string, unknown>),
+      ALL_TOOL_DEFS['ask_user'] as Record<string, unknown>,
     ]
+
+    // Group-level toggles: web search (when enabled group-wide OR per-agent override)
+    try {
+      const { data: grp } = await admin
+        .from('groups')
+        .select('web_search_enabled')
+        .eq('id', groupId)
+        .single()
+      const groupWebSearch = !!grp?.web_search_enabled
+      const agentWebSearch = enabledByOverride.has('web_search')
+      const shouldEnableWebSearch = (groupWebSearch || agentWebSearch) && !disabledToolNames.has('web_search')
+      if (shouldEnableWebSearch) {
+        toolDefs.push({
+          name:        'web_search',
+          description: 'Search the public web for current information. Use only when you need up-to-date information not available via internal tools. Returns a list of relevant URLs and snippets.',
+          input_schema: {
+            type:       'object',
+            properties: {
+              query: { type: 'string', description: 'The search query.' },
+            },
+            required: ['query'],
+          },
+        })
+      }
+    } catch { /* ignore */ }
+
+    // Inject custom webhook tools for this group
+    try {
+      const { data: customTools } = await admin
+        .from('custom_tools')
+        .select('name, description, parameters')
+        .eq('group_id', groupId)
+        .eq('is_active', true)
+
+      for (const ct of customTools ?? []) {
+        if (disabledToolNames.has(ct.name as string)) continue
+        const params = (ct.parameters ?? []) as Array<{ name: string; type: string; required: boolean; description: string }>
+        toolDefs.push({
+          name:        ct.name,
+          description: ct.description,
+          input_schema: {
+            type:       'object',
+            properties: Object.fromEntries(params.map(p => [p.name, { type: p.type, description: p.description }])),
+            required:   params.filter(p => p.required).map(p => p.name),
+          },
+        })
+      }
+    } catch { /* ignore */ }
 
     // Initial messages
     const messages: AnthropicMessage[] = [

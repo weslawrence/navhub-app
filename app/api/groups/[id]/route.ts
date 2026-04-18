@@ -97,6 +97,10 @@ export async function PATCH(request: Request, { params }: Params) {
     updates.primary_color   = palette.primary
   }
 
+  if ('web_search_enabled' in body) {
+    updates.web_search_enabled = !!body.web_search_enabled
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 422 })
   }
@@ -106,7 +110,7 @@ export async function PATCH(request: Request, { params }: Params) {
     .from('groups')
     .update(updates)
     .eq('id', params.id)
-    .select('id, name, slug, primary_color, palette_id')
+    .select('id, name, slug, primary_color, palette_id, web_search_enabled')
     .single()
 
   if (error) {

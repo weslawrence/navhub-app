@@ -113,6 +113,12 @@ export interface ToolContext {
   groupName:   string
   runId:       string
   credentials: Record<string, string>
+  run?:        {
+    output_folder_id?:     string | null
+    output_status?:        string | null
+    output_name_override?: string | null
+    output_type?:          string | null
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -815,7 +821,7 @@ export async function renderReport(
       file_path:    storagePath,
       file_type:    'html',
       uploaded_by:  'agent',
-      is_draft:     false,
+      is_draft:     (context.run?.output_status ?? 'draft') !== 'published',
       agent_run_id: context.runId,
       template_id:  params.template_id,
       slot_data:    params.slot_data,
@@ -1080,8 +1086,8 @@ export async function createDocument(
     audience:         params.audience,
     content_markdown: params.content_markdown,
     company_id:       params.company_id ?? null,
-    folder_id:        params.folder_id  ?? null,
-    status:           'published',
+    folder_id:        context.run?.output_folder_id ?? params.folder_id ?? null,
+    status:           context.run?.output_status ?? 'draft',
     agent_run_id:     context.runId,
     created_by:       null,
   }).select('id, title, document_type, audience').single()

@@ -937,7 +937,13 @@ async function executeTool(
   runId:       string,
   credentials: Record<string, string>
 ): Promise<string> {
-  const context = { agent, groupId, groupName, runId, credentials }
+  const { data: runRecord } = await admin
+  .from('agent_runs')
+  .select('output_folder_id, output_status, output_name_override, output_type')
+  .eq('id', runId)
+  .single()
+
+  const context = { agent, groupId, groupName, runId, credentials, run: runRecord }
 
   switch (toolName) {
     case 'read_financials':

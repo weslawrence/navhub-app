@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Play, CheckCircle2, XCircle, Clock, Loader2,
@@ -11,7 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { cn }    from '@/lib/utils'
-import RunModal  from '@/components/agents/RunModal'
 import type { Agent, AgentRun, RunStatus } from '@/lib/types'
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -67,13 +66,13 @@ const PAGE_SIZE = 20
 
 export default function AgentRunsPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
 
   const [agent,     setAgent]     = useState<Agent | null>(null)
   const [runs,      setRuns]      = useState<AgentRun[]>([])
   const [total,     setTotal]     = useState(0)
   const [page,      setPage]      = useState(0)
   const [loading,   setLoading]   = useState(true)
-  const [showModal, setShowModal] = useState(false)
 
   const loadRuns = useCallback(async (p: number) => {
     setLoading(true)
@@ -111,7 +110,7 @@ export default function AgentRunsPage() {
               {agent.name.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()}
             </div>
             <h1 className="text-xl font-bold flex-1">{agent.name} — Run History</h1>
-            <Button size="sm" onClick={() => setShowModal(true)}>
+            <Button size="sm" onClick={() => router.push(`/agents/${params.id}/run`)}>
               <Play className="h-3.5 w-3.5 mr-1.5" /> Run Now
             </Button>
           </>
@@ -238,10 +237,6 @@ export default function AgentRunsPage() {
         </Card>
       )}
 
-      {/* Run Modal */}
-      {showModal && agent && (
-        <RunModal agent={agent} onClose={() => { setShowModal(false); void loadRuns(0); setPage(0) }} />
-      )}
     </div>
   )
 }

@@ -438,17 +438,6 @@ export default function RunStreamPage() {
 
   useEffect(() => { void loadMetaAndStream() }, [loadMetaAndStream])
 
-  async function handleRetry() {
-    if (!run?.agent_id) return
-    const res  = await fetch(`/api/agents/${run.agent_id}/run`, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify(run.input_context),
-    })
-    const json = await res.json()
-    if (res.ok) router.push(`/agents/runs/${json.data.run_id as string}`)
-  }
-
   async function handleCancel() {
     setCancelling(true)
     const res = await fetch(`/api/agents/runs/${params.runId}/cancel`, { method: 'POST' })
@@ -695,7 +684,21 @@ export default function RunStreamPage() {
                     <CalendarClock className="h-3 w-3 mr-1" /> Make Recurring
                   </Button>
                 )}
-                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleRetry()}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => {
+                    if (!run?.agent_id) return
+                    const params = new URLSearchParams()
+                    const brief = run.input_context?.extra_instructions ?? ''
+                    const name  = (run as unknown as { run_name?: string | null }).run_name ?? ''
+                    if (brief) params.set('brief', brief)
+                    if (name)  params.set('name',  name)
+                    const qs = params.toString()
+                    router.push(`/agents/${run.agent_id}/run${qs ? `?${qs}` : ''}`)
+                  }}
+                >
                   <Play className="h-3 w-3 mr-1" /> Run Again
                 </Button>
               </div>

@@ -76,6 +76,21 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
 
   useEffect(() => { void load() }, [load])
 
+  // Re-seed edit form fields from the current schedule_config and open the form.
+  // Ensures the form reflects the latest saved config even if local state drifted.
+  function handleEditSchedule() {
+    const cfg = agent?.schedule_config as unknown as (ScheduleConfig & { schedule_name?: string; task_brief?: string }) | null
+    if (cfg) {
+      setSchedName(cfg.schedule_name ?? '')
+      setTaskBrief(cfg.task_brief ?? '')
+      setFreq((cfg.frequency ?? 'daily') as 'daily' | 'weekly' | 'monthly')
+      setTime(cfg.time ?? '09:00')
+      setDow(cfg.day_of_week ?? 1)
+      setDom(cfg.day_of_month ?? 1)
+    }
+    setEditing(true)
+  }
+
   // Navigate to the run page pre-filled with the schedule's brief + name
   function handleRunNow() {
     const cfg = agent?.schedule_config as unknown as (ScheduleConfig & { schedule_name?: string; task_brief?: string }) | null
@@ -170,7 +185,7 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
                       <Button size="sm" className="text-xs gap-1" onClick={handleRunNow}>
                         <Play className="h-3 w-3" /> Run Now
                       </Button>
-                      <Button size="sm" variant="outline" className="text-xs" onClick={() => setEditing(true)}>Edit</Button>
+                      <Button size="sm" variant="outline" className="text-xs" onClick={handleEditSchedule}>Edit</Button>
                       <Button size="sm" variant="outline" className="text-xs" onClick={() => void toggleEnabled()} disabled={saving}>
                         {agent?.schedule_enabled ? 'Disable' : 'Enable'}
                       </Button>

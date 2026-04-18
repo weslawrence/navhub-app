@@ -944,7 +944,7 @@ async function executeTool(
   .eq('id', runId)
   .single()
 
-  const context = { agent, groupId, groupName, runId, credentials, run: runRecord }
+  const context = { agent, groupId, groupName, runId, credentials, run: runRecord ?? undefined }
 
   switch (toolName) {
     case 'read_financials':

@@ -90,24 +90,44 @@ export async function GET(req: Request) {
     const admin = createAdminClient()
 
     // Store connection with the user's actual tenant ID
-    const { error: upsertError } = await admin
+    // Check for existing connection for this group (there is no unique
+    // constraint on group_id alone in the current schema, so use explicit
+    // insert/update rather than upsert with onConflict).
+    const { data: existing } = await admin
       .from('sharepoint_connections')
-      .upsert({
-        group_id:                groupId,
-        tenant_id:               tenantId,
-        access_token_encrypted:  encrypt(tokens.access_token),
-        refresh_token_encrypted: encrypt(tokens.refresh_token),
-        token_expires_at:        new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-        is_active:               true,
-        folder_path:             'NavHub/Documents',
-      }, {
-        onConflict: 'group_id',
-        ignoreDuplicates: false,
-      })
+      .select('id')
+      .eq('group_id', groupId)
+      .maybeSingle()
 
-    if (upsertError) {
-      console.error('SharePoint connection upsert error:', upsertError)
-      return errorPage('db_error', `Database error: ${upsertError.message}`)
+    const tokenPayload = {
+      tenant_id:               tenantId,
+      access_token_encrypted:  encrypt(tokens.access_token),
+      refresh_token_encrypted: encrypt(tokens.refresh_token),
+      token_expires_at:        new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      is_active:               true,
+    }
+
+    let dbError: { message: string } | null = null
+    if (existing) {
+      const { error } = await admin
+        .from('sharepoint_connections')
+        .update(tokenPayload)
+        .eq('id', existing.id)
+      dbError = error ? { message: error.message } : null
+    } else {
+      const { error } = await admin
+        .from('sharepoint_connections')
+        .insert({
+          group_id:    groupId,
+          folder_path: 'NavHub/Documents',
+          ...tokenPayload,
+        })
+      dbError = error ? { message: error.message } : null
+    }
+
+    if (dbError) {
+      console.error('SharePoint connection save error:', dbError)
+      return errorPage('db_error', `Database error: ${dbError.message}`)
     }
 
     // Success — close popup quickly and notify parent

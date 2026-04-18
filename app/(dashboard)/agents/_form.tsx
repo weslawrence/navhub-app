@@ -64,6 +64,16 @@ const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: strin
 
 type Tab = 'Identity' | 'Behaviour' | 'Access' | 'Knowledge' | 'Credentials' | 'Notifications'
 type CompanyAccessLevel = 'none' | 'read' | 'write'
+type AccessFeature = 'financials' | 'reports' | 'documents' | 'marketing' | 'agents'
+
+const ACCESS_FEATURES: AccessFeature[] = ['financials', 'reports', 'documents', 'marketing', 'agents']
+const ACCESS_FEATURE_LABELS: Record<AccessFeature, string> = {
+  financials: 'Financials',
+  reports:    'Reports',
+  documents:  'Documents',
+  marketing:  'Marketing',
+  agents:     'Agents',
+}
 
 interface AgentFormProps {
   mode:      'create' | 'edit'
@@ -89,7 +99,8 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [allCompanies,     setAllCompanies]     = useState(true)  // true = all companies in scope
   const [companyScopeIds,  setCompanyScopeIds]  = useState<string[]>([])
   const [accessMode,       setAccessMode]       = useState<'all' | 'specific'>('all')
-  const [accessMap,        setAccessMap]        = useState<Record<string, CompanyAccessLevel>>({}) // companyId → level
+  // feature × companyKey → level; companyKey === 'default' is fallback for all companies
+  const [accessMatrix,     setAccessMatrix]     = useState<Record<string, Record<string, CompanyAccessLevel>>>({})
   const [accessLoading,    setAccessLoading]    = useState(false)
   const [accessSaving,     setAccessSaving]     = useState(false)
   const [emailAddress,     setEmailAddress]     = useState('')
@@ -253,24 +264,22 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     )
   }
 
-  // ── Company access grid (Access tab) ─────────────────────────────────────
+  // ── Feature × company access matrix (Access tab) ───────────────────────
   const loadCompanyAccess = useCallback(async () => {
     if (!agentId) return
     setAccessLoading(true)
     try {
       const res  = await fetch(`/api/agents/${agentId}/company-access`)
-      const json = await res.json() as { data?: Array<{ company_id: string | null; access: CompanyAccessLevel }> }
-      const rows = json.data ?? []
-      if (rows.length === 0) {
-        setAccessMode('all')
-        setAccessMap({})
+      const json = await res.json() as { data?: {
+        mode:   'all' | 'specific'
+        matrix: Record<string, Record<string, CompanyAccessLevel>>
+      } }
+      if (json.data) {
+        setAccessMode(json.data.mode)
+        setAccessMatrix(json.data.matrix ?? {})
       } else {
-        setAccessMode('specific')
-        const map: Record<string, CompanyAccessLevel> = {}
-        for (const r of rows) {
-          if (r.company_id) map[r.company_id] = r.access
-        }
-        setAccessMap(map)
+        setAccessMode('all')
+        setAccessMatrix({})
       }
     } catch { /* ignore */ } finally { setAccessLoading(false) }
   }, [agentId])
@@ -282,20 +291,42 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       await fetch(`/api/agents/${agentId}/company-access`, {
         method:  'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ mode: accessMode, access: accessMap }),
+        body:    JSON.stringify({ mode: accessMode, matrix: accessMatrix }),
       })
       showSaved()
     } finally { setAccessSaving(false) }
   }
 
-  function setAllCompaniesAccess(level: CompanyAccessLevel) {
-    const next: Record<string, CompanyAccessLevel> = {}
-    companies.forEach(c => { next[c.id] = level })
-    setAccessMap(next)
+  function setCell(feature: AccessFeature, companyKey: string, value: CompanyAccessLevel) {
+    setAccessMatrix(prev => ({
+      ...prev,
+      [feature]: { ...(prev[feature] ?? {}), [companyKey]: value },
+    }))
   }
 
-  function setCompanyAccess(companyId: string, level: CompanyAccessLevel) {
-    setAccessMap(prev => ({ ...prev, [companyId]: level }))
+  function setRow(feature: AccessFeature, value: CompanyAccessLevel) {
+    const row: Record<string, CompanyAccessLevel> = { default: value }
+    companies.forEach(c => { row[c.id] = value })
+    setAccessMatrix(prev => ({ ...prev, [feature]: row }))
+  }
+
+  function setColumn(companyKey: string, value: CompanyAccessLevel) {
+    setAccessMatrix(prev => {
+      const next = { ...prev }
+      ACCESS_FEATURES.forEach(f => {
+        next[f] = { ...(next[f] ?? {}), [companyKey]: value }
+      })
+      return next
+    })
+  }
+
+  function setAll(value: CompanyAccessLevel) {
+    const next: Record<string, Record<string, CompanyAccessLevel>> = {}
+    ACCESS_FEATURES.forEach(f => {
+      next[f] = { default: value }
+      companies.forEach(c => { next[f][c.id] = value })
+    })
+    setAccessMatrix(next)
   }
 
   // Load company access when Access tab becomes active (edit mode only)
@@ -1032,12 +1063,12 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
             </CardContent>
           </Card>
 
-          {/* Company Access */}
+          {/* Feature × Company Access Matrix */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Company Access</CardTitle>
+              <CardTitle className="text-base">Company &amp; Feature Access</CardTitle>
               <CardDescription>
-                Which companies can this agent access, and at what level?
+                Control which features this agent can access, and at what level, per company.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1047,9 +1078,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   <input
                     type="radio" name="access-mode"
                     checked={accessMode === 'all'}
-                    onChange={() => setAccessMode('all')}
+                    onChange={() => { setAccessMode('all'); setAll('write') }}
                   />
-                  <span className="text-sm">All companies &mdash; full access to every company in the group</span>
+                  <span className="text-sm">All companies &mdash; full access to all features</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -1057,7 +1088,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                     checked={accessMode === 'specific'}
                     onChange={() => setAccessMode('specific')}
                   />
-                  <span className="text-sm">Specific access per company</span>
+                  <span className="text-sm">Specific access per feature and company</span>
                 </label>
               </div>
 
@@ -1066,16 +1097,22 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-muted/50 border-b">
-                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Company</th>
-                        <th className="text-center px-3 py-2 font-medium text-muted-foreground w-36">Access</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground min-w-[140px]">Feature</th>
+                        <th className="text-center px-2 py-2 font-medium text-muted-foreground min-w-[100px]">All companies</th>
+                        {companies.map(c => (
+                          <th key={c.id} className="text-center px-2 py-2 font-medium text-muted-foreground min-w-[100px] truncate max-w-[120px]">
+                            {c.name}
+                          </th>
+                        ))}
                       </tr>
-                      <tr className="bg-muted/20 border-b">
-                        <td className="px-3 py-1.5 text-xs text-muted-foreground italic">All companies</td>
-                        <td className="px-3 py-1.5 text-center">
+                      {/* Column setter row */}
+                      <tr className="border-t bg-muted/20">
+                        <td className="px-3 py-1.5 text-xs text-muted-foreground italic">All features</td>
+                        <td className="px-2 py-1.5 text-center">
                           <select
                             value=""
-                            onChange={e => { if (e.target.value) setAllCompaniesAccess(e.target.value as CompanyAccessLevel) }}
-                            className="h-7 rounded border text-xs px-2 w-28 bg-background text-foreground border-border"
+                            onChange={e => { if (e.target.value) setAll(e.target.value as CompanyAccessLevel) }}
+                            className="h-7 rounded border text-xs px-1 w-24 bg-background text-foreground border-border"
                           >
                             <option value="">Set all…</option>
                             <option value="none">None</option>
@@ -1083,23 +1120,39 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                             <option value="write">Write</option>
                           </select>
                         </td>
+                        {companies.map(c => (
+                          <td key={c.id} className="px-2 py-1.5 text-center">
+                            <select
+                              value=""
+                              onChange={e => { if (e.target.value) setColumn(c.id, e.target.value as CompanyAccessLevel) }}
+                              className="h-7 rounded border text-xs px-1 w-24 bg-background text-foreground border-border"
+                            >
+                              <option value="">Set…</option>
+                              <option value="none">None</option>
+                              <option value="read">Read</option>
+                              <option value="write">Write</option>
+                            </select>
+                          </td>
+                        ))}
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {companies.map(company => {
-                        const level = accessMap[company.id] ?? 'none'
+                      {ACCESS_FEATURES.map(feature => {
+                        const row = accessMatrix[feature] ?? {}
+                        const defaultLevel = row['default'] ?? 'none'
                         return (
-                          <tr key={company.id} className="hover:bg-muted/30">
-                            <td className="px-3 py-2 font-medium text-foreground">{company.name}</td>
-                            <td className="px-3 py-2 text-center">
+                          <tr key={feature} className="hover:bg-muted/30">
+                            <td className="px-3 py-2 font-medium text-foreground">{ACCESS_FEATURE_LABELS[feature]}</td>
+                            {/* Row default setter */}
+                            <td className="px-2 py-2 text-center">
                               <select
-                                value={level}
-                                onChange={e => setCompanyAccess(company.id, e.target.value as CompanyAccessLevel)}
+                                value={defaultLevel}
+                                onChange={e => setRow(feature, e.target.value as CompanyAccessLevel)}
                                 className={cn(
-                                  'h-7 rounded border text-xs px-2 w-28',
-                                  level === 'write' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700' :
-                                  level === 'read'  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700' :
-                                                       'bg-muted text-muted-foreground border-border',
+                                  'h-7 rounded border text-xs px-1 w-24',
+                                  defaultLevel === 'write' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700' :
+                                  defaultLevel === 'read'  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700' :
+                                                              'bg-muted text-muted-foreground border-border',
                                 )}
                               >
                                 <option value="none">None</option>
@@ -1107,6 +1160,27 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                                 <option value="write">Write</option>
                               </select>
                             </td>
+                            {companies.map(c => {
+                              const cellLevel = row[c.id] ?? defaultLevel
+                              return (
+                                <td key={c.id} className="px-2 py-2 text-center">
+                                  <select
+                                    value={cellLevel}
+                                    onChange={e => setCell(feature, c.id, e.target.value as CompanyAccessLevel)}
+                                    className={cn(
+                                      'h-7 rounded border text-xs px-1 w-24',
+                                      cellLevel === 'write' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300 border-green-300 dark:border-green-700' :
+                                      cellLevel === 'read'  ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 border-blue-300 dark:border-blue-700' :
+                                                               'bg-muted text-muted-foreground border-border',
+                                    )}
+                                  >
+                                    <option value="none">None</option>
+                                    <option value="read">Read</option>
+                                    <option value="write">Write</option>
+                                  </select>
+                                </td>
+                              )
+                            })}
                           </tr>
                         )
                       })}

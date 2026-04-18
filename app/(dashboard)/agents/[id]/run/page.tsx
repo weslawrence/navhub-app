@@ -84,7 +84,7 @@ export default function AgentRunPage() {
   const [notifySlack,   setNotifySlack]   = useState('')
 
   // Recurring
-  const [isRecurring, setIsRecurring] = useState(false)
+  const [isRecurring, setIsRecurring] = useState(searchParams.get('recurring') === 'true')
   const [schedFreq,   setSchedFreq]   = useState<'daily' | 'weekly' | 'monthly'>('daily')
   const [schedTime,   setSchedTime]   = useState('09:00')
   const [schedDow,    setSchedDow]    = useState(1)

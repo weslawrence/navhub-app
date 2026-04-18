@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { X, Loader2, Check, CalendarClock } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { X, Loader2, Check, CalendarClock, Play } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Label }  from '@/components/ui/label'
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Props) {
+  const router = useRouter()
   const [agent, setAgent] = useState<Agent | null>(null)
   const [logs, setLogs]   = useState<ScheduledRunLog[]>([])
   const [loading, setLoading] = useState(true)
@@ -73,6 +75,17 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
   }, [agentId])
 
   useEffect(() => { void load() }, [load])
+
+  // Navigate to the run page pre-filled with the schedule's brief + name
+  function handleRunNow() {
+    const cfg = agent?.schedule_config as unknown as (ScheduleConfig & { schedule_name?: string; task_brief?: string }) | null
+    const params = new URLSearchParams()
+    if (cfg?.task_brief)    params.set('brief', cfg.task_brief)
+    if (cfg?.schedule_name) params.set('name',  cfg.schedule_name)
+    const qs = params.toString()
+    router.push(`/agents/${agentId}/run${qs ? `?${qs}` : ''}`)
+    onClose()
+  }
 
   async function toggleEnabled() {
     if (!agent) return
@@ -154,6 +167,9 @@ export default function ScheduledRunsPanel({ agentId, agentName, onClose }: Prop
                       </Badge>
                     </div>
                     <div className="flex gap-2 pt-1">
+                      <Button size="sm" className="text-xs gap-1" onClick={handleRunNow}>
+                        <Play className="h-3 w-3" /> Run Now
+                      </Button>
                       <Button size="sm" variant="outline" className="text-xs" onClick={() => setEditing(true)}>Edit</Button>
                       <Button size="sm" variant="outline" className="text-xs" onClick={() => void toggleEnabled()} disabled={saving}>
                         {agent?.schedule_enabled ? 'Disable' : 'Enable'}

@@ -6,7 +6,7 @@ import Link from 'next/link'
 import {
   ArrowLeft, CheckCircle2, XCircle, Loader2, Clock, Copy, Check,
   Play, ChevronDown, ChevronRight, FileText, AlertCircle, ExternalLink, Library,
-  Ban, MessageSquare, Send,
+  Ban, MessageSquare, Send, CalendarClock,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
@@ -673,9 +673,28 @@ export default function RunStreamPage() {
               </p>
             )}
 
-            {/* Run Again — inside output section when done */}
+            {/* Run Again / Make Recurring — inside output section when done */}
             {isDone && (
-              <div className="flex justify-end pt-1 border-t">
+              <div className="flex justify-end gap-2 pt-1 border-t">
+                {run?.agent_id && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      const params = new URLSearchParams()
+                      const brief = run.input_context?.extra_instructions ?? ''
+                      const name  = (run as unknown as { run_name?: string | null }).run_name ?? ''
+                      if (brief) params.set('brief', brief)
+                      if (name)  params.set('name',  name)
+                      params.set('recurring', 'true')
+                      router.push(`/agents/${run.agent_id}/run?${params.toString()}`)
+                    }}
+                    title="Re-run this brief on a recurring schedule"
+                  >
+                    <CalendarClock className="h-3 w-3 mr-1" /> Make Recurring
+                  </Button>
+                )}
                 <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleRetry()}>
                   <Play className="h-3 w-3 mr-1" /> Run Again
                 </Button>

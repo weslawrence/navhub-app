@@ -1177,12 +1177,16 @@ export async function executeAgentRun(
     const attachments = (runAttachments ?? []) as Array<{ file_name: string; file_type: string }>
 
     // Build system prompt (includes attachment context if any)
-    const systemPrompt = await buildSystemPrompt(agent, groupName, context, groupId, attachments)
+    let systemPrompt = await buildSystemPrompt(agent, groupName, context, groupId, attachments)
 
-    // Build tool list — ask_user is always included regardless of agent.tools setting
-    const enabledTools = (agent.tools ?? []) as AgentTool[]
+    // ─ Tool list derivation ────────────────────────────────────────────────
+    // Tools are derived from the agent's feature × company access matrix
+    // (agent_company_access). If no access rows exist at all, the agent
+    // defaults to full access on every feature — preserves legacy-agent
+    // behaviour created before migration 039.
 
-    // Fetch per-agent tool overrides (enabled flag per tool_name)
+    // Per-agent tool overrides (enabled flag per tool_name) — can disable a
+    // feature-enabled tool OR enable an opt-in tool like web_search.
     const { data: overrideRows } = await admin
       .from('agent_tool_overrides')
       .select('tool_name, enabled')
@@ -1194,12 +1198,69 @@ export async function executeAgentRun(
       (overrideRows ?? []).filter(r => r.enabled).map(r => r.tool_name as string),
     )
 
-    const toolDefs: Array<Record<string, unknown>> = [
-      ...enabledTools
-        .filter(t => ALL_TOOL_DEFS[t] && t !== 'ask_user' && !disabledToolNames.has(t))
-        .map(t => ALL_TOOL_DEFS[t] as Record<string, unknown>),
-      ALL_TOOL_DEFS['ask_user'] as Record<string, unknown>,
-    ]
+    // Load access matrix
+    const { data: accessRows } = await admin
+      .from('agent_company_access')
+      .select('feature, access')
+      .eq('agent_id', agent.id)
+
+    const hasRead = (f: string) => !accessRows?.length ||
+      accessRows.some(r => r.feature === f && ['read', 'write'].includes(r.access as string))
+    const hasWrite = (f: string) => !accessRows?.length ||
+      accessRows.some(r => r.feature === f && r.access === 'write')
+
+    // Helper to push a tool def if it exists in ALL_TOOL_DEFS
+    const push = (toolName: string) => {
+      const def = ALL_TOOL_DEFS[toolName]
+      if (def) toolDefs.push(def as Record<string, unknown>)
+    }
+
+    const toolDefs: Array<Record<string, unknown>> = []
+
+    // Always available
+    push('ask_user')
+    push('read_attachment')
+
+    // Feature-gated built-in tools
+    if (hasRead('financials')) {
+      push('read_financials')
+      push('read_cashflow')
+      push('read_cashflow_items')
+      push('summarise_cashflow')
+    }
+    if (hasWrite('financials')) {
+      push('suggest_cashflow_item')
+      push('update_cashflow_item')
+      push('create_cashflow_snapshot')
+    }
+    if (hasRead('documents')) {
+      push('read_document')
+      push('list_documents')
+      push('analyse_document')
+    }
+    if (hasWrite('documents')) {
+      push('create_document')
+      push('update_document')
+    }
+    if (hasRead('reports')) {
+      push('list_report_templates')
+      push('read_report_template')
+    }
+    if (hasWrite('reports')) {
+      push('render_report')
+      push('generate_report')
+      push('create_report_template')
+      push('update_report_template')
+    }
+    if (hasRead('marketing')) {
+      push('read_marketing_data')
+      push('summarise_marketing')
+    }
+
+    // Communication tools — available whenever notifications are configured
+    // (these are not gated by feature access; they use the agent's notify settings)
+    push('send_email')
+    push('send_slack')
 
     // Group-level toggles: web search (when enabled group-wide OR per-agent override)
     try {
@@ -1248,6 +1309,45 @@ export async function executeAgentRun(
         })
       }
     } catch { /* ignore */ }
+
+    // Apply disabled overrides — strip any tool explicitly disabled for this agent.
+    // (ask_user is never disabled — it is a runner-level mechanism.)
+    if (disabledToolNames.size > 0) {
+      const filtered = toolDefs.filter(t => {
+        const name = (t as { name?: string }).name
+        if (name === 'ask_user') return true
+        return !disabledToolNames.has(name ?? '')
+      })
+      toolDefs.length = 0
+      for (const t of filtered) toolDefs.push(t)
+    }
+
+    // ─ Tool awareness in system prompt ─────────────────────────────────────
+    // Lists the tools the agent actually has available this run so it knows
+    // what it can do without asking the user. Excludes ask_user (it is a
+    // clarification mechanism, not a task-completion tool).
+    const toolsForPrompt = toolDefs.filter(t => (t as { name?: string }).name !== 'ask_user')
+    if (toolsForPrompt.length > 0) {
+      const toolList = toolsForPrompt
+        .map(t => {
+          const tool = t as { name: string; description: string }
+          return `- **${tool.name}**: ${tool.description}`
+        })
+        .join('\n')
+      systemPrompt += `
+
+## Available Tools
+You have the following tools available this run. Use them directly to complete tasks — do not ask the user how to perform actions these tools can handle:
+
+${toolList}
+
+Important:
+- Call tools directly whenever the task requires one of them — do not describe what you would do, just do it.
+- Use create_document / update_document to save written outputs.
+- Use render_report to generate reports from templates (after list_report_templates + read_report_template).
+- Use read_financials to access P&L / Balance Sheet data.
+- Only use ask_user when you genuinely need information only the user can provide — never to confirm tool choice or method.`
+    }
 
     // Initial messages
     const messages: AnthropicMessage[] = [

@@ -26,7 +26,7 @@ export async function GET() {
   const admin = createAdminClient()
   const { data } = await admin
     .from('sharepoint_connections')
-    .select('id, group_id, is_active, site_url, drive_id, folder_path, tenant_id, expires_at')
+    .select('id, group_id, is_active, site_url, drive_id, folder_path, tenant_id, token_expires_at')
     .eq('group_id', activeGroupId)
     .eq('is_active', true)
     .maybeSingle()

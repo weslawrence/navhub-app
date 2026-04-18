@@ -262,11 +262,6 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
             {/* Marketing — single item */}
             {show('marketing') && <NavLink href="/marketing" label="Marketing" Icon={Megaphone} mobile={mobile} />}
 
-            {/* Integrations — visible if user has access to any integration tab */}
-            {(show('financials') || show('marketing') || show('documents') || show('reports')) && (
-              <NavLink href="/integrations" label="Integrations" Icon={Plug} mobile={mobile} />
-            )}
-
             {/* Reports & Documents group */}
             <NavGroup label="Reports & Docs" Icon={FileText} open={reportsDocsOpen}
               onToggle={() => toggleNavGroup('reportsdocs', setReportsDocsOpen)}
@@ -275,8 +270,15 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
               {show('documents') && <SubLink href="/documents" label="Documents" mobile={mobile} />}
             </NavGroup>
 
-            {/* Agents + Settings — top level */}
+            {/* Agents — top level */}
             {show('agents') && <NavLink href="/agents" label="Agents" Icon={Bot} mobile={mobile} />}
+
+            {/* Integrations — between Agents and Settings */}
+            {(show('financials') || show('marketing') || show('documents') || show('reports')) && (
+              <NavLink href="/integrations" label="Integrations" Icon={Plug} mobile={mobile} />
+            )}
+
+            {/* Settings — top level */}
             {show('settings') && <NavLink href="/settings" label="Settings" Icon={Settings} mobile={mobile} />}
 
             {(!collapsed || mobile) && <HelpMenu userEmail={user.email} />}

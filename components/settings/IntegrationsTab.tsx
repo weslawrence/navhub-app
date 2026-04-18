@@ -88,7 +88,13 @@ const MARKETING_PLATFORM_GROUPS: { label: string; platforms: MarketingPlatform[]
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function IntegrationsTab() {
+export type IntegrationsScope = 'all' | 'financials' | 'marketing' | 'documents'
+
+export default function IntegrationsTab({ scope = 'all' }: { scope?: IntegrationsScope } = {}) {
+  const showXero       = scope === 'all' || scope === 'financials'
+  const showMarketing  = scope === 'all' || scope === 'marketing'
+  const showSharePoint = scope === 'all' || scope === 'documents'
+
   const [companies,         setCompanies]         = useState<CompanyOption[]>([])
   const [divisions,         setDivisions]         = useState<DivisionOption[]>([])
   const [connections,       setConnections]       = useState<XeroConn[]>([])
@@ -346,6 +352,7 @@ export default function IntegrationsTab() {
     <div className="space-y-6">
 
       {/* ── Xero Connections ────────────────────────────────────────────────── */}
+      {showXero && (
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
@@ -447,8 +454,10 @@ export default function IntegrationsTab() {
           <ConnectXero companies={companies} divisions={divisionList} />
         )}
       </div>
+      )}
 
       {/* ── Marketing Platforms ─────────────────────────────────────────────── */}
+      {showMarketing && (
       <div className="space-y-3">
         <div>
           <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
@@ -566,8 +575,10 @@ export default function IntegrationsTab() {
           ))}
         </div>
       </div>
+      )}
 
       {/* ── SharePoint / OneDrive ────────────────────────────────────────────── */}
+      {showSharePoint && (
       <div className="space-y-3">
         <div>
           <h2 className="text-base font-semibold text-foreground flex items-center gap-2">
@@ -733,6 +744,7 @@ export default function IntegrationsTab() {
           </div>
         )}
       </div>
+      )}
 
     </div>
   )

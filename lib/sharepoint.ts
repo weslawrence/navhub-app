@@ -68,16 +68,16 @@ export async function exchangeSharePointCode(code: string): Promise<{
 // ─── Token management ─────────────────────────────────────────────────────────
 
 export interface SharePointConnection {
-  id:              string
-  group_id:        string
-  access_token:    string   // encrypted
-  refresh_token:   string   // encrypted
-  expires_at:      string   // ISO
-  site_url:        string | null
-  drive_id:        string | null
-  folder_path:     string | null
-  tenant_id:       string | null
-  is_active:       boolean
+  id:                      string
+  group_id:                string
+  access_token_encrypted:  string   // encrypted
+  refresh_token_encrypted: string   // encrypted
+  token_expires_at:        string   // ISO
+  site_url:                string | null
+  drive_id:                string | null
+  folder_path:             string | null
+  tenant_id:               string | null
+  is_active:               boolean
 }
 
 export interface SharePointTokens {
@@ -122,9 +122,9 @@ export async function getValidSharePointToken(connectionId: string): Promise<{
 
   if (error || !conn) throw new Error('SharePoint connection not found')
 
-  const decryptedAccess  = decrypt(conn.access_token)
-  const decryptedRefresh = decrypt(conn.refresh_token)
-  const expiresAt = new Date(conn.expires_at)
+  const decryptedAccess  = decrypt(conn.access_token_encrypted)
+  const decryptedRefresh = decrypt(conn.refresh_token_encrypted)
+  const expiresAt = new Date(conn.token_expires_at)
   const now = new Date()
 
   // Refresh if expires within 5 minutes
@@ -136,9 +136,9 @@ export async function getValidSharePointToken(connectionId: string): Promise<{
     const newExpiry = new Date(Date.now() + tokens.expires_in * 1000)
 
     await admin.from('sharepoint_connections').update({
-      access_token:  encrypt(tokens.access_token),
-      refresh_token: tokens.refresh_token ? encrypt(tokens.refresh_token) : conn.refresh_token,
-      expires_at:    newExpiry.toISOString(),
+      access_token_encrypted:  encrypt(tokens.access_token),
+      refresh_token_encrypted: tokens.refresh_token ? encrypt(tokens.refresh_token) : conn.refresh_token_encrypted,
+      token_expires_at:        newExpiry.toISOString(),
     }).eq('id', connectionId)
 
     return { access_token: tokens.access_token }

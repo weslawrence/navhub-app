@@ -528,7 +528,7 @@ export default function IntegrationsPage() {
             <h2 className="text-base font-semibold flex items-center gap-2">
               <Plug className="h-4 w-4 text-primary" /> Accounting Connections
             </h2>
-            <IntegrationsTab />
+            <IntegrationsTab scope="financials" />
           </section>
 
           <section className="space-y-3">
@@ -565,7 +565,7 @@ export default function IntegrationsPage() {
               Connect marketing platforms to pull data automatically. Manual entry is always available from the{' '}
               <Link href="/marketing" className="text-primary hover:underline">Marketing section</Link>.
             </p>
-            <IntegrationsTab />
+            <IntegrationsTab scope="marketing" />
           </section>
 
           <section className="space-y-3">
@@ -587,7 +587,7 @@ export default function IntegrationsPage() {
             <h2 className="text-base font-semibold flex items-center gap-2">
               <FileText className="h-4 w-4 text-primary" /> Document Sync
             </h2>
-            <IntegrationsTab />
+            <IntegrationsTab scope="documents" />
           </section>
 
           <section className="space-y-3">

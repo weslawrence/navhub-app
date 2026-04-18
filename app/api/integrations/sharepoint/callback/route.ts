@@ -95,9 +95,9 @@ export async function GET(req: Request) {
       .upsert({
         group_id:                groupId,
         tenant_id:               tenantId,
-        access_token:            encrypt(tokens.access_token),
-        refresh_token:           encrypt(tokens.refresh_token),
-        expires_at:              new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+        access_token_encrypted:  encrypt(tokens.access_token),
+        refresh_token_encrypted: encrypt(tokens.refresh_token),
+        token_expires_at:        new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
         is_active:               true,
         folder_path:             'NavHub/Documents',
       }, {

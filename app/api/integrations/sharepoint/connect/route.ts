@@ -35,7 +35,7 @@ export async function GET() {
       response_type: 'code',
       redirect_uri:  `${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/sharepoint/callback`,
       response_mode: 'query',
-      scope:         'https://graph.microsoft.com/Files.ReadWrite.All https://graph.microsoft.com/Sites.ReadWrite.All offline_access profile',
+      scope:         'openid profile offline_access https://graph.microsoft.com/Files.ReadWrite.All https://graph.microsoft.com/Sites.ReadWrite.All',
       state:         JSON.stringify({ group_id: activeGroupId, user_id: session.user.id }),
       // Always force account picker so user can switch Microsoft accounts
       prompt:        'select_account',

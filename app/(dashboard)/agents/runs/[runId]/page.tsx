@@ -500,9 +500,14 @@ export default function RunStreamPage() {
     : 'No additional instructions'
 
   const modelLabel = run?.model_used
-    ? run.model_used.includes('opus') ? 'Claude Opus 4'
-      : run.model_used === 'gpt-4o'   ? 'GPT-4o'
-      : 'Claude Sonnet 4'
+    ? run.model_used.includes('opus')        ? 'Claude Opus 4'
+    : run.model_used.includes('sonnet')      ? 'Claude Sonnet 4'
+    : run.model_used.includes('haiku')       ? 'Claude Haiku'
+    : run.model_used === 'gpt-4o'            ? 'GPT-4o'
+    : run.model_used.includes('gpt-4o-mini') ? 'GPT-4o Mini'
+    : run.model_used.includes('gemini')      ? 'Gemini'
+    : run.model_used.includes('mistral')     ? 'Mistral'
+    : run.model_used
     : null
 
   const docCards    = renderDocCards(toolEvents)

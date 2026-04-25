@@ -1207,7 +1207,13 @@ export async function executeAgentRun(
   // Update run status to running
   await admin
     .from('agent_runs')
-    .update({ status: 'running', started_at: new Date().toISOString(), model_used: agent.model })
+    .update({
+      status:      'running',
+      started_at:  new Date().toISOString(),
+      model_used:  ((agent as Agent & { ai_model?: string | null }).ai_model
+                    ?? agent.model_name
+                    ?? agent.model) as string,
+    })
     .eq('id', runId)
 
   const groupId = agent.group_id
@@ -1278,6 +1284,13 @@ export async function executeAgentRun(
         try { cfgApiKey = decrypt(cfgRow.api_key_encrypted) } catch { /* keep undefined */ }
       }
     }
+
+    // Persist the fully-resolved model name so /agents/runs/[id] shows the
+    // actual model that ran (provider config takes priority over agent.model).
+    void admin
+      .from('agent_runs')
+      .update({ model_used: cfgModelName })
+      .eq('id', runId)
 
     // ── Materialise linked documents into agent_run_attachments ──────────────
     // Pulled in once per run from the run.linked_document_ids column.

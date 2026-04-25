@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   Bot, CheckCircle2, Globe, Plus, Pencil, Trash2, Loader2, X, Play, Save, AlertTriangle,
+  Cpu, Star, Eye, EyeOff, BookOpen, FileText, Link2, Upload,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -10,7 +11,12 @@ import { Input }  from '@/components/ui/input'
 import { Label }  from '@/components/ui/label'
 import { Badge }  from '@/components/ui/badge'
 import { cn }     from '@/lib/utils'
-import type { CustomTool, ToolParameter } from '@/lib/types'
+import type {
+  CustomTool, ToolParameter,
+  GroupModelConfig, GroupAgentKnowledge, GroupAgentKnowledgeDocument,
+  KnowledgeLink,
+} from '@/lib/types'
+import DocumentPickerModal from '@/components/agents/DocumentPickerModal'
 
 // ─── Default tools info (display-only) ───────────────────────────────────────
 
@@ -369,6 +375,464 @@ function ToolEditorModal({
   )
 }
 
+// ─── Model config editor modal ───────────────────────────────────────────────
+
+interface EditableModelConfig {
+  id?:         string
+  label:       string
+  provider:    'anthropic' | 'openai' | 'google' | 'mistral' | 'custom'
+  model_name:  string
+  api_key:     string
+  is_default:  boolean
+}
+
+const PROVIDER_PRESETS: Record<string, string[]> = {
+  anthropic: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-6'],
+  openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'],
+  google:    ['gemini-1.5-pro', 'gemini-1.5-flash'],
+  mistral:   ['mistral-large-latest', 'mistral-small-latest'],
+  custom:    [],
+}
+
+function ModelConfigModal({
+  initial, onSave, onClose,
+}: {
+  initial: EditableModelConfig
+  onSave:  (saved: GroupModelConfig) => void
+  onClose: () => void
+}) {
+  const [cfg,        setCfg]        = useState<EditableModelConfig>(initial)
+  const [saving,     setSaving]     = useState(false)
+  const [showKey,    setShowKey]    = useState(false)
+  const [testing,    setTesting]    = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; status: number; message: string } | null>(null)
+  const [error,      setError]      = useState<string | null>(null)
+
+  function setField<K extends keyof EditableModelConfig>(key: K, value: EditableModelConfig[K]) {
+    setCfg(prev => ({ ...prev, [key]: value }))
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    try {
+      const url    = cfg.id ? `/api/settings/model-configs/${cfg.id}` : '/api/settings/model-configs'
+      const method = cfg.id ? 'PATCH' : 'POST'
+      const body: Record<string, unknown> = {
+        label:      cfg.label.trim(),
+        provider:   cfg.provider,
+        model_name: cfg.model_name.trim(),
+        is_default: cfg.is_default,
+      }
+      if (cfg.api_key.trim()) body.api_key = cfg.api_key.trim()
+      // POST requires api_key; PATCH allows omitting it (keep existing)
+      if (!cfg.id && !body.api_key) { setError('API key is required'); setSaving(false); return }
+
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      })
+      const json = await res.json() as { data?: GroupModelConfig; error?: string }
+      if (!res.ok) { setError(json.error ?? 'Failed to save'); return }
+      if (json.data) onSave(json.data)
+    } finally { setSaving(false) }
+  }
+
+  async function handleTest() {
+    if (!cfg.id) { setError('Save the configuration first before testing.'); return }
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res  = await fetch(`/api/settings/model-configs/${cfg.id}/test`, { method: 'POST' })
+      const json = await res.json() as { ok: boolean; status: number; message: string }
+      setTestResult(json)
+    } finally { setTesting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+      <div className="bg-background border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-base font-semibold">{cfg.id ? 'Edit Model' : 'Add Model'}</h2>
+          <button onClick={onClose}><X className="h-5 w-5 text-muted-foreground" /></button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {error && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label>Label</Label>
+            <Input value={cfg.label} onChange={e => setField('label', e.target.value)} placeholder="Claude Sonnet (Fast)" />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Provider</Label>
+            <select
+              value={cfg.provider}
+              onChange={e => setField('provider', e.target.value as EditableModelConfig['provider'])}
+              className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+            >
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="google">Google</option>
+              <option value="mistral">Mistral</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Model name</Label>
+            {PROVIDER_PRESETS[cfg.provider].length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-1.5">
+                {PROVIDER_PRESETS[cfg.provider].map(m => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setField('model_name', m)}
+                    className={cn(
+                      'px-2.5 py-1 rounded text-xs border transition-colors',
+                      cfg.model_name === m ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-primary/40',
+                    )}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Input
+              value={cfg.model_name}
+              onChange={e => setField('model_name', e.target.value)}
+              placeholder="claude-sonnet-4-6"
+              className="font-mono text-sm"
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>API Key {cfg.id && <span className="text-muted-foreground font-normal">(leave blank to keep existing)</span>}</Label>
+            <div className="flex gap-2">
+              <Input
+                type={showKey ? 'text' : 'password'}
+                value={cfg.api_key}
+                onChange={e => setField('api_key', e.target.value)}
+                placeholder="sk-..."
+                className="flex-1 font-mono text-xs"
+              />
+              <Button type="button" variant="outline" size="sm" className="h-9 w-9 p-0" onClick={() => setShowKey(s => !s)}>
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input
+              type="checkbox"
+              checked={cfg.is_default}
+              onChange={e => setField('is_default', e.target.checked)}
+              className="rounded"
+            />
+            <span>Set as default for this group</span>
+          </label>
+
+          {testResult && (
+            <div className={cn(
+              'rounded-md border px-3 py-2 text-xs',
+              testResult.ok
+                ? 'border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-950/30 dark:text-green-400'
+                : 'border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-400',
+            )}>
+              {testResult.ok ? '✓ Connected' : `✗ ${testResult.message}`}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-6 py-4 border-t">
+          <Button
+            variant="outline" onClick={() => void handleTest()}
+            disabled={testing || !cfg.id} className="gap-1.5"
+          >
+            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            Test Connection
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={() => void handleSave()} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Universal Knowledge Panel ────────────────────────────────────────────────
+
+function UniversalKnowledgePanel({ isAdmin }: { isAdmin: boolean }) {
+  const [loading,         setLoading]         = useState(true)
+  const [text,            setText]            = useState('')
+  const [links,           setLinks]           = useState<KnowledgeLink[]>([])
+  const [docs,            setDocs]            = useState<GroupAgentKnowledgeDocument[]>([])
+  const [saving,          setSaving]          = useState(false)
+  const [savedFlash,      setSavedFlash]      = useState(false)
+  const [docPickerOpen,   setDocPickerOpen]   = useState(false)
+  const [showLinkForm,    setShowLinkForm]    = useState(false)
+  const [linkLabel,       setLinkLabel]       = useState('')
+  const [linkUrl,         setLinkUrl]         = useState('')
+  const [linkDesc,        setLinkDesc]        = useState('')
+  const [editingLinkIdx,  setEditingLinkIdx]  = useState<number | null>(null)
+  const [uploading,       setUploading]       = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res  = await fetch('/api/settings/agent-knowledge')
+      const json = await res.json() as {
+        data?: { knowledge: GroupAgentKnowledge; documents: GroupAgentKnowledgeDocument[] }
+      }
+      if (json.data) {
+        setText(json.data.knowledge.knowledge_text ?? '')
+        setLinks(json.data.knowledge.knowledge_links ?? [])
+        setDocs(json.data.documents)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  async function saveTextAndLinks() {
+    setSaving(true)
+    try {
+      await fetch('/api/settings/agent-knowledge', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ knowledge_text: text || null, knowledge_links: links }),
+      })
+      setSavedFlash(true)
+      setTimeout(() => setSavedFlash(false), 2000)
+    } finally { setSaving(false) }
+  }
+
+  function addLink() {
+    if (!linkUrl.trim()) return
+    const newLink: KnowledgeLink = {
+      url:         linkUrl.trim(),
+      label:       linkLabel.trim() || linkUrl.trim(),
+      description: linkDesc.trim() || undefined,
+    }
+    if (editingLinkIdx !== null) {
+      setLinks(prev => prev.map((l, i) => i === editingLinkIdx ? newLink : l))
+      setEditingLinkIdx(null)
+    } else {
+      setLinks(prev => [...prev, newLink])
+    }
+    setLinkLabel(''); setLinkUrl(''); setLinkDesc(''); setShowLinkForm(false)
+  }
+  function editLink(idx: number) {
+    const l = links[idx]
+    setLinkLabel(l.label ?? ''); setLinkUrl(l.url); setLinkDesc(l.description ?? '')
+    setEditingLinkIdx(idx); setShowLinkForm(true)
+  }
+  function removeLink(idx: number) {
+    setLinks(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  async function linkDocument(docIds: { id: string; title: string }[]) {
+    for (const d of docIds) {
+      const res = await fetch('/api/settings/agent-knowledge/documents', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ document_id: d.id }),
+      })
+      if (res.ok) {
+        const json = await res.json() as { data: GroupAgentKnowledgeDocument }
+        setDocs(prev => [json.data, ...prev])
+      }
+    }
+    setDocPickerOpen(false)
+  }
+
+  async function uploadFile(file: File) {
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/settings/agent-knowledge/documents', { method: 'POST', body: fd })
+      if (res.ok) {
+        const json = await res.json() as { data: GroupAgentKnowledgeDocument }
+        setDocs(prev => [json.data, ...prev])
+      }
+    } finally { setUploading(false) }
+  }
+
+  async function removeDoc(id: string) {
+    await fetch(`/api/settings/agent-knowledge/documents/${id}`, { method: 'DELETE' })
+    setDocs(prev => prev.filter(d => d.id !== id))
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-8 flex justify-center"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></CardContent>
+      </Card>
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <BookOpen className="h-4 w-4 text-primary" /> Universal Knowledge
+        </CardTitle>
+        <CardDescription>
+          This knowledge is automatically provided to <span className="font-medium">all agents</span> as foundational
+          context. Agent-specific knowledge takes precedence where there is overlap.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Background text */}
+        <div className="space-y-2">
+          <Label className="text-sm">Background Knowledge</Label>
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={6}
+            disabled={!isAdmin}
+            className="w-full resize-y rounded-md border border-input bg-transparent p-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-60"
+            placeholder="Company overview, industry context, key terminology, operating principles…"
+          />
+        </div>
+
+        {/* Reference Documents */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">Reference Documents</Label>
+            {isAdmin && (
+              <div className="flex gap-2">
+                <Button
+                  size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+                  onClick={() => setDocPickerOpen(true)}
+                >
+                  <FileText className="h-3.5 w-3.5" /> Link from Documents
+                </Button>
+                <Button
+                  size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+                  disabled={uploading}
+                  onClick={() => {
+                    const i = document.createElement('input')
+                    i.type = 'file'
+                    i.accept = '.pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.png,.jpg,.jpeg'
+                    i.onchange = () => { if (i.files?.[0]) void uploadFile(i.files[0]) }
+                    i.click()
+                  }}
+                >
+                  <Upload className="h-3.5 w-3.5" /> {uploading ? 'Uploading…' : 'Upload File'}
+                </Button>
+              </div>
+            )}
+          </div>
+          {docs.length === 0 ? (
+            <p className="text-xs text-muted-foreground py-2">No reference documents.</p>
+          ) : (
+            <div className="divide-y rounded-md border overflow-hidden">
+              {docs.map(d => (
+                <div key={d.id} className="flex items-center gap-3 px-3 py-2 bg-background">
+                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm truncate">{d.document_title ?? d.file_name}</p>
+                    <Badge variant="outline" className="text-[9px] px-1 py-0">
+                      {d.document_id ? 'From Documents' : 'Uploaded'}
+                    </Badge>
+                  </div>
+                  {isAdmin && (
+                    <button onClick={() => void removeDoc(d.id)} className="text-muted-foreground hover:text-destructive shrink-0">
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Reference Links */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm">Reference Links</Label>
+            {isAdmin && (
+              <Button
+                size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+                onClick={() => { setEditingLinkIdx(null); setLinkLabel(''); setLinkUrl(''); setLinkDesc(''); setShowLinkForm(true) }}
+              >
+                <Plus className="h-3.5 w-3.5" /> Add Link
+              </Button>
+            )}
+          </div>
+          {showLinkForm && isAdmin && (
+            <div className="rounded-md border p-3 space-y-2 bg-muted/30">
+              <Input value={linkLabel} onChange={e => setLinkLabel(e.target.value)} placeholder="Label" className="text-sm" />
+              <Input value={linkUrl}   onChange={e => setLinkUrl(e.target.value)}   placeholder="https://…" className="text-sm" />
+              <Input value={linkDesc}  onChange={e => setLinkDesc(e.target.value)}  placeholder="Description (optional)" className="text-sm" />
+              <div className="flex gap-2">
+                <Button size="sm" onClick={addLink} disabled={!linkUrl.trim()}>{editingLinkIdx !== null ? 'Update' : 'Add'}</Button>
+                <Button size="sm" variant="ghost" onClick={() => { setShowLinkForm(false); setEditingLinkIdx(null) }}>Cancel</Button>
+              </div>
+            </div>
+          )}
+          {links.length === 0 && !showLinkForm ? (
+            <p className="text-xs text-muted-foreground py-2">No reference links.</p>
+          ) : (
+            <div className="divide-y rounded-md border overflow-hidden">
+              {links.map((l, idx) => (
+                <div key={idx} className="flex items-start gap-3 px-3 py-2 bg-background">
+                  <Link2 className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{l.label}</p>
+                    <p className="text-xs text-muted-foreground truncate">{l.url}</p>
+                    {l.description && <p className="text-xs text-muted-foreground mt-0.5">{l.description}</p>}
+                  </div>
+                  {isAdmin && (
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button onClick={() => editLink(idx)} className="text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
+                      <button onClick={() => removeLink(idx)} className="text-muted-foreground hover:text-destructive"><X className="h-4 w-4" /></button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Save bar */}
+        {isAdmin && (
+          <div className="flex items-center justify-end gap-2 pt-2 border-t">
+            {savedFlash && <span className="text-xs text-green-600">Saved ✓</span>}
+            <Button size="sm" onClick={() => void saveTextAndLinks()} disabled={saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Save className="h-4 w-4 mr-1.5" />}
+              Save Knowledge
+            </Button>
+          </div>
+        )}
+      </CardContent>
+
+      {docPickerOpen && (
+        <DocumentPickerModal
+          onSelect={list => void linkDocument(list)}
+          onClose={() => setDocPickerOpen(false)}
+          excludeIds={docs.map(d => d.document_id ?? '').filter(Boolean) as string[]}
+        />
+      )}
+    </Card>
+  )
+}
+
 // ─── Main AgentsTab ───────────────────────────────────────────────────────────
 
 interface AgentsTabProps {
@@ -383,17 +847,25 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
   const [editing,          setEditing]          = useState<EditableTool | null>(null)
   const [deleteConfirm,    setDeleteConfirm]    = useState<string | null>(null)
 
+  // Model configs state
+  const [modelConfigs,         setModelConfigs]         = useState<GroupModelConfig[]>([])
+  const [editingModel,         setEditingModel]         = useState<EditableModelConfig | null>(null)
+  const [deleteModelConfirm,   setDeleteModelConfirm]   = useState<string | null>(null)
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
-      const [grRes, ctRes] = await Promise.all([
+      const [grRes, ctRes, mcRes] = await Promise.all([
         fetch('/api/groups/active'),
         fetch('/api/settings/custom-tools'),
+        fetch('/api/settings/model-configs'),
       ])
       const grJson = await grRes.json() as { data?: { group?: { id?: string; web_search_enabled?: boolean } } }
       const ctJson = await ctRes.json() as { data?: CustomTool[] }
+      const mcJson = await mcRes.json() as { data?: GroupModelConfig[] }
       setWebSearchEnabled(!!grJson.data?.group?.web_search_enabled)
       setCustomTools(ctJson.data ?? [])
+      setModelConfigs(mcJson.data ?? [])
     } finally {
       setLoading(false)
     }
@@ -438,6 +910,51 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
     setEditing(editableFromCustom(saved)) // keep modal open with saved tool so user can Test
   }
 
+  // ─── Model config handlers ──────────────────────────────────────────────
+  function emptyModel(): EditableModelConfig {
+    return { label: '', provider: 'anthropic', model_name: 'claude-sonnet-4-6', api_key: '', is_default: modelConfigs.length === 0 }
+  }
+  function editableFromModel(m: GroupModelConfig): EditableModelConfig {
+    return {
+      id:         m.id,
+      label:      m.label,
+      provider:   (m.provider as EditableModelConfig['provider']),
+      model_name: m.model_name,
+      api_key:    '',   // never sent to client
+      is_default: m.is_default,
+    }
+  }
+  function handleModelSaved(saved: GroupModelConfig) {
+    setModelConfigs(prev => {
+      // If a new default arrived, clear it on others
+      const cleared = saved.is_default ? prev.map(m => ({ ...m, is_default: false })) : prev
+      const idx = cleared.findIndex(m => m.id === saved.id)
+      if (idx >= 0) {
+        const next = [...cleared]
+        next[idx] = saved
+        return next
+      }
+      return [saved, ...cleared]
+    })
+    setEditingModel(editableFromModel(saved))
+  }
+  async function setModelDefault(id: string) {
+    const res = await fetch(`/api/settings/model-configs/${id}/set-default`, { method: 'POST' })
+    if (res.ok) {
+      setModelConfigs(prev => prev.map(m => ({ ...m, is_default: m.id === id })))
+    }
+  }
+  async function deleteModel(id: string) {
+    const res = await fetch(`/api/settings/model-configs/${id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setModelConfigs(prev => prev.filter(m => m.id !== id))
+    } else {
+      const json = await res.json() as { error?: string }
+      alert(json.error ?? 'Failed to delete')
+    }
+    setDeleteModelConfirm(null)
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-16">
@@ -448,6 +965,94 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
 
   return (
     <div className="space-y-6">
+
+      {/* ── Section 0: Model Configurations ────────────────────────────── */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Cpu className="h-4 w-4 text-primary" /> Model Configurations
+              </CardTitle>
+              <CardDescription>
+                Configure AI models available to agents in this group. All agents must use a model configured here.
+              </CardDescription>
+            </div>
+            {isAdmin && (
+              <Button size="sm" className="gap-1.5 shrink-0" onClick={() => setEditingModel(emptyModel())}>
+                <Plus className="h-4 w-4" /> Add Model
+              </Button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {modelConfigs.length === 0 ? (
+            <div className="rounded-md border border-dashed bg-muted/30 px-4 py-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                No models configured yet. Add at least one model so agents can run.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {modelConfigs.map(m => (
+                <div key={m.id} className={cn('rounded-md border p-3 bg-card', m.is_default && 'ring-2 ring-primary/30')}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {m.is_default && <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />}
+                        <span className="text-sm font-medium text-foreground">{m.label}</span>
+                        {m.is_default && <Badge variant="secondary" className="text-[10px] px-1.5">Default</Badge>}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        <span className="capitalize">{m.provider}</span> · <code className="font-mono">{m.model_name}</code>
+                      </p>
+                      <p className="text-xs text-muted-foreground font-mono mt-0.5">API key: ••••••••••••••••</p>
+                    </div>
+                    {isAdmin && (
+                      <div className="flex items-center gap-1 shrink-0">
+                        {!m.is_default && (
+                          <Button
+                            size="sm" variant="ghost" className="h-8 text-xs px-2"
+                            onClick={() => void setModelDefault(m.id)}
+                            title="Set as default"
+                          >
+                            Set Default
+                          </Button>
+                        )}
+                        <Button
+                          size="sm" variant="ghost" className="h-8 w-8 p-0"
+                          onClick={() => setEditingModel(editableFromModel(m))}
+                          title="Edit"
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        {deleteModelConfirm === m.id ? (
+                          <>
+                            <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={() => void deleteModel(m.id)}>
+                              Confirm
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setDeleteModelConfirm(null)}>
+                              Cancel
+                            </Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive"
+                            onClick={() => setDeleteModelConfirm(m.id)}
+                            title="Delete"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ── Section 1: Default Tools (info only) ───────────────────────── */}
       <Card>
@@ -602,12 +1207,24 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
         </CardContent>
       </Card>
 
-      {/* Editor modal */}
+      {/* ── Section 4: Universal Knowledge ─────────────────────────────── */}
+      <UniversalKnowledgePanel isAdmin={isAdmin} />
+
+      {/* Custom tool editor modal */}
       {editing && (
         <ToolEditorModal
           initial={editing}
           onSave={handleSaved}
           onClose={() => setEditing(null)}
+        />
+      )}
+
+      {/* Model config editor modal */}
+      {editingModel && (
+        <ModelConfigModal
+          initial={editingModel}
+          onSave={handleModelSaved}
+          onClose={() => setEditingModel(null)}
         />
       )}
     </div>

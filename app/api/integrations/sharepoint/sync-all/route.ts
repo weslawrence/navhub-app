@@ -71,7 +71,6 @@ export async function POST() {
     .from('documents')
     .select('*')
     .eq('group_id', activeGroupId)
-    .eq('is_active', true)
     .eq('status', 'published')
 
   if (docsError) return NextResponse.json({ error: docsError.message }, { status: 500 })

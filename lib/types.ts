@@ -346,6 +346,7 @@ export interface Agent {
   model_provider:        string | null
   model_name:            string | null
   model_api_key:         string | null
+  model_config_id:       string | null   // FK → group_model_configs (migration 042)
   persona_preset:        PersonaPreset
   persona:               string | null
   instructions:          string | null
@@ -427,6 +428,9 @@ export interface AgentRun {
   // Per-run notification overrides (migration 038)
   notify_email:            string | null
   notify_slack_channel:    string | null
+  // Per-run linked documents (migration 042) — UUIDs of NavHub documents
+  // pulled into agent_run_attachments at run start.
+  linked_document_ids:     string[]
   created_at:              string
 }
 
@@ -706,6 +710,40 @@ export interface KnowledgeLink {
   url:          string
   label:        string
   description?: string
+}
+
+// ── Group-level model configuration (migration 042) ──
+export type ModelProvider = 'anthropic' | 'openai' | 'google' | 'mistral' | 'custom'
+
+export interface GroupModelConfig {
+  id:                 string
+  group_id:           string
+  label:              string
+  provider:           ModelProvider | string
+  model_name:         string
+  api_key_encrypted?: string   // never sent to client; present in DB only
+  is_default:         boolean
+  is_active:          boolean
+  created_at:         string
+}
+
+export interface GroupAgentKnowledge {
+  id:              string
+  group_id:        string
+  knowledge_text:  string | null
+  knowledge_links: KnowledgeLink[]
+  updated_at:      string
+}
+
+export interface GroupAgentKnowledgeDocument {
+  id:              string
+  group_id:        string
+  document_id:     string | null
+  file_path:       string | null
+  file_name:       string
+  file_type:       string | null
+  created_at:      string
+  document_title?: string | null
 }
 
 export interface AgentKnowledgeDocument {

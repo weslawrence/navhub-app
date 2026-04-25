@@ -105,7 +105,7 @@ export async function PATCH(
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   // Auto-sync to SharePoint if content changed and connection is active (fire-and-forget)
-  if (body.content_markdown !== undefined && body.content_markdown !== existing.content_markdown && activeGroupId) {
+  if ((body.content_markdown !== undefined && body.content_markdown !== existing.content_markdown || body.status === 'published') && activeGroupId) {
     void (async () => {
       try {
         const { data: conn } = await admin

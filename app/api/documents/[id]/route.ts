@@ -152,7 +152,11 @@ export async function PATCH(
           mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         }
 
-        const folderPath = mapping?.sharepoint_path ?? conn.folder_path ?? 'NavHub/Documents'
+        const rootPath   = conn.folder_path ?? 'NavHub'
+        const folderName = doc.folder_id
+          ? ((await admin.from('document_folders').select('name').eq('id', doc.folder_id).single()).data?.name ?? 'Unfiled')
+          : 'Unfiled'
+        const folderPath = mapping?.sharepoint_path ?? getNavHubFolderPath(rootPath, folderName)
         const folderId   = await ensureSharePointFolder(access_token, conn.drive_id, folderPath)
 
         const uploaded = await uploadFileToSharePoint(

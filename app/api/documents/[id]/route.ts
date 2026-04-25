@@ -177,7 +177,7 @@ export async function PATCH(
           sync_status:        'synced',
         }, { onConflict: 'document_id' })
       } catch (err) {
-        console.error('SharePoint auto-sync error:', err)
+        console.error('SharePoint auto-sync error:', err instanceof Error ? err.message : JSON.stringify(err))
         // Record the failure
         void admin.from('document_sharepoint_sync').upsert({
           document_id: params.id,

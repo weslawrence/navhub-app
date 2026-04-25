@@ -105,23 +105,26 @@ export async function PATCH(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Auto-sync to SharePoint if content changed OR doc was just published (fire-and-forget)
+  // Auto-sync to SharePoint if content changed OR doc was just published.
+  // Run INLINE (awaited) — Vercel serverless functions terminate as soon as
+  // NextResponse is returned, killing fire-and-forget `void (async ...)()` blocks
+  // before they complete. Adds ~500ms to the response but ensures sync actually runs.
+  let syncError: string | null = null
   if (
     ((body.content_markdown !== undefined && body.content_markdown !== existing.content_markdown) ||
      body.status === 'published') &&
     activeGroupId
   ) {
-    void (async () => {
-      try {
-        const { data: conn } = await admin
-          .from('sharepoint_connections')
-          .select('*')
-          .eq('group_id', activeGroupId)
-          .eq('is_active', true)
-          .maybeSingle()
+    console.log('[SharePoint] Starting sync for document:', data.id, 'status:', body.status)
+    try {
+      const { data: conn } = await admin
+        .from('sharepoint_connections')
+        .select('*')
+        .eq('group_id', activeGroupId)
+        .eq('is_active', true)
+        .maybeSingle()
 
-        if (!conn || !conn.drive_id) return
-
+      if (conn && conn.drive_id) {
         // Look up folder mapping — folder-specific first, then group default
         const docFolderId = data.folder_id as string | null
         const { data: mapping } = await admin
@@ -139,22 +142,20 @@ export async function PATCH(
 
         // Determine file content: uploaded file or generated DOCX
         let fileBuffer: Buffer
-        let filename: string
-        let mimeType: string
+        let filename:   string
+        let mimeType:   string
         const docData = data as Record<string, unknown>
 
         if (docData.file_path) {
-          // Fetch original uploaded file from Storage
           const { data: fileData } = await admin.storage.from('documents').download(docData.file_path as string)
           fileBuffer = Buffer.from(await fileData!.arrayBuffer())
-          filename = (docData.file_name as string) ?? 'document'
-          mimeType = (docData.file_type as string) ?? 'application/octet-stream'
+          filename   = (docData.file_name as string) ?? 'document'
+          mimeType   = (docData.file_type as string) ?? 'application/octet-stream'
         } else {
-          // Generate DOCX from content_markdown
           fileBuffer = await exportToDocx(data as Document, groupName)
           const safeName = (data.title as string).replace(/[^a-zA-Z0-9 \-_]/g, '').trim() || 'Document'
-          filename = `${safeName}.docx`
-          mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          filename   = `${safeName}.docx`
+          mimeType   = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         }
 
         const rootPath   = conn.folder_path ?? 'NavHub'
@@ -168,28 +169,34 @@ export async function PATCH(
           access_token, conn.drive_id, folderId, filename, fileBuffer, mimeType,
         )
 
-        void admin.from('document_sharepoint_sync').upsert({
+        await admin.from('document_sharepoint_sync').upsert({
           document_id:        params.id,
           connection_id:      conn.id,
           sharepoint_item_id: uploaded.id,
           sharepoint_url:     uploaded.webUrl,
           last_synced_at:     new Date().toISOString(),
           sync_status:        'synced',
+          error_message:      null,
         }, { onConflict: 'document_id' })
-      } catch (err) {
-        console.error('SharePoint auto-sync error:', err instanceof Error ? err.message : JSON.stringify(err))
-        // Record the failure
-        void admin.from('document_sharepoint_sync').upsert({
-          document_id: params.id,
-          sync_status: 'failed',
-          error_message: err instanceof Error ? err.message : 'Unknown error',
-          last_synced_at: new Date().toISOString(),
-        }, { onConflict: 'document_id' }).select()
+
+        console.log('[SharePoint] Sync complete for document:', data.id)
+      } else {
+        console.log('[SharePoint] Skipping sync — no active connection or drive_id for group')
       }
-    })()
+    } catch (err) {
+      syncError = err instanceof Error ? err.message : String(err)
+      console.error('[SharePoint] Sync error for document', data.id, ':', syncError)
+      // Record the failure — non-blocking ok here, the response carries syncError.
+      await admin.from('document_sharepoint_sync').upsert({
+        document_id:    params.id,
+        sync_status:    'failed',
+        error_message:  syncError,
+        last_synced_at: new Date().toISOString(),
+      }, { onConflict: 'document_id' })
+    }
   }
 
-  return NextResponse.json({ data })
+  return NextResponse.json({ data, syncError })
 }
 
 // ─── DELETE — delete document (admin only) ──────────────────────────────────

@@ -110,20 +110,21 @@ export async function POST(request: Request) {
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  // Fire-and-forget: auto-sync to SharePoint if a connection exists for this group.
-  // Only attempts when content_markdown is non-empty (skip empty placeholders).
+  // Auto-sync to SharePoint if a connection exists. Run INLINE (awaited) — Vercel
+  // serverless functions kill fire-and-forget blocks the moment NextResponse is
+  // returned. Only attempts when content_markdown is non-empty (skip empty placeholders).
+  let syncError: string | null = null
   if (data && (content_markdown as string)?.trim()) {
-    void (async () => {
-      try {
-        const { data: conn } = await admin
-          .from('sharepoint_connections')
-          .select('id, drive_id')
-          .eq('group_id', activeGroupId)
-          .eq('is_active', true)
-          .maybeSingle()
-        if (!conn || !conn.drive_id) return
+    console.log('[SharePoint] Starting sync on POST for document:', data.id)
+    try {
+      const { data: conn } = await admin
+        .from('sharepoint_connections')
+        .select('id, drive_id, folder_path')
+        .eq('group_id', activeGroupId)
+        .eq('is_active', true)
+        .maybeSingle()
 
-        // Lazy-import heavy dependencies so the main response is not delayed
+      if (conn && conn.drive_id) {
         const { getValidSharePointToken, ensureSharePointFolder, uploadFileToSharePoint, getNavHubFolderPath } =
           await import('@/lib/sharepoint')
         const { exportToDocx } = await import('@/lib/document-export')
@@ -135,7 +136,6 @@ export async function POST(request: Request) {
           .single()
         const groupName = group?.name ?? 'NavHub'
 
-        // Resolve folder name for auto-mirror
         let folderName: string | null = null
         if (data.folder_id) {
           const { data: f } = await admin
@@ -146,7 +146,6 @@ export async function POST(request: Request) {
           folderName = f?.name ?? null
         }
 
-        // Look up explicit mapping first
         const { data: mapping } = await admin
           .from('folder_sharepoint_mappings')
           .select('sharepoint_path')
@@ -156,13 +155,7 @@ export async function POST(request: Request) {
           .limit(1)
           .maybeSingle()
 
-        const { data: connFull } = await admin
-          .from('sharepoint_connections')
-          .select('folder_path')
-          .eq('id', conn.id)
-          .maybeSingle()
-
-        const rootPath = (connFull?.folder_path as string | null) ?? 'NavHub'
+        const rootPath   = (conn.folder_path as string | null) ?? 'NavHub'
         const targetPath = mapping?.sharepoint_path ?? getNavHubFolderPath(rootPath, folderName)
 
         const { access_token } = await getValidSharePointToken(conn.id)
@@ -176,23 +169,34 @@ export async function POST(request: Request) {
           folderId,
           `${safeName}.docx`,
           docxBuffer,
-          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         )
 
-        void admin.from('document_sharepoint_sync').upsert({
+        await admin.from('document_sharepoint_sync').upsert({
           document_id:        data.id,
           connection_id:      conn.id,
           sharepoint_item_id: uploaded.id,
           sharepoint_url:     uploaded.webUrl,
           last_synced_at:     new Date().toISOString(),
           sync_status:        'synced',
+          error_message:      null,
         }, { onConflict: 'document_id' })
-      } catch (err) {
-        // Non-fatal — document creation succeeded; sync can be retried later.
-        console.error('Auto-sync to SharePoint failed:', err)
+
+        console.log('[SharePoint] Sync complete on POST for document:', data.id)
+      } else {
+        console.log('[SharePoint] Skipping POST sync — no active connection or drive_id for group')
       }
-    })()
+    } catch (err) {
+      syncError = err instanceof Error ? err.message : String(err)
+      console.error('[SharePoint] POST sync error for document', data.id, ':', syncError)
+      await admin.from('document_sharepoint_sync').upsert({
+        document_id:    data.id,
+        sync_status:    'failed',
+        error_message:  syncError,
+        last_synced_at: new Date().toISOString(),
+      }, { onConflict: 'document_id' })
+    }
   }
 
-  return NextResponse.json({ data }, { status: 201 })
+  return NextResponse.json({ data, syncError }, { status: 201 })
 }

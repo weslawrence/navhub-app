@@ -83,6 +83,8 @@ export async function POST(request: Request) {
       email_recipients:   Array.isArray(body.email_recipients) && body.email_recipients.length > 0 ? body.email_recipients : null,
       slack_channel:      typeof body.slack_channel      === 'string' ? body.slack_channel.trim() || null : null,
       model_config_id:    typeof body.model_config_id    === 'string' ? body.model_config_id    : null,
+      ai_provider:        typeof body.ai_provider        === 'string' ? body.ai_provider        : 'anthropic',
+      ai_model:           typeof body.ai_model           === 'string' ? body.ai_model           : 'claude-haiku-4-5-20251001',
       created_by:         session.user.id,
     })
     .select('*')

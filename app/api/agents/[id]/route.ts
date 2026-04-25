@@ -73,6 +73,7 @@ export async function PATCH(
   const textFields = [
     'name', 'description', 'avatar_color', 'avatar_preset', 'avatar_url',
     'model', 'model_provider', 'model_name', 'model_api_key', 'model_config_id',
+    'ai_provider', 'ai_model',
     'persona_preset', 'persona', 'instructions',
     'email_address', 'email_display_name', 'slack_channel',
     'visibility', 'knowledge_text',

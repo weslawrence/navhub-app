@@ -80,7 +80,7 @@ export async function POST(
   }
 
   try {
-    const { getValidSharePointToken, ensureSharePointFolder, uploadFileToSharePoint } = await import('@/lib/sharepoint')
+    const { getValidSharePointToken, ensureSharePointFolder, uploadFileToSharePoint, getNavHubFolderPath } = await import('@/lib/sharepoint')
 
     // Look up folder mapping
     const { data: mapping } = await admin
@@ -113,7 +113,11 @@ export async function POST(
       mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
     }
 
-    const folderPath = mapping?.sharepoint_path ?? conn.folder_path ?? 'NavHub/Documents'
+    const rootPath   = (conn.folder_path as string | null) ?? 'NavHub'
+    const folderName = doc.folder_id
+      ? ((await admin.from('document_folders').select('name').eq('id', doc.folder_id).single()).data?.name ?? 'Unfiled')
+      : 'Unfiled'
+    const folderPath = mapping?.sharepoint_path ?? getNavHubFolderPath(rootPath, folderName)
     const folderId = await ensureSharePointFolder(access_token, conn.drive_id, folderPath)
 
     const uploaded = await uploadFileToSharePoint(

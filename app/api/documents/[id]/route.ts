@@ -6,6 +6,7 @@ import {
   getValidSharePointToken,
   ensureSharePointFolder,
   uploadFileToSharePoint,
+  getNavHubFolderPath,
 } from '@/lib/sharepoint'
 import { exportToDocx } from '@/lib/document-export'
 import type { Document } from '@/lib/types'
@@ -153,8 +154,8 @@ export async function PATCH(
         }
 
         const rootPath   = conn.folder_path ?? 'NavHub'
-        const folderName = doc.folder_id
-          ? ((await admin.from('document_folders').select('name').eq('id', doc.folder_id).single()).data?.name ?? 'Unfiled')
+        const folderName = data.folder_id
+          ? ((await admin.from('document_folders').select('name').eq('id', data.folder_id).single()).data?.name ?? 'Unfiled')
           : 'Unfiled'
         const folderPath = mapping?.sharepoint_path ?? getNavHubFolderPath(rootPath, folderName)
         const folderId   = await ensureSharePointFolder(access_token, conn.drive_id, folderPath)

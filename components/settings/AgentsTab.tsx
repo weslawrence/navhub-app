@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   Bot, CheckCircle2, Globe, Plus, Pencil, Trash2, Loader2, X, Play, Save, AlertTriangle,
   Cpu, Star, Eye, EyeOff, BookOpen, FileText, Link2, Upload,
+  ExternalLink, HelpCircle, KeyRound,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -571,6 +572,372 @@ function ModelConfigModal({
   )
 }
 
+// ─── Provider Key Help Map ───────────────────────────────────────────────────
+
+interface ProviderKeyHelp { label: string; url: string; instructions: string }
+
+const PROVIDER_KEY_HELP: Record<string, ProviderKeyHelp> = {
+  anthropic: {
+    label:        'Get Anthropic API key',
+    url:          'https://console.anthropic.com/settings/keys',
+    instructions: 'Sign in to Anthropic Console → Settings → API Keys → Create Key',
+  },
+  openai: {
+    label:        'Get OpenAI API key',
+    url:          'https://platform.openai.com/api-keys',
+    instructions: 'Sign in to OpenAI Platform → API Keys → Create new secret key',
+  },
+  google: {
+    label:        'Get Google AI API key',
+    url:          'https://aistudio.google.com/app/apikey',
+    instructions: 'Sign in to Google AI Studio → Get API key → Create API key',
+  },
+  mistral: {
+    label:        'Get Mistral API key',
+    url:          'https://console.mistral.ai/api-keys/',
+    instructions: 'Sign in to Mistral Console → API Keys → Create new key',
+  },
+  custom: {
+    label:        '',
+    url:          '',
+    instructions: 'Enter the base URL and API key for your custom OpenAI-compatible provider',
+  },
+}
+
+const PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic',
+  openai:    'OpenAI',
+  google:    'Google',
+  mistral:   'Mistral',
+  custom:    'Custom',
+}
+
+// ─── Provider Keys Panel + Modal ────────────────────────────────────────────
+
+interface ProviderConfigRow {
+  provider:       string
+  is_configured:  boolean
+  api_key_masked: string | null
+  base_url:       string | null
+  created_at:     string | null
+}
+
+function ProviderKeyModal({
+  provider, hasExisting, hasBaseUrl, onSave, onClose,
+}: {
+  provider:    string
+  hasExisting: boolean
+  hasBaseUrl?: string | null
+  onSave:      () => void
+  onClose:     () => void
+}) {
+  const [apiKey,     setApiKey]     = useState('')
+  const [baseUrl,    setBaseUrl]    = useState(hasBaseUrl ?? '')
+  const [showKey,    setShowKey]    = useState(false)
+  const [saving,     setSaving]     = useState(false)
+  const [testing,    setTesting]    = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; status: number; message: string } | null>(null)
+  const [error,      setError]      = useState<string | null>(null)
+
+  const help = PROVIDER_KEY_HELP[provider]
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    try {
+      if (!apiKey.trim() && !hasExisting) {
+        setError('API key is required')
+        setSaving(false)
+        return
+      }
+      const body: Record<string, unknown> = { provider }
+      if (apiKey.trim()) body.api_key = apiKey.trim()
+      if (provider === 'custom' && baseUrl.trim()) body.base_url = baseUrl.trim()
+      // PATCH semantics: when editing without changing key, no api_key supplied — but POST requires one.
+      // For edits without key change, just close (UI keeps the existing key).
+      if (!apiKey.trim() && hasExisting && (provider !== 'custom' || baseUrl === (hasBaseUrl ?? ''))) {
+        onClose()
+        return
+      }
+      const res = await fetch('/api/settings/provider-configs', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      })
+      const json = await res.json() as { error?: string }
+      if (!res.ok) { setError(json.error ?? 'Failed to save'); return }
+      onSave()
+    } finally { setSaving(false) }
+  }
+
+  async function handleTest() {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      const res  = await fetch(`/api/settings/provider-configs/${provider}/test`, { method: 'POST' })
+      const json = await res.json() as { ok: boolean; status: number; message: string }
+      setTestResult(json)
+    } finally { setTesting(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+      <div className="bg-background border rounded-xl shadow-2xl w-full max-w-md flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-base font-semibold">{hasExisting ? 'Edit' : 'Add'} {PROVIDER_LABELS[provider]} API Key</h2>
+          <button onClick={onClose}><X className="h-5 w-5 text-muted-foreground" /></button>
+        </div>
+
+        <div className="px-6 py-5 space-y-4">
+          {error && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+              {error}
+            </div>
+          )}
+
+          {provider === 'custom' && (
+            <div className="space-y-1.5">
+              <Label>Base URL</Label>
+              <Input
+                value={baseUrl}
+                onChange={e => setBaseUrl(e.target.value)}
+                placeholder="https://api.custom-provider.com/v1"
+                className="font-mono text-xs"
+              />
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Label>API Key</Label>
+              {help?.url && (
+                <a
+                  href={help.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={help.instructions}
+                  className="text-muted-foreground hover:text-primary"
+                >
+                  <HelpCircle className="h-3.5 w-3.5" />
+                </a>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <Input
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder={hasExisting ? 'Leave blank to keep existing' : 'sk-...'}
+                className="flex-1 font-mono text-xs"
+              />
+              <Button type="button" variant="outline" size="sm" className="h-9 w-9 p-0" onClick={() => setShowKey(s => !s)}>
+                {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          {help && (
+            <div className="rounded-md bg-muted/50 border p-3 space-y-1">
+              <p className="text-xs text-muted-foreground">{help.instructions}</p>
+              {help.url && (
+                <a
+                  href={help.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-primary flex items-center gap-1 hover:underline"
+                >
+                  <ExternalLink className="h-3 w-3" />
+                  {help.label}
+                </a>
+              )}
+            </div>
+          )}
+
+          {testResult && (
+            <div className={cn(
+              'rounded-md border px-3 py-2 text-xs',
+              testResult.ok
+                ? 'border-green-300 bg-green-50 text-green-700 dark:border-green-700 dark:bg-green-950/30 dark:text-green-400'
+                : 'border-red-300 bg-red-50 text-red-700 dark:border-red-700 dark:bg-red-950/30 dark:text-red-400',
+            )}>
+              {testResult.ok ? '✓ Connected' : `✗ ${testResult.message}`}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 px-6 py-4 border-t">
+          <Button
+            variant="outline" onClick={() => void handleTest()}
+            disabled={testing || (!hasExisting && !apiKey.trim())} className="gap-1.5"
+          >
+            {testing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            Test Connection
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={() => void handleSave()} disabled={saving} className="gap-1.5">
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProviderKeysPanel({ isAdmin }: { isAdmin: boolean }) {
+  const [loading,    setLoading]    = useState(true)
+  const [providers,  setProviders]  = useState<ProviderConfigRow[]>([])
+  const [editing,    setEditing]    = useState<string | null>(null)
+  const [removeConfirm, setRemoveConfirm] = useState<string | null>(null)
+  const [testingFor,    setTestingFor]    = useState<string | null>(null)
+  const [testResults,   setTestResults]   = useState<Record<string, { ok: boolean; message: string }>>({})
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res  = await fetch('/api/settings/provider-configs')
+      const json = await res.json() as { data?: ProviderConfigRow[] }
+      setProviders(json.data ?? [])
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  async function testProvider(provider: string) {
+    setTestingFor(provider)
+    try {
+      const res = await fetch(`/api/settings/provider-configs/${provider}/test`, { method: 'POST' })
+      const json = await res.json() as { ok: boolean; message: string }
+      setTestResults(prev => ({ ...prev, [provider]: { ok: json.ok, message: json.message } }))
+    } finally {
+      setTestingFor(null)
+    }
+  }
+
+  async function removeProvider(provider: string) {
+    await fetch(`/api/settings/provider-configs/${provider}`, { method: 'DELETE' })
+    setProviders(prev => prev.map(p => p.provider === provider ? { ...p, is_configured: false, api_key_masked: null } : p))
+    setRemoveConfirm(null)
+  }
+
+  if (loading) {
+    return (
+      <Card>
+        <CardContent className="py-8 flex justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </CardContent>
+      </Card>
+    )
+  }
+
+  const editingRow = editing ? providers.find(p => p.provider === editing) : null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-primary" /> Provider API Keys
+        </CardTitle>
+        <CardDescription>
+          Configure API keys for AI providers. Agents select which provider and model to use independently.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {providers.map(p => {
+          const result = testResults[p.provider]
+          return (
+            <div key={p.provider} className="rounded-md border p-3 bg-card">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm font-medium text-foreground">{PROVIDER_LABELS[p.provider]}</span>
+                    {p.is_configured ? (
+                      <Badge variant="secondary" className="text-[10px] px-1.5 gap-1">
+                        <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                        Configured
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] px-1.5 text-muted-foreground">
+                        Not configured
+                      </Badge>
+                    )}
+                  </div>
+                  {p.is_configured && (
+                    <>
+                      <p className="text-xs text-muted-foreground font-mono mt-0.5">API key: ••••••••••••••••</p>
+                      {p.base_url && (
+                        <p className="text-xs text-muted-foreground font-mono mt-0.5">Base URL: {p.base_url}</p>
+                      )}
+                    </>
+                  )}
+                  {result && (
+                    <p className={cn(
+                      'text-xs mt-1',
+                      result.ok ? 'text-green-600 dark:text-green-400' : 'text-destructive',
+                    )}>
+                      {result.ok ? '✓ Connected' : `✗ ${result.message}`}
+                    </p>
+                  )}
+                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-1 shrink-0">
+                    {!p.is_configured ? (
+                      <Button size="sm" className="h-8 text-xs" onClick={() => setEditing(p.provider)}>
+                        <Plus className="h-3.5 w-3.5 mr-1" /> Add Key
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          size="sm" variant="ghost" className="h-8 text-xs px-2"
+                          onClick={() => void testProvider(p.provider)}
+                          disabled={testingFor === p.provider}
+                        >
+                          {testingFor === p.provider ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Test'}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => setEditing(p.provider)} title="Edit">
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        {removeConfirm === p.provider ? (
+                          <>
+                            <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={() => void removeProvider(p.provider)}>Confirm</Button>
+                            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setRemoveConfirm(null)}>Cancel</Button>
+                          </>
+                        ) : (
+                          <Button
+                            size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive"
+                            onClick={() => setRemoveConfirm(p.provider)}
+                            title="Remove"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })}
+      </CardContent>
+
+      {editingRow && (
+        <ProviderKeyModal
+          provider={editingRow.provider}
+          hasExisting={editingRow.is_configured}
+          hasBaseUrl={editingRow.base_url}
+          onSave={() => { setEditing(null); void load() }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </Card>
+  )
+}
+
 // ─── Universal Knowledge Panel ────────────────────────────────────────────────
 
 function UniversalKnowledgePanel({ isAdmin }: { isAdmin: boolean }) {
@@ -966,16 +1333,21 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
   return (
     <div className="space-y-6">
 
-      {/* ── Section 0: Model Configurations ────────────────────────────── */}
+      {/* ── Section 0: Provider API Keys (replaces Model Configurations) ── */}
+      <ProviderKeysPanel isAdmin={isAdmin} />
+
+      {/* ── Legacy: group_model_configs (hidden when no rows exist) ─────── */}
+      {modelConfigs.length > 0 && (
       <Card>
         <CardHeader>
           <div className="flex items-start justify-between gap-3">
             <div>
               <CardTitle className="text-base flex items-center gap-2">
-                <Cpu className="h-4 w-4 text-primary" /> Model Configurations
+                <Cpu className="h-4 w-4 text-primary" /> Legacy Model Configurations
               </CardTitle>
               <CardDescription>
-                Configure AI models available to agents in this group. All agents must use a model configured here.
+                Older per-model entries. New agents now use Provider API Keys above + per-agent model selection.
+                You can safely delete these once all agents are migrated.
               </CardDescription>
             </div>
             {isAdmin && (
@@ -1053,6 +1425,7 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* ── Section 1: Default Tools (info only) ───────────────────────── */}
       <Card>

@@ -76,13 +76,20 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [emailDisplayName, setEmailDisplayName] = useState('')
   const [emailRecipients,  setEmailRecipients]  = useState('')  // comma-separated
   const [slackChannel,     setSlackChannel]     = useState('')
-  // Legacy model fields preserved on PATCH payload for backwards compatibility,
-  // but the form now selects a model_config_id from group_model_configs.
+  // Legacy model fields preserved on PATCH payload for backwards compatibility.
+  // The form now drives provider/model via ai_provider + ai_model directly,
+  // sourced from group_provider_configs (per-provider API keys in Settings).
   const [modelProvider,    setModelProvider]    = useState('anthropic')
   const [modelName,        setModelName]        = useState('claude-haiku-4-5-20251001')
   const [modelApiKey]                           = useState('')
   const [modelConfigId,    setModelConfigId]    = useState<string | null>(null)
-  const [modelConfigs,     setModelConfigs]     = useState<GroupModelConfig[]>([])
+
+  // Provider/model selection (migration 043)
+  const [aiProvider,        setAiProvider]        = useState<string>('anthropic')
+  const [aiModel,           setAiModel]           = useState<string>('claude-haiku-4-5-20251001')
+  const [configuredProviders, setConfiguredProviders] = useState<string[]>([])
+  const [availableModels,   setAvailableModels]   = useState<{ id: string; label: string }[]>([])
+  const [loadingModels,     setLoadingModels]     = useState(false)
   const avatarInputRef  = useRef<HTMLInputElement>(null)
   const colorSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -146,21 +153,52 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       })
       .catch(() => {})
 
-    // Load group model configs for the model selector
+    // Legacy: pre-select group default model_config_id if no other selection.
     fetch('/api/settings/model-configs')
       .then(r => r.json())
       .then((j: { data?: GroupModelConfig[] }) => {
         const list = j.data ?? []
-        setModelConfigs(list)
-        // If creating, pre-select group default
         if (mode === 'create' && !modelConfigId) {
           const def = list.find(m => m.is_default)
           if (def) setModelConfigId(def.id)
         }
       })
       .catch(() => {})
+
+    // Load configured providers (group_provider_configs)
+    fetch('/api/settings/provider-configs')
+      .then(r => r.json())
+      .then((j: { data?: Array<{ provider: string; is_configured: boolean }> }) => {
+        const configured = (j.data ?? []).filter(p => p.is_configured).map(p => p.provider)
+        setConfiguredProviders(configured)
+      })
+      .catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Load models when provider changes
+  useEffect(() => {
+    if (!aiProvider) return
+    if (!configuredProviders.includes(aiProvider)) {
+      setAvailableModels([])
+      return
+    }
+    setLoadingModels(true)
+    setAvailableModels([])
+    fetch(`/api/settings/provider-configs/${aiProvider}/models`)
+      .then(r => r.json())
+      .then((j: { data?: { id: string; label: string }[] }) => {
+        const list = j.data ?? []
+        setAvailableModels(list)
+        // If current model isn't in the list, reset to first available
+        if (list.length > 0 && !list.find(m => m.id === aiModel)) {
+          setAiModel(list[0].id)
+        }
+      })
+      .catch(() => setAvailableModels([]))
+      .finally(() => setLoadingModels(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aiProvider, configuredProviders])
 
   const loadAgent = useCallback(async () => {
     if (!agentId) return
@@ -182,6 +220,9 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       setModelProvider(a.model_provider ?? 'anthropic')
       setModelName(a.model_name ?? a.model ?? 'claude-haiku-4-5-20251001')
       setModelConfigId((a as Agent & { model_config_id?: string | null }).model_config_id ?? null)
+      const aWithAi = a as Agent & { ai_provider?: string | null; ai_model?: string | null }
+      setAiProvider(aWithAi.ai_provider ?? 'anthropic')
+      setAiModel(aWithAi.ai_model ?? aWithAi.model_name ?? a.model ?? 'claude-haiku-4-5-20251001')
       setPersonaPreset(a.persona_preset)
       setPersona(a.persona ?? '')
       setInstructions(a.instructions ?? '')
@@ -449,6 +490,8 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         model_name:         modelName,
         model_api_key:      modelApiKey.trim() || null,
         model_config_id:    modelConfigId,
+        ai_provider:        aiProvider,
+        ai_model:           aiModel,
         persona_preset:     personaPreset,
         persona:            persona.trim() || null,
         instructions:       instructions.trim() || null,
@@ -697,42 +740,78 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Model</CardTitle>
+              <CardTitle className="text-base">AI Model</CardTitle>
               <CardDescription>
-                Select an AI model from your group&apos;s configurations.{' '}
-                <Link href="/settings?tab=agents" className="text-primary hover:underline">Manage models →</Link>
+                Select a provider and model.{' '}
+                <Link href="/settings?tab=agents" className="text-primary hover:underline">Manage provider keys in Settings →</Link>
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              {modelConfigs.length === 0 ? (
+            <CardContent className="space-y-4">
+              {configuredProviders.length === 0 ? (
                 <div className="rounded-md border border-dashed bg-muted/30 px-4 py-5 text-sm text-muted-foreground space-y-2">
-                  <p>No models configured for this group yet.</p>
+                  <p>No providers configured for this group yet.</p>
                   <Button variant="outline" size="sm" asChild>
-                    <Link href="/settings?tab=agents">Configure a model in Settings →</Link>
+                    <Link href="/settings?tab=agents">Configure a provider in Settings →</Link>
                   </Button>
                 </div>
               ) : (
                 <>
-                  <select
-                    value={modelConfigId ?? ''}
-                    onChange={e => setModelConfigId(e.target.value || null)}
-                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
-                  >
-                    {modelConfigs.map(m => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}{m.is_default ? ' (default)' : ''} — {m.provider}/{m.model_name}
-                      </option>
-                    ))}
-                  </select>
-                  {modelConfigId && (() => {
-                    const sel = modelConfigs.find(m => m.id === modelConfigId)
-                    return sel ? (
-                      <p className="text-xs text-muted-foreground">
-                        Provider: <span className="font-medium capitalize">{sel.provider}</span> ·{' '}
-                        Model: <code className="font-mono">{sel.model_name}</code>
-                      </p>
-                    ) : null
-                  })()}
+                  <div className="space-y-1.5">
+                    <Label>Provider</Label>
+                    <select
+                      value={aiProvider}
+                      onChange={e => setAiProvider(e.target.value)}
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm capitalize"
+                    >
+                      {configuredProviders.map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Model</Label>
+                    {loadingModels ? (
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" /> Loading models…
+                      </div>
+                    ) : availableModels.length > 0 ? (
+                      <>
+                        <select
+                          value={availableModels.find(m => m.id === aiModel) ? aiModel : ''}
+                          onChange={e => setAiModel(e.target.value)}
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        >
+                          {availableModels.map(m => (
+                            <option key={m.id} value={m.id}>{m.label}</option>
+                          ))}
+                          <option value="">— Custom (enter below) —</option>
+                        </select>
+                        {!availableModels.find(m => m.id === aiModel) && (
+                          <Input
+                            value={aiModel}
+                            onChange={e => setAiModel(e.target.value)}
+                            placeholder="custom-model-name"
+                            className="font-mono text-xs"
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <div className="space-y-2">
+                        <p className="text-xs text-muted-foreground">
+                          {configuredProviders.includes(aiProvider)
+                            ? 'Could not load models — enter a model name manually.'
+                            : 'Select a configured provider first.'}
+                        </p>
+                        <Input
+                          value={aiModel}
+                          onChange={e => setAiModel(e.target.value)}
+                          placeholder="Enter model name manually"
+                          className="font-mono text-xs"
+                        />
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </CardContent>

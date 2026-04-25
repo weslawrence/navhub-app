@@ -1216,13 +1216,37 @@ export async function executeAgentRun(
     // Load credentials
     const credentials = await loadCredentials(agent.id)
 
-    // ── Resolve model config (migration 042) ─────────────────────────────────
-    // Priority: agent.model_config_id → group default → legacy env-var fallback.
+    // ── Resolve provider + model + API key ───────────────────────────────────
+    // Priority order:
+    //   1. Agent's ai_provider + ai_model (migration 043) + matching
+    //      group_provider_configs entry for the API key.
+    //   2. Legacy: agent.model_config_id → group_model_configs (migration 042).
+    //   3. Legacy: group default in group_model_configs.
+    //   4. Final fallback: env var ANTHROPIC_API_KEY (handled inside callClaude).
     let cfgProvider = 'anthropic'
     let cfgModelName = agent.model as string
     let cfgApiKey: string | undefined
 
-    {
+    const aiProvider = (agent as Agent & { ai_provider?: string | null }).ai_provider ?? null
+    const aiModel    = (agent as Agent & { ai_model?: string | null }).ai_model       ?? null
+
+    if (aiProvider) {
+      const { data: provRow } = await admin
+        .from('group_provider_configs')
+        .select('api_key_encrypted, base_url')
+        .eq('group_id', groupId)
+        .eq('provider', aiProvider)
+        .eq('is_active', true)
+        .maybeSingle()
+      cfgProvider  = aiProvider
+      cfgModelName = aiModel ?? cfgModelName
+      if (provRow) {
+        try { cfgApiKey = decrypt(provRow.api_key_encrypted as string) } catch { /* keep undefined */ }
+      }
+    }
+
+    if (!cfgApiKey) {
+      // Legacy fallback: group_model_configs
       type CfgRow = { provider: string; model_name: string; api_key_encrypted: string }
       const tryConfigId = (agent as Agent & { model_config_id?: string | null }).model_config_id ?? null
       let cfgRow: CfgRow | null = null
@@ -1246,8 +1270,11 @@ export async function executeAgentRun(
         cfgRow = (data as unknown as CfgRow | null) ?? null
       }
       if (cfgRow) {
-        cfgProvider  = cfgRow.provider
-        cfgModelName = cfgRow.model_name
+        // Only adopt the legacy provider/model if no ai_provider was set on the agent
+        if (!aiProvider) {
+          cfgProvider  = cfgRow.provider
+          cfgModelName = cfgRow.model_name
+        }
         try { cfgApiKey = decrypt(cfgRow.api_key_encrypted) } catch { /* keep undefined */ }
       }
     }

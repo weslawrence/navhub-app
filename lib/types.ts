@@ -346,7 +346,9 @@ export interface Agent {
   model_provider:        string | null
   model_name:            string | null
   model_api_key:         string | null
-  model_config_id:       string | null   // FK → group_model_configs (migration 042)
+  model_config_id:       string | null   // FK → group_model_configs (migration 042, legacy)
+  ai_provider:           string | null   // 'anthropic'|'openai'|'google'|'mistral'|'custom' (migration 043)
+  ai_model:              string | null   // model name string (migration 043)
   persona_preset:        PersonaPreset
   persona:               string | null
   instructions:          string | null

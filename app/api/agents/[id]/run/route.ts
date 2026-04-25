@@ -57,6 +57,10 @@ export async function POST(
     insertData.notify_email = body.notify_email
   if (body.notify_slack_channel === null || typeof body.notify_slack_channel === 'string')
     insertData.notify_slack_channel = body.notify_slack_channel
+  if (Array.isArray(body.linked_document_ids)) {
+    const ids = (body.linked_document_ids as unknown[]).filter((x): x is string => typeof x === 'string')
+    insertData.linked_document_ids = ids
+  }
 
   const { data: run, error } = await admin
     .from('agent_runs')

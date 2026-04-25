@@ -475,6 +475,46 @@ async function buildSystemPrompt(
   // ── Knowledge base injection ───────────────────────────────────────────
   const knowledgeParts: string[] = []
 
+  // Universal (group-level) knowledge — loaded first, lower priority than
+  // agent-specific knowledge. Migration 042.
+  try {
+    const { data: univ } = await admin
+      .from('group_agent_knowledge')
+      .select('knowledge_text, knowledge_links')
+      .eq('group_id', groupId)
+      .maybeSingle()
+
+    const univDocsP = admin
+      .from('group_agent_knowledge_documents')
+      .select('file_name, document_id, documents(title, content_markdown)')
+      .eq('group_id', groupId)
+    const { data: univDocs } = await univDocsP
+
+    const univText  = univ?.knowledge_text as string | null | undefined
+    const univLinks = (univ?.knowledge_links ?? []) as Array<{ url: string; label?: string }>
+
+    if (univText || univLinks.length > 0 || (univDocs && univDocs.length > 0)) {
+      const sections: string[] = ['\n## Universal Company Knowledge',
+        'The following is foundational context about the organisation.',
+        'Use this as background — agent-specific knowledge and run instructions take precedence.']
+      if (univText) sections.push(`\n${univText}`)
+      if (univLinks.length > 0) {
+        sections.push('\nReference Links:')
+        sections.push(univLinks.map(l => `- ${l.label ?? l.url}: ${l.url}`).join('\n'))
+      }
+      if (univDocs && univDocs.length > 0) {
+        sections.push('\nReference Documents:')
+        const lines = (univDocs as Array<{ file_name: string; document_id: string | null; documents: { title?: string; content_markdown?: string } | null }>).map(d => {
+          const md = d.documents?.content_markdown
+          const title = d.documents?.title ?? d.file_name
+          return `### ${title}\n${md ? md.slice(0, 800) + (md.length > 800 ? '…' : '') : '(no extracted content)'}`
+        })
+        sections.push(lines.join('\n\n'))
+      }
+      knowledgeParts.push(sections.join('\n'))
+    }
+  } catch { /* silently degrade */ }
+
   if (agent.knowledge_text) {
     knowledgeParts.push(`\nBackground Knowledge:\n${agent.knowledge_text}`)
   }
@@ -1176,7 +1216,67 @@ export async function executeAgentRun(
     // Load credentials
     const credentials = await loadCredentials(agent.id)
 
-    // Fetch attachments for this run
+    // ── Resolve model config (migration 042) ─────────────────────────────────
+    // Priority: agent.model_config_id → group default → legacy env-var fallback.
+    let cfgProvider = 'anthropic'
+    let cfgModelName = agent.model as string
+    let cfgApiKey: string | undefined
+
+    {
+      type CfgRow = { provider: string; model_name: string; api_key_encrypted: string }
+      const tryConfigId = (agent as Agent & { model_config_id?: string | null }).model_config_id ?? null
+      let cfgRow: CfgRow | null = null
+      if (tryConfigId) {
+        const { data } = await admin
+          .from('group_model_configs')
+          .select('provider, model_name, api_key_encrypted')
+          .eq('id', tryConfigId)
+          .eq('is_active', true)
+          .maybeSingle()
+        cfgRow = (data as unknown as CfgRow | null) ?? null
+      }
+      if (!cfgRow) {
+        const { data } = await admin
+          .from('group_model_configs')
+          .select('provider, model_name, api_key_encrypted')
+          .eq('group_id', groupId)
+          .eq('is_default', true)
+          .eq('is_active', true)
+          .maybeSingle()
+        cfgRow = (data as unknown as CfgRow | null) ?? null
+      }
+      if (cfgRow) {
+        cfgProvider  = cfgRow.provider
+        cfgModelName = cfgRow.model_name
+        try { cfgApiKey = decrypt(cfgRow.api_key_encrypted) } catch { /* keep undefined */ }
+      }
+    }
+
+    // ── Materialise linked documents into agent_run_attachments ──────────────
+    // Pulled in once per run from the run.linked_document_ids column.
+    const { data: runRow } = await admin
+      .from('agent_runs')
+      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type')
+      .eq('id', runId)
+      .single()
+    const linkedIds = (runRow?.linked_document_ids ?? []) as string[]
+    if (linkedIds.length > 0) {
+      const { data: docs } = await admin
+        .from('documents')
+        .select('id, title, content_markdown, file_path, file_name, file_type')
+        .in('id', linkedIds)
+      for (const d of (docs ?? []) as Array<{ id: string; title: string; content_markdown: string | null; file_path: string | null; file_name: string | null; file_type: string | null }>) {
+        await admin.from('agent_run_attachments').insert({
+          run_id:       runId,
+          file_name:    d.file_name ?? d.title,
+          file_type:    d.file_type ?? 'text/markdown',
+          file_path:    d.file_path ?? '',
+          content_text: d.content_markdown ?? '',
+        })
+      }
+    }
+
+    // Fetch attachments for this run (includes linked docs just inserted above)
     const { data: runAttachments } = await admin
       .from('agent_run_attachments')
       .select('file_name, file_type')
@@ -1420,16 +1520,29 @@ Important:
 
       let result: ModelResponse
 
-      if (agent.model === 'gpt-4o') {
-        result = await callGPT4o(messages, toolDefs, systemPrompt, credentials, (chunk) => {
+      // Provider routing: prefer model config provider; fall back to legacy
+      // gpt-4o sniff against agent.model.
+      const useOpenAI = cfgProvider === 'openai' || agent.model === 'gpt-4o'
+
+      // For Anthropic calls, pass cfgApiKey through credentials so callClaude
+      // picks it up via its existing BYO-key branch.
+      const claudeCreds: Record<string, string> = { ...credentials }
+      if (cfgApiKey && cfgProvider === 'anthropic') claudeCreds['anthropic_api_key'] = cfgApiKey
+      const openAICreds: Record<string, string> = { ...credentials }
+      if (cfgApiKey && cfgProvider === 'openai')    openAICreds['OPENAI_API_KEY']    = cfgApiKey
+
+      if (useOpenAI) {
+        result = await callGPT4o(messages, toolDefs, systemPrompt, openAICreds, (chunk) => {
           onChunk({ type: 'text', content: chunk })
           fullOutput += chunk
         })
       } else {
-        result = await callClaude(agent.model, messages, toolDefs, systemPrompt, (chunk) => {
+        // Use the resolved model name from config when present; fall back to agent.model
+        const modelToUse = cfgProvider === 'anthropic' && cfgModelName ? cfgModelName : agent.model
+        result = await callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
           onChunk({ type: 'text', content: chunk })
           fullOutput += chunk
-        }, credentials)
+        }, claudeCreds)
       }
 
       totalTokens += result.tokens

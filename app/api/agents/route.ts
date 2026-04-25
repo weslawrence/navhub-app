@@ -82,6 +82,7 @@ export async function POST(request: Request) {
       email_display_name: typeof body.email_display_name === 'string' ? body.email_display_name.trim() || null : null,
       email_recipients:   Array.isArray(body.email_recipients) && body.email_recipients.length > 0 ? body.email_recipients : null,
       slack_channel:      typeof body.slack_channel      === 'string' ? body.slack_channel.trim() || null : null,
+      model_config_id:    typeof body.model_config_id    === 'string' ? body.model_config_id    : null,
       created_by:         session.user.id,
     })
     .select('*')

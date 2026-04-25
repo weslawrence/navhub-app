@@ -18,6 +18,7 @@ import {
   PERSONA_PRESETS,
   type Agent, type AgentModel, type AgentTool, type PersonaPreset,
   type AgentCredential, type Company, type KnowledgeLink, type AgentKnowledgeDocument,
+  type GroupModelConfig,
 } from '@/lib/types'
 import { AVATAR_PRESETS } from '@/lib/agent-presets'
 
@@ -75,10 +76,13 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [emailDisplayName, setEmailDisplayName] = useState('')
   const [emailRecipients,  setEmailRecipients]  = useState('')  // comma-separated
   const [slackChannel,     setSlackChannel]     = useState('')
+  // Legacy model fields preserved on PATCH payload for backwards compatibility,
+  // but the form now selects a model_config_id from group_model_configs.
   const [modelProvider,    setModelProvider]    = useState('anthropic')
   const [modelName,        setModelName]        = useState('claude-haiku-4-5-20251001')
-  const [modelApiKey,      setModelApiKey]      = useState('')
-  const [showModelKey,     setShowModelKey]     = useState(false)
+  const [modelApiKey]                           = useState('')
+  const [modelConfigId,    setModelConfigId]    = useState<string | null>(null)
+  const [modelConfigs,     setModelConfigs]     = useState<GroupModelConfig[]>([])
   const avatarInputRef  = useRef<HTMLInputElement>(null)
   const colorSaveTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -141,6 +145,21 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         else        setSlackStatus({ connected: false })
       })
       .catch(() => {})
+
+    // Load group model configs for the model selector
+    fetch('/api/settings/model-configs')
+      .then(r => r.json())
+      .then((j: { data?: GroupModelConfig[] }) => {
+        const list = j.data ?? []
+        setModelConfigs(list)
+        // If creating, pre-select group default
+        if (mode === 'create' && !modelConfigId) {
+          const def = list.find(m => m.is_default)
+          if (def) setModelConfigId(def.id)
+        }
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const loadAgent = useCallback(async () => {
@@ -162,6 +181,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
       setModel(a.model)
       setModelProvider(a.model_provider ?? 'anthropic')
       setModelName(a.model_name ?? a.model ?? 'claude-haiku-4-5-20251001')
+      setModelConfigId((a as Agent & { model_config_id?: string | null }).model_config_id ?? null)
       setPersonaPreset(a.persona_preset)
       setPersona(a.persona ?? '')
       setInstructions(a.instructions ?? '')
@@ -428,6 +448,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
         model_provider:     modelProvider,
         model_name:         modelName,
         model_api_key:      modelApiKey.trim() || null,
+        model_config_id:    modelConfigId,
         persona_preset:     personaPreset,
         persona:            persona.trim() || null,
         instructions:       instructions.trim() || null,
@@ -676,72 +697,43 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Model Configuration</CardTitle>
-              <CardDescription>Choose the AI model that powers this agent</CardDescription>
+              <CardTitle className="text-base">Model</CardTitle>
+              <CardDescription>
+                Select an AI model from your group&apos;s configurations.{' '}
+                <Link href="/settings?tab=agents" className="text-primary hover:underline">Manage models →</Link>
+              </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Provider quick-select */}
-              <div className="flex flex-wrap gap-1.5">
-                {['anthropic', 'openai', 'google', 'mistral', 'custom'].map(p => (
-                  <button key={p} type="button"
-                    onClick={() => {
-                      setModelProvider(p)
-                      const presets: Record<string, string> = {
-                        anthropic: 'claude-haiku-4-5-20251001', openai: 'gpt-4o', google: 'gemini-1.5-pro', mistral: 'mistral-large-latest',
-                      }
-                      if (presets[p]) setModelName(presets[p])
-                    }}
-                    className={cn('px-3 py-1.5 rounded-md text-xs font-medium border transition-all capitalize',
-                      modelProvider === p ? 'border-primary bg-primary/10 text-primary' : 'border-border hover:border-primary/40')}>
-                    {p}
-                  </button>
-                ))}
-              </div>
-
-              {/* Model presets for selected provider */}
-              {modelProvider === 'anthropic' && (
-                <div className="flex flex-wrap gap-1.5">
-                  {[
-                    { label: 'Haiku (fast)', value: 'claude-haiku-4-5-20251001' },
-                    { label: 'Sonnet (smart)', value: 'claude-sonnet-4-6' },
-                    { label: 'Opus (best)', value: 'claude-opus-4-6' },
-                  ].map(m => (
-                    <button key={m.value} type="button" onClick={() => { setModelName(m.value); setModel(m.value as AgentModel) }}
-                      className={cn('px-2.5 py-1 rounded text-xs border', modelName === m.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40')}>
-                      {m.label}
-                    </button>
-                  ))}
+            <CardContent className="space-y-3">
+              {modelConfigs.length === 0 ? (
+                <div className="rounded-md border border-dashed bg-muted/30 px-4 py-5 text-sm text-muted-foreground space-y-2">
+                  <p>No models configured for this group yet.</p>
+                  <Button variant="outline" size="sm" asChild>
+                    <Link href="/settings?tab=agents">Configure a model in Settings →</Link>
+                  </Button>
                 </div>
-              )}
-              {modelProvider === 'openai' && (
-                <div className="flex flex-wrap gap-1.5">
-                  {[{ label: 'GPT-4o', value: 'gpt-4o' }, { label: 'GPT-4o mini', value: 'gpt-4o-mini' }].map(m => (
-                    <button key={m.value} type="button" onClick={() => setModelName(m.value)}
-                      className={cn('px-2.5 py-1 rounded text-xs border', modelName === m.value ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40')}>
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {/* Model name input */}
-              <div className="space-y-1.5">
-                <Label className="text-xs">Model name</Label>
-                <Input value={modelName} onChange={e => setModelName(e.target.value)} placeholder="e.g. claude-sonnet-4-6" className="text-sm font-mono" />
-              </div>
-
-              {/* API key — only for non-Anthropic */}
-              {modelProvider !== 'anthropic' && (
-                <div className="space-y-1.5">
-                  <Label className="text-xs">API Key <span className="text-muted-foreground font-normal">(leave blank to use NavHub default)</span></Label>
-                  <div className="flex gap-2">
-                    <Input type={showModelKey ? 'text' : 'password'} value={modelApiKey} onChange={e => setModelApiKey(e.target.value)}
-                      placeholder="sk-..." className="text-sm font-mono flex-1" />
-                    <Button type="button" variant="outline" size="sm" onClick={() => setShowModelKey(v => !v)}>
-                      {showModelKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-                    </Button>
-                  </div>
-                </div>
+              ) : (
+                <>
+                  <select
+                    value={modelConfigId ?? ''}
+                    onChange={e => setModelConfigId(e.target.value || null)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    {modelConfigs.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}{m.is_default ? ' (default)' : ''} — {m.provider}/{m.model_name}
+                      </option>
+                    ))}
+                  </select>
+                  {modelConfigId && (() => {
+                    const sel = modelConfigs.find(m => m.id === modelConfigId)
+                    return sel ? (
+                      <p className="text-xs text-muted-foreground">
+                        Provider: <span className="font-medium capitalize">{sel.provider}</span> ·{' '}
+                        Model: <code className="font-mono">{sel.model_name}</code>
+                      </p>
+                    ) : null
+                  })()}
+                </>
               )}
             </CardContent>
           </Card>

@@ -3,13 +3,14 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Play, Loader2, CalendarClock, Check } from 'lucide-react'
+import { ArrowLeft, Play, Loader2, CalendarClock, Check, FileText, Upload, X, Paperclip } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Label }  from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn }     from '@/lib/utils'
 import type { Agent, Company } from '@/lib/types'
+import DocumentPickerModal, { type PickableDocument } from '@/components/agents/DocumentPickerModal'
 import { getNextRunTime, formatNextRun } from '@/lib/scheduling'
 import type { ScheduleConfig } from '@/lib/scheduling'
 import { AVATAR_PRESET_MAP } from '@/lib/agent-presets'
@@ -82,6 +83,16 @@ export default function AgentRunPage() {
   const [notifySlackOn, setNotifySlackOn] = useState(false)
   const [notifyEmail,   setNotifyEmail]   = useState('')
   const [notifySlack,   setNotifySlack]   = useState('')
+
+  // Per-run attachments
+  interface AttachmentChip {
+    type:  'linked' | 'uploaded'
+    label: string
+    docId?: string   // when type === 'linked'
+    file?:  File     // when type === 'uploaded'
+  }
+  const [attachments,    setAttachments]   = useState<AttachmentChip[]>([])
+  const [pickerOpen,     setPickerOpen]    = useState(false)
 
   // Recurring
   const [isRecurring, setIsRecurring] = useState(searchParams.get('recurring') === 'true')
@@ -177,6 +188,9 @@ export default function AgentRunPage() {
         } catch { /* non-fatal */ }
       }
 
+      const linkedIds = attachments.filter(a => a.type === 'linked').map(a => a.docId!).filter(Boolean)
+      const uploads   = attachments.filter(a => a.type === 'uploaded' && a.file).map(a => a.file!)
+
       const res = await fetch(`/api/agents/${agentId}/run`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -191,11 +205,24 @@ export default function AgentRunPage() {
           output_name_override: outputName.trim() || undefined,
           notify_email:         notifyEmailOn && notifyEmail.trim() ? notifyEmail.trim() : null,
           notify_slack_channel: notifySlackOn && notifySlack.trim() ? notifySlack.trim() : null,
+          linked_document_ids:  linkedIds.length > 0 ? linkedIds : undefined,
         }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to start run')
-      router.push(`/agents/runs/${json.data.run_id}`)
+      const runId = json.data.run_id as string
+
+      // After run is created, upload any selected files as run attachments.
+      // Failures here don't block the run — the user can re-attach in the run view.
+      for (const f of uploads) {
+        try {
+          const fd = new FormData()
+          fd.append('file', f)
+          await fetch(`/api/agents/runs/${runId}/attachments`, { method: 'POST', body: fd })
+        } catch { /* non-fatal */ }
+      }
+
+      router.push(`/agents/runs/${runId}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start run')
     } finally {
@@ -258,6 +285,84 @@ export default function AgentRunPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Attachments */}
+      <Card>
+        <CardContent className="pt-5 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <h2 className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+              <Paperclip className="h-4 w-4 text-muted-foreground" />
+              Attachments <span className="text-muted-foreground font-normal">(optional)</span>
+            </h2>
+            <div className="flex gap-2">
+              <Button
+                size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+                onClick={() => setPickerOpen(true)}
+              >
+                <FileText className="h-3.5 w-3.5" /> Link from Documents
+              </Button>
+              <Button
+                size="sm" variant="outline" className="h-7 gap-1.5 text-xs"
+                onClick={() => {
+                  const i = document.createElement('input')
+                  i.type     = 'file'
+                  i.multiple = true
+                  i.accept   = '.pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.png,.jpg,.jpeg'
+                  i.onchange = () => {
+                    const files = i.files ? Array.from(i.files) : []
+                    setAttachments(prev => [
+                      ...prev,
+                      ...files.map(f => ({ type: 'uploaded' as const, label: f.name, file: f })),
+                    ])
+                  }
+                  i.click()
+                }}
+              >
+                <Upload className="h-3.5 w-3.5" /> Upload File
+              </Button>
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            Provide documents or files for this specific run. These appear in the agent&apos;s context and
+            can be read with the <code className="font-mono">read_attachment</code> tool.
+          </p>
+
+          {attachments.length > 0 && (
+            <div className="divide-y rounded-md border overflow-hidden">
+              {attachments.map((a, idx) => (
+                <div key={idx} className="flex items-center gap-3 px-3 py-2 bg-background">
+                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <span className="flex-1 min-w-0 text-sm truncate">{a.label}</span>
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground shrink-0">
+                    {a.type === 'linked' ? 'Document' : 'Upload'}
+                  </span>
+                  <button
+                    onClick={() => setAttachments(prev => prev.filter((_, i) => i !== idx))}
+                    className="text-muted-foreground hover:text-destructive shrink-0"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {pickerOpen && (
+        <DocumentPickerModal
+          onSelect={(picked: PickableDocument[]) => {
+            setAttachments(prev => [
+              ...prev,
+              ...picked.map(d => ({ type: 'linked' as const, label: d.title, docId: d.id })),
+            ])
+            setPickerOpen(false)
+          }}
+          onClose={() => setPickerOpen(false)}
+          excludeIds={attachments.filter(a => a.type === 'linked').map(a => a.docId!).filter(Boolean)}
+        />
+      )}
 
       {/* Period + Company scope */}
       <Card>

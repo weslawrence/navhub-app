@@ -19,12 +19,12 @@ export async function GET(
   const activeGroupId = cookieStore.get('active_group_id')?.value
   if (!activeGroupId) return NextResponse.json({ error: 'No active group' }, { status: 400 })
 
-  // Verify document belongs to group (RLS)
+  // Verify document belongs to group (RLS — there is no is_active column on documents)
   const { data: doc } = await supabase
     .from('documents')
     .select('id')
     .eq('id', params.id)
-    .eq('is_active', true)
+    .eq('group_id', activeGroupId)
     .single()
 
   if (!doc) return NextResponse.json({ error: 'Document not found' }, { status: 404 })

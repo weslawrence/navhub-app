@@ -247,7 +247,7 @@ export default function AgentsPage() {
               <span className={cn('text-xs px-2 py-0.5 rounded-full', agent.visibility === 'public' ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : 'bg-muted text-muted-foreground')}>
                 {agent.visibility === 'public' ? 'Public' : 'Private'}
               </span>
-              <Badge variant="outline" className="text-[10px] shrink-0">{agent.model_name ?? agent.model}</Badge>
+              <Badge variant="outline" className="text-[10px] shrink-0">{agent.ai_model ?? agent.model_name ?? agent.model}</Badge>
               <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
                 {!agent.is_active ? null : (
                   <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => router.push(`/agents/${agent.id}/run`)} title="Run"><Play className="h-3.5 w-3.5" /></Button>
@@ -329,9 +329,14 @@ function AgentCard({
 }) {
   const isDisabled = !agent.is_active
 
-  const modelShort = agent.model === 'gpt-4o' ? 'GPT-4o'
-    : agent.model.includes('opus') ? 'Opus 4'
-    : 'Sonnet 4'
+  const model = agent.ai_model ?? agent.model_name ?? agent.model ?? ''
+  const modelShort = model.includes('opus')        ? 'Opus'
+    : model.includes('sonnet')                     ? 'Sonnet'
+    : model.includes('haiku')                      ? 'Haiku'
+    : model === 'gpt-4o'                           ? 'GPT-4o'
+    : model.includes('gpt-4o-mini')                ? 'GPT-4o mini'
+    : model.includes('gemini')                     ? 'Gemini'
+    : model.split('-')[0] ?? model
 
   return (
     <Card

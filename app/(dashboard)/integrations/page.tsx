@@ -328,6 +328,77 @@ function ComingSoonCard({ name, description, emoji }: { name: string; descriptio
   )
 }
 
+// ─── Sync All to SharePoint ─────────────────────────────────────────────────
+
+function SyncAllSharePointButton() {
+  const [working, setWorking] = useState(false)
+  const [result,  setResult]  = useState<{ synced: number; failed: number; total: number; errors: string[] } | null>(null)
+  const [error,   setError]   = useState<string | null>(null)
+
+  async function run() {
+    setWorking(true)
+    setError(null)
+    setResult(null)
+    try {
+      const res = await fetch('/api/integrations/sharepoint/sync-all', { method: 'POST' })
+      const json = await res.json() as {
+        synced?: number; failed?: number; total?: number; errors?: string[]; error?: string
+      }
+      if (!res.ok) {
+        setError(json.error ?? 'Sync failed')
+      } else {
+        setResult({
+          synced: json.synced ?? 0,
+          failed: json.failed ?? 0,
+          total:  json.total  ?? 0,
+          errors: json.errors ?? [],
+        })
+      }
+    } catch {
+      setError('Network error')
+    } finally {
+      setWorking(false)
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm">Bulk sync to SharePoint</CardTitle>
+        <CardDescription>
+          Pushes every published document to SharePoint, mirroring NavHub folders as subfolders.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <Button onClick={() => void run()} disabled={working} className="gap-2">
+          {working
+            ? <><Loader2 className="h-4 w-4 animate-spin" /> Syncing…</>
+            : <><Upload className="h-4 w-4" /> Sync All to SharePoint</>}
+        </Button>
+
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        {result && (
+          <div className="text-xs">
+            <p className="text-foreground">
+              <span className="font-medium text-green-600">{result.synced} synced</span>
+              {result.failed > 0 && <span className="text-destructive ml-2">· {result.failed} failed</span>}
+              <span className="text-muted-foreground ml-2">· {result.total} total</span>
+            </p>
+            {result.errors.length > 0 && (
+              <details className="mt-1.5">
+                <summary className="cursor-pointer text-muted-foreground">View errors ({result.errors.length})</summary>
+                <ul className="mt-1 space-y-0.5 text-destructive">
+                  {result.errors.map((e, i) => <li key={i} className="font-mono text-[11px]">{e}</li>)}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 // ─── Page ───────────────────────────────────────────────────────────────────
 
 export default function IntegrationsPage() {
@@ -588,6 +659,7 @@ export default function IntegrationsPage() {
               <FileText className="h-4 w-4 text-primary" /> Document Sync
             </h2>
             <IntegrationsTab scope="documents" />
+            {isAdmin && <SyncAllSharePointButton />}
           </section>
 
           <section className="space-y-3">

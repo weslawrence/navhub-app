@@ -14,6 +14,7 @@ export async function POST(request: Request) {
       site_id?:       string
       site_url?:      string
       folder_path?:   string
+      folder_id?:     string
     }
 
     if (!body.connection_id) {
@@ -53,6 +54,8 @@ export async function POST(request: Request) {
     if (body.site_url)    updates.site_url    = body.site_url
     if (body.folder_path) updates.folder_path = body.folder_path
     if (driveId)          updates.drive_id    = driveId
+    // body.folder_id is captured by the wizard for path resolution but not
+    // persisted — the human-readable folder_path is the source of truth.
 
     if (Object.keys(updates).length > 0) {
       const { error } = await admin

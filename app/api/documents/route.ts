@@ -109,5 +109,90 @@ export async function POST(request: Request) {
   }).select().single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Fire-and-forget: auto-sync to SharePoint if a connection exists for this group.
+  // Only attempts when content_markdown is non-empty (skip empty placeholders).
+  if (data && (content_markdown as string)?.trim()) {
+    void (async () => {
+      try {
+        const { data: conn } = await admin
+          .from('sharepoint_connections')
+          .select('id, drive_id')
+          .eq('group_id', activeGroupId)
+          .eq('is_active', true)
+          .maybeSingle()
+        if (!conn || !conn.drive_id) return
+
+        // Lazy-import heavy dependencies so the main response is not delayed
+        const { getValidSharePointToken, ensureSharePointFolder, uploadFileToSharePoint, getNavHubFolderPath } =
+          await import('@/lib/sharepoint')
+        const { exportToDocx } = await import('@/lib/document-export')
+
+        const { data: group } = await admin
+          .from('groups')
+          .select('name')
+          .eq('id', activeGroupId)
+          .single()
+        const groupName = group?.name ?? 'NavHub'
+
+        // Resolve folder name for auto-mirror
+        let folderName: string | null = null
+        if (data.folder_id) {
+          const { data: f } = await admin
+            .from('document_folders')
+            .select('name')
+            .eq('id', data.folder_id)
+            .maybeSingle()
+          folderName = f?.name ?? null
+        }
+
+        // Look up explicit mapping first
+        const { data: mapping } = await admin
+          .from('folder_sharepoint_mappings')
+          .select('sharepoint_path')
+          .eq('group_id', activeGroupId)
+          .or(`folder_id.eq.${data.folder_id ?? 'null'},folder_id.is.null`)
+          .order('folder_id', { ascending: false, nullsFirst: false })
+          .limit(1)
+          .maybeSingle()
+
+        const { data: connFull } = await admin
+          .from('sharepoint_connections')
+          .select('folder_path')
+          .eq('id', conn.id)
+          .maybeSingle()
+
+        const rootPath = (connFull?.folder_path as string | null) ?? 'NavHub'
+        const targetPath = mapping?.sharepoint_path ?? getNavHubFolderPath(rootPath, folderName)
+
+        const { access_token } = await getValidSharePointToken(conn.id)
+        const docxBuffer = await exportToDocx(data, groupName)
+        const folderId   = await ensureSharePointFolder(access_token, conn.drive_id, targetPath)
+        const safeName   = (data.title as string ?? 'Document').replace(/[^a-zA-Z0-9 \-_]/g, '').trim() || 'Document'
+
+        const uploaded = await uploadFileToSharePoint(
+          access_token,
+          conn.drive_id,
+          folderId,
+          `${safeName}.docx`,
+          docxBuffer,
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        )
+
+        void admin.from('document_sharepoint_sync').upsert({
+          document_id:        data.id,
+          connection_id:      conn.id,
+          sharepoint_item_id: uploaded.id,
+          sharepoint_url:     uploaded.webUrl,
+          last_synced_at:     new Date().toISOString(),
+          sync_status:        'synced',
+        }, { onConflict: 'document_id' })
+      } catch (err) {
+        // Non-fatal — document creation succeeded; sync can be retried later.
+        console.error('Auto-sync to SharePoint failed:', err)
+      }
+    })()
+  }
+
   return NextResponse.json({ data }, { status: 201 })
 }

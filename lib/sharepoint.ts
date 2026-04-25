@@ -251,6 +251,28 @@ export async function getSharePointDriveInfo(
 }
 
 /**
+ * Auto-mirror helper: given a SharePoint root path and a NavHub folder name,
+ * compose the target SharePoint path that mirrors the NavHub folder structure.
+ *
+ * Examples:
+ *   getNavHubFolderPath('NavHub', 'Marketing')  → 'NavHub/Marketing'
+ *   getNavHubFolderPath('NavHub/Docs', null)    → 'NavHub/Docs/Unfiled'
+ *   getNavHubFolderPath('/NavHub/', 'Reports')  → 'NavHub/Reports'
+ *
+ * Trims leading/trailing slashes from rootPath and from folderName, and
+ * sanitises folderName to avoid Graph API errors (replaces : ? * " < > | / \ with _).
+ */
+export function getNavHubFolderPath(
+  rootPath: string,
+  folderName: string | null | undefined
+): string {
+  const cleanRoot = (rootPath || 'NavHub').replace(/^\/+|\/+$/g, '')
+  const cleanName = (folderName ?? '').trim().replace(/[/\\:?*"<>|]/g, '_')
+  const segment   = cleanName || 'Unfiled'
+  return `${cleanRoot}/${segment}`
+}
+
+/**
  * List drives accessible by the current token (defaults to OneDrive for Business if no site set).
  */
 export async function listSharePointDrives(

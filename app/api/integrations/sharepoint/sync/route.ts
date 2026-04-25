@@ -6,6 +6,7 @@ import {
   getValidSharePointToken,
   ensureSharePointFolder,
   uploadFileToSharePoint,
+  getNavHubFolderPath,
 } from '@/lib/sharepoint'
 import { exportToDocx } from '@/lib/document-export'
 import type { Document } from '@/lib/types'
@@ -59,7 +60,10 @@ export async function POST(req: Request) {
 
   const groupName = group?.name ?? 'NavHub'
 
-  // Look up folder-specific SharePoint path before uploading
+  // Resolve target SharePoint path:
+  //   1. Explicit folder_sharepoint_mappings row for this folder (if any)
+  //   2. Auto-mirror: <connection.folder_path>/<navhub folder name or "Unfiled">
+  //   3. Group-level default mapping (folder_id IS NULL)
   const { data: mapping } = await admin
     .from('folder_sharepoint_mappings')
     .select('sharepoint_path')
@@ -69,7 +73,23 @@ export async function POST(req: Request) {
     .limit(1)
     .maybeSingle()
 
-  const targetPath = mapping?.sharepoint_path ?? '/NavHub'
+  let targetPath: string
+  if (mapping?.sharepoint_path) {
+    targetPath = mapping.sharepoint_path
+  } else {
+    // Auto-mirror NavHub folder structure under the connection root
+    const rootPath = (conn.folder_path as string | null) ?? 'NavHub'
+    let navhubFolderName: string | null = null
+    if (doc.folder_id) {
+      const { data: folder } = await admin
+        .from('document_folders')
+        .select('name')
+        .eq('id', doc.folder_id)
+        .maybeSingle()
+      navhubFolderName = folder?.name ?? null
+    }
+    targetPath = getNavHubFolderPath(rootPath, navhubFolderName)
+  }
 
   try {
     // Get valid access token (refreshes if needed)

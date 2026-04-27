@@ -169,7 +169,71 @@ export async function POST(request: Request) {
   // Build full context server-side
   const context = await buildAssistantContext(activeGroupId, pathname, userRole)
 
-  const systemPrompt = buildSystemPrompt(context, isAdmin)
+  let systemPrompt = buildSystemPrompt(context, isAdmin)
+
+  // ── Load assistant config from DB (platform default + group override) ────
+  // The platform-level row (group_id IS NULL) is the baseline; group_id overrides
+  // its non-null fields. This lets super_admins set product-wide guidance and
+  // group_admins customise per-tenant tone, knowledge, restrictions.
+  try {
+    const admin = createAdminClient()
+    const [platformRes, groupRes] = await Promise.all([
+      admin
+        .from('assistant_config')
+        .select('persona_name, scope_text, knowledge_text, restrictions')
+        .is('group_id', null)
+        .maybeSingle(),
+      admin
+        .from('assistant_config')
+        .select('persona_name, scope_text, knowledge_text, restrictions')
+        .eq('group_id', activeGroupId)
+        .maybeSingle(),
+    ])
+
+    type CfgRow = { persona_name?: string; scope_text?: string | null; knowledge_text?: string | null; restrictions?: string | null }
+    const platformCfg = (platformRes.data as CfgRow | null) ?? {}
+    const groupCfg    = (groupRes.data    as CfgRow | null) ?? {}
+
+    // Group config overrides platform config field-by-field (only when set).
+    const merged: CfgRow = {
+      persona_name:   groupCfg.persona_name   ?? platformCfg.persona_name,
+      scope_text:     groupCfg.scope_text     ?? platformCfg.scope_text,
+      knowledge_text: groupCfg.knowledge_text ?? platformCfg.knowledge_text,
+      restrictions:   groupCfg.restrictions   ?? platformCfg.restrictions,
+    }
+
+    if (merged.knowledge_text) {
+      systemPrompt += `\n\n## Additional Knowledge\n${merged.knowledge_text}`
+    }
+    if (merged.scope_text) {
+      systemPrompt += `\n\n## Scope\n${merged.scope_text}`
+    }
+    if (merged.restrictions) {
+      systemPrompt += `\n\n## Restrictions\n${merged.restrictions}`
+    }
+
+    // Reference documents (platform + group level)
+    const { data: knowledgeDocs } = await admin
+      .from('assistant_knowledge_documents')
+      .select('file_name, document_id, documents(title, content_markdown)')
+      .or(`group_id.eq.${activeGroupId},group_id.is.null`)
+
+    type KdRow = {
+      file_name:   string
+      document_id: string | null
+      documents:   { title?: string; content_markdown?: string } | { title?: string; content_markdown?: string }[] | null
+    }
+    if (knowledgeDocs && knowledgeDocs.length > 0) {
+      const lines = (knowledgeDocs as unknown as KdRow[]).map(d => {
+        const doc     = Array.isArray(d.documents) ? d.documents[0] : d.documents
+        const content = doc?.content_markdown
+        return `### ${d.file_name}\n${content ? content.slice(0, 1000) : '(no content)'}`
+      })
+      systemPrompt += `\n\n## Reference Documents\n${lines.join('\n\n')}`
+    }
+  } catch {
+    // Config table may not exist on older deployments — degrade silently.
+  }
 
   // Call Anthropic API with streaming
   const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {

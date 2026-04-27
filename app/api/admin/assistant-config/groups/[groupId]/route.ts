@@ -30,7 +30,7 @@ export async function GET(_req: Request, { params }: { params: { groupId: string
   const admin = createAdminClient()
   const { data } = await admin
     .from('assistant_config')
-    .select('id, persona_name, persona_tone, scope_text, knowledge_text, restrictions, is_active, updated_at, group_id')
+    .select('id, persona_name, persona_tone, persona_instructions, scope_text, knowledge_text, restrictions, is_active, updated_at, group_id')
     .eq('group_id', params.groupId)
     .maybeSingle()
 
@@ -46,12 +46,13 @@ export async function PATCH(req: Request, { params }: { params: { groupId: strin
   }
 
   const body = await req.json() as {
-    persona_name?:   string
-    persona_tone?:   string
-    scope_text?:     string | null
-    knowledge_text?: string | null
-    restrictions?:   string | null
-    is_active?:      boolean
+    persona_name?:         string
+    persona_tone?:         string
+    persona_instructions?: string | null
+    scope_text?:           string | null
+    knowledge_text?:       string | null
+    restrictions?:         string | null
+    is_active?:            boolean
   }
 
   const admin = createAdminClient()
@@ -68,10 +69,11 @@ export async function PATCH(req: Request, { params }: { params: { groupId: strin
   }
   if (body.persona_name?.trim()) payload.persona_name = body.persona_name.trim()
   if (body.persona_tone?.trim()) payload.persona_tone = body.persona_tone.trim()
-  if (body.scope_text     !== undefined) payload.scope_text     = body.scope_text
-  if (body.knowledge_text !== undefined) payload.knowledge_text = body.knowledge_text
-  if (body.restrictions   !== undefined) payload.restrictions   = body.restrictions
-  if (body.is_active      !== undefined) payload.is_active      = !!body.is_active
+  if (body.persona_instructions !== undefined) payload.persona_instructions = body.persona_instructions
+  if (body.scope_text           !== undefined) payload.scope_text           = body.scope_text
+  if (body.knowledge_text       !== undefined) payload.knowledge_text       = body.knowledge_text
+  if (body.restrictions         !== undefined) payload.restrictions         = body.restrictions
+  if (body.is_active            !== undefined) payload.is_active            = !!body.is_active
 
   let saved
   if (existing) {
@@ -79,13 +81,13 @@ export async function PATCH(req: Request, { params }: { params: { groupId: strin
       .from('assistant_config')
       .update(payload)
       .eq('id', existing.id)
-      .select('id, persona_name, persona_tone, scope_text, knowledge_text, restrictions, is_active, updated_at, group_id')
+      .select('id, persona_name, persona_tone, persona_instructions, scope_text, knowledge_text, restrictions, is_active, updated_at, group_id')
       .single()
   } else {
     saved = await admin
       .from('assistant_config')
       .insert({ group_id: params.groupId, ...payload })
-      .select('id, persona_name, persona_tone, scope_text, knowledge_text, restrictions, is_active, updated_at, group_id')
+      .select('id, persona_name, persona_tone, persona_instructions, scope_text, knowledge_text, restrictions, is_active, updated_at, group_id')
       .single()
   }
 

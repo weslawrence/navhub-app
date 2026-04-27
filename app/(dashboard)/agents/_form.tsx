@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Check, Plus, Eye, EyeOff, Loader2, Trash2,
-  Link2, FileText, X, Upload, Search, Pencil,
+  Link2, FileText, X, Upload, Pencil,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -21,6 +21,7 @@ import {
   type GroupModelConfig,
 } from '@/lib/types'
 import { AVATAR_PRESETS } from '@/lib/agent-presets'
+import DocumentPickerModal, { type PickableDocument } from '@/components/agents/DocumentPickerModal'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
 
@@ -133,8 +134,6 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [editingLinkIdx,  setEditingLinkIdx]  = useState<number | null>(null)
   const [showLinkForm,    setShowLinkForm]    = useState(false)
   const [showDocPicker,   setShowDocPicker]   = useState(false)
-  const [availableDocs,   setAvailableDocs]   = useState<Array<{ id: string; title: string; document_type: string }>>([])
-  const [docSearch,       setDocSearch]       = useState('')
   const [docUploading,    setDocUploading]    = useState(false)
   const [knowledgeSaved,  setKnowledgeSaved]  = useState(false)
 
@@ -443,18 +442,23 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     } catch { /* ignore */ }
   }
 
-  async function handleLinkDocument(docId: string) {
+  async function handleLinkPicked(picked: PickableDocument[]) {
     if (!agentId) return
-    try {
-      const res = await fetch(`/api/agents/${agentId}/knowledge/documents`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ document_id: docId }),
-      })
-      if (res.ok) {
-        const json = await res.json()
-        setKnowledgeDocs(prev => [json.data, ...prev])
-      }
-    } catch { /* ignore */ }
+    for (const item of picked) {
+      const body = item.source === 'report'
+        ? { report_id:   item.id }
+        : { document_id: item.id }
+      try {
+        const res = await fetch(`/api/agents/${agentId}/knowledge/documents`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (res.ok) {
+          const json = await res.json()
+          setKnowledgeDocs(prev => [json.data, ...prev])
+        }
+      } catch { /* ignore */ }
+    }
     setShowDocPicker(false)
   }
 
@@ -472,16 +476,6 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     } finally { setDocUploading(false) }
   }
 
-  async function loadAvailableDocs() {
-    const res = await fetch('/api/documents')
-    if (res.ok) {
-      const json = await res.json()
-      setAvailableDocs((json.data ?? []).map((d: { id: string; title: string; document_type: string }) => ({
-        id: d.id, title: d.title, document_type: d.document_type,
-      })))
-    }
-    setShowDocPicker(true)
-  }
 
   async function handleSave() {
     if (!name.trim()) { setToast('Agent name is required'); return }
@@ -945,12 +939,12 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                 <CardHeader>
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <div>
-                      <CardTitle className="text-base">Reference Documents</CardTitle>
-                      <CardDescription>Documents this agent can reference. Content is included in context.</CardDescription>
+                      <CardTitle className="text-base">Reference Documents &amp; Reports</CardTitle>
+                      <CardDescription>NavHub documents and custom reports this agent can reference. Content is included in context.</CardDescription>
                     </div>
                     <div className="flex gap-2">
-                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => void loadAvailableDocs()}>
-                        <FileText className="h-3.5 w-3.5" /> Link from Documents
+                      <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowDocPicker(true)}>
+                        <FileText className="h-3.5 w-3.5" /> Link from NavHub
                       </Button>
                       <Button size="sm" variant="outline" className="gap-1.5" disabled={docUploading}
                         onClick={() => { const i = document.createElement('input'); i.type='file'; i.accept='.pdf,.docx,.doc,.txt,.md,.csv,.xlsx,.xls,.png,.jpg,.jpeg'; i.onchange=()=>{if(i.files?.[0])void handleUploadKnowledgeFile(i.files[0])}; i.click() }}>
@@ -984,33 +978,17 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                 </CardContent>
               </Card>
 
-              {/* Document Picker Modal */}
+              {/* Document + Report Picker Modal */}
               {showDocPicker && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-                  <div className="bg-background border rounded-xl shadow-xl w-full max-w-md max-h-[70vh] flex flex-col">
-                    <div className="px-4 py-3 border-b flex items-center justify-between">
-                      <h3 className="font-semibold text-sm">Link a Document</h3>
-                      <button onClick={() => setShowDocPicker(false)}><X className="h-4 w-4 text-muted-foreground" /></button>
-                    </div>
-                    <div className="px-4 py-2">
-                      <div className="relative">
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-                        <Input value={docSearch} onChange={e => setDocSearch(e.target.value)} placeholder="Search documents…" className="pl-8 text-sm" />
-                      </div>
-                    </div>
-                    <div className="flex-1 overflow-y-auto px-2 pb-2">
-                      {availableDocs.filter(d => !docSearch || d.title.toLowerCase().includes(docSearch.toLowerCase())).map(d => (
-                        <button key={d.id} onClick={() => void handleLinkDocument(d.id)}
-                          className="w-full text-left flex items-center gap-2 px-3 py-2 rounded-md hover:bg-muted text-sm">
-                          <FileText className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                          <span className="truncate flex-1">{d.title}</span>
-                          <Badge variant="outline" className="text-[9px] shrink-0">{d.document_type}</Badge>
-                        </button>
-                      ))}
-                      {availableDocs.length === 0 && <p className="text-sm text-muted-foreground text-center py-4">No documents available.</p>}
-                    </div>
-                  </div>
-                </div>
+                <DocumentPickerModal
+                  allowReports
+                  onSelect={picked => void handleLinkPicked(picked)}
+                  onClose={() => setShowDocPicker(false)}
+                  excludeIds={knowledgeDocs
+                    .map(kd => (kd.document_id ?? (kd as { report_id?: string | null }).report_id))
+                    .filter((id): id is string => !!id)
+                  }
+                />
               )}
 
               {/* Reference Links */}

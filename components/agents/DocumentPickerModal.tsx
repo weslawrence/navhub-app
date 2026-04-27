@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
 import { cn }     from '@/lib/utils'
 
+export type PickableSource = 'document' | 'report'
+
 export interface PickableDocument {
   id:            string
   title:         string
@@ -14,23 +16,31 @@ export interface PickableDocument {
   folder_id:     string | null
   status?:       string
   file_type?:    string | null
+  /** When the modal allows toggling between sources, set on each result */
+  source?:       PickableSource
 }
 
 interface DocumentPickerModalProps {
-  onSelect:     (docs: PickableDocument[]) => void
-  onClose:      () => void
-  multiSelect?: boolean    // default true
-  excludeIds?:  string[]   // hide already-attached doc IDs
+  onSelect:        (items: PickableDocument[]) => void
+  onClose:         () => void
+  multiSelect?:    boolean              // default true
+  excludeIds?:     string[]             // hide already-attached IDs
+  /** When true, render a Documents/Reports source toggle */
+  allowReports?:   boolean
 }
 
 interface Folder { id: string; name: string }
 
+interface ReportRow { id: string; name: string; description?: string | null; status?: string; file_type?: string | null }
+
 export default function DocumentPickerModal({
   onSelect,
   onClose,
-  multiSelect = true,
-  excludeIds  = [],
+  multiSelect  = true,
+  excludeIds   = [],
+  allowReports = false,
 }: DocumentPickerModalProps) {
+  const [source,   setSource]   = useState<PickableSource>('document')
   const [docs,     setDocs]     = useState<PickableDocument[]>([])
   const [folders,  setFolders]  = useState<Folder[]>([])
   const [loading,  setLoading]  = useState(true)
@@ -38,7 +48,7 @@ export default function DocumentPickerModal({
   const [folderId, setFolderId] = useState<string>('')   // '' = all
   const [picked,   setPicked]   = useState<Set<string>>(new Set())
 
-  const load = useCallback(async () => {
+  const loadDocuments = useCallback(async () => {
     setLoading(true)
     try {
       const [dRes, fRes] = await Promise.all([
@@ -47,7 +57,9 @@ export default function DocumentPickerModal({
       ])
       const dJson = await dRes.json() as { data?: PickableDocument[] }
       const fJson = await fRes.json() as { data?: Folder[] }
-      setDocs((dJson.data ?? []).filter(d => !excludeIds.includes(d.id)))
+      setDocs((dJson.data ?? [])
+        .filter(d => !excludeIds.includes(d.id))
+        .map(d => ({ ...d, source: 'document' as const })))
       setFolders(fJson.data ?? [])
     } finally {
       setLoading(false)
@@ -55,11 +67,43 @@ export default function DocumentPickerModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  useEffect(() => { void load() }, [load])
+  const loadReports = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res  = await fetch('/api/reports/custom')
+      const json = await res.json() as { data?: ReportRow[] }
+      const items = (json.data ?? [])
+        .filter(r => !excludeIds.includes(r.id))
+        .map<PickableDocument>(r => ({
+          id:            r.id,
+          title:         r.name,
+          document_type: 'report',
+          folder_id:     null,
+          status:        r.status ?? undefined,
+          file_type:     r.file_type ?? null,
+          source:        'report',
+        }))
+      setDocs(items)
+      setFolders([])    // no folder filter for reports
+    } finally {
+      setLoading(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    setPicked(new Set())
+    setSearch('')
+    setFolderId('')
+    if (source === 'document') void loadDocuments()
+    else                         void loadReports()
+  }, [source, loadDocuments, loadReports])
 
   const filtered = docs.filter(d => {
-    if (folderId === '__unfiled' && d.folder_id !== null) return false
-    if (folderId && folderId !== '__unfiled' && d.folder_id !== folderId) return false
+    if (source === 'document') {
+      if (folderId === '__unfiled' && d.folder_id !== null) return false
+      if (folderId && folderId !== '__unfiled' && d.folder_id !== folderId) return false
+    }
     if (search && !d.title.toLowerCase().includes(search.toLowerCase())) return false
     return true
   })
@@ -73,8 +117,8 @@ export default function DocumentPickerModal({
         return next
       })
     } else {
-      const doc = docs.find(d => d.id === id)
-      if (doc) onSelect([doc])
+      const item = docs.find(d => d.id === id)
+      if (item) onSelect([item])
     }
   }
 
@@ -83,14 +127,46 @@ export default function DocumentPickerModal({
     onSelect(selected)
   }
 
+  const itemNoun = source === 'report' ? 'report' : 'document'
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
       <div className="bg-background border rounded-xl shadow-2xl w-full max-w-xl max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-3 border-b">
-          <h2 className="text-base font-semibold">Link from Documents</h2>
+          <h2 className="text-base font-semibold">
+            Link from {allowReports ? 'NavHub' : 'Documents'}
+          </h2>
           <button onClick={onClose}><X className="h-5 w-5 text-muted-foreground" /></button>
         </div>
+
+        {/* Source toggle (Documents / Reports) */}
+        {allowReports && (
+          <div className="px-5 pt-3">
+            <div className="flex border rounded-md overflow-hidden text-sm">
+              <button
+                type="button"
+                onClick={() => setSource('document')}
+                className={cn(
+                  'flex-1 px-3 py-1.5 transition-colors',
+                  source === 'document' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
+                )}
+              >
+                Documents
+              </button>
+              <button
+                type="button"
+                onClick={() => setSource('report')}
+                className={cn(
+                  'flex-1 px-3 py-1.5 transition-colors',
+                  source === 'report' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted',
+                )}
+              >
+                Reports
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Filters */}
         <div className="px-5 py-3 border-b space-y-2">
@@ -99,19 +175,21 @@ export default function DocumentPickerModal({
             <Input
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search documents…"
+              placeholder={`Search ${itemNoun}s…`}
               className="pl-8 text-sm"
             />
           </div>
-          <select
-            value={folderId}
-            onChange={e => setFolderId(e.target.value)}
-            className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
-          >
-            <option value="">All folders</option>
-            <option value="__unfiled">Unfiled</option>
-            {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-          </select>
+          {source === 'document' && (
+            <select
+              value={folderId}
+              onChange={e => setFolderId(e.target.value)}
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+            >
+              <option value="">All folders</option>
+              <option value="__unfiled">Unfiled</option>
+              {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </select>
+          )}
         </div>
 
         {/* List */}
@@ -121,7 +199,7 @@ export default function DocumentPickerModal({
               <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
           ) : filtered.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">No documents match.</p>
+            <p className="text-sm text-muted-foreground text-center py-8">No {itemNoun}s match.</p>
           ) : (
             <ul className="space-y-1">
               {filtered.map(d => {
@@ -159,12 +237,12 @@ export default function DocumentPickerModal({
         {multiSelect && (
           <div className="px-5 py-3 border-t flex items-center justify-between gap-2">
             <span className="text-xs text-muted-foreground">
-              {picked.size > 0 ? `${picked.size} selected` : 'Pick one or more documents'}
+              {picked.size > 0 ? `${picked.size} selected` : `Pick one or more ${itemNoun}s`}
             </span>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
               <Button size="sm" onClick={confirmSelection} disabled={picked.size === 0}>
-                Add {picked.size > 0 ? `${picked.size} ` : ''}{picked.size === 1 ? 'document' : 'documents'}
+                Add {picked.size > 0 ? `${picked.size} ` : ''}{picked.size === 1 ? itemNoun : `${itemNoun}s`}
               </Button>
             </div>
           </div>

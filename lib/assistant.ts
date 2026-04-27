@@ -6,9 +6,10 @@
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AssistantContext {
-  personaName?:     string   // configured per platform / per group (migration 046)
-  pathname:         string
-  groupName:        string
+  personaName?:         string   // configured per platform / per group (migration 046)
+  personaInstructions?: string   // free-text "## How to interact" block (migration 049)
+  pathname:             string
+  groupName:            string
   companyName?:     string
   userRole:         string
   agents:           { id: string; name: string; tools: string[]; is_active: boolean }[]
@@ -195,6 +196,11 @@ When helping with agent briefs:
 - Agents can create documents, reports, or any other content — brief them accordingly
 
 Keep responses concise and practical. Use markdown for structure when helpful.`
+
+  // Persona-specific behaviour rules (configured per group via /admin/assistant)
+  if (context.personaInstructions?.trim()) {
+    prompt += `\n\n## How to interact\n${context.personaInstructions.trim()}`
+  }
 
   if (isAdmin) {
     prompt += `\n\nYou are in superadmin mode. You can also help with:

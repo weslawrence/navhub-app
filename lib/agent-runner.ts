@@ -525,19 +525,19 @@ async function buildSystemPrompt(
     knowledgeParts.push(`\nReference Links:\n${linkLines}`)
   }
 
-  // Knowledge documents — fetch and include content summaries
+  // Knowledge documents + reports — fetch and include content summaries
   if (agent.id) {
     try {
-      const { data: kDocs } = await admin
+      type KDocRow = { file_name: string; document_id: string | null; report_id: string | null }
+      const { data: kDocsRaw } = await admin
         .from('agent_knowledge_documents')
-        .select('file_name, document_id')
+        .select('file_name, document_id, report_id')
         .eq('agent_id', agent.id)
+      const kDocs = (kDocsRaw ?? []) as KDocRow[]
 
-      if (kDocs && kDocs.length > 0) {
-        const docIds = kDocs
-          .map((kd: { document_id: string | null }) => kd.document_id)
-          .filter((id: string | null): id is string => !!id)
-
+      if (kDocs.length > 0) {
+        // ── Fetch document content_markdown in one batch ──
+        const docIds = kDocs.map(kd => kd.document_id).filter((id): id is string => !!id)
         let docContents: Record<string, string> = {}
         if (docIds.length > 0) {
           const { data: docs } = await admin
@@ -545,18 +545,48 @@ async function buildSystemPrompt(
             .select('id, content_markdown')
             .in('id', docIds)
           if (docs) {
-            docContents = docs.reduce((acc: Record<string, string>, d: { id: string; content_markdown: string | null }) => {
-              if (d.content_markdown) acc[d.id] = d.content_markdown
-              return acc
-            }, {} as Record<string, string>)
+            docContents = (docs as Array<{ id: string; content_markdown: string | null }>)
+              .reduce((acc, d) => {
+                if (d.content_markdown) acc[d.id] = d.content_markdown
+                return acc
+              }, {} as Record<string, string>)
           }
         }
 
-        const docSummaries = kDocs.map((kd: { file_name: string; document_id: string | null }) => {
-          const content = kd.document_id ? docContents[kd.document_id] : null
-          return `- ${kd.file_name}: ${content ? content.slice(0, 500) + '...' : '(no extracted content)'}`
+        // ── Fetch report HTML from Storage in parallel ──
+        // custom_reports has no `content` column — HTML lives in Storage at file_path.
+        // Strip tags down to plain text and slice to ~1500 chars.
+        const reportIds = kDocs.map(kd => kd.report_id).filter((id): id is string => !!id)
+        const reportContents: Record<string, string> = {}
+        if (reportIds.length > 0) {
+          const { data: reports } = await admin
+            .from('custom_reports')
+            .select('id, file_path')
+            .in('id', reportIds)
+          const fetches = (reports ?? [])
+            .filter((r: { file_path: string | null }) => !!r.file_path)
+            .map(async (r: { id: string; file_path: string | null }) => {
+              try {
+                const dl = await admin.storage.from('report-files').download(r.file_path as string)
+                if (!dl.data) return
+                const text = await dl.data.text()
+                // Strip HTML tags + collapse whitespace, slice to 1500 chars
+                const plain = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+                reportContents[r.id] = plain.slice(0, 1500)
+              } catch { /* ignore individual report download failures */ }
+            })
+          await Promise.all(fetches)
+        }
+
+        const summaries = kDocs.map(kd => {
+          if (kd.report_id) {
+            const c = reportContents[kd.report_id]
+            return `- 📊 ${kd.file_name} (report): ${c ? c + '…' : '(content not available)'}`
+          }
+          const c = kd.document_id ? docContents[kd.document_id] : null
+          return `- ${kd.file_name}: ${c ? c.slice(0, 500) + '…' : '(no extracted content)'}`
         }).join('\n')
-        knowledgeParts.push(`\nKnowledge Documents:\n${docSummaries}`)
+        knowledgeParts.push(`\nKnowledge Documents:\n${summaries}`)
       }
     } catch { /* ignore knowledge doc fetch errors */ }
   }

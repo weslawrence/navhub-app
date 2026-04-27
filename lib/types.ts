@@ -756,6 +756,8 @@ export interface AgentKnowledgeDocument {
   id:              string
   agent_id:        string
   document_id:     string | null
+  /** When set, this knowledge entry references a custom_report (migration 049) */
+  report_id?:      string | null
   file_path:       string | null
   file_name:       string
   file_type:       string | null

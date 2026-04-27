@@ -9,14 +9,15 @@ import { Badge }  from '@/components/ui/badge'
 import { cn }     from '@/lib/utils'
 
 interface AssistantConfig {
-  id?:             string
-  persona_name:    string
-  persona_tone?:   string
-  scope_text:      string | null
-  knowledge_text:  string | null
-  restrictions:    string | null
-  is_active?:      boolean
-  updated_at?:     string
+  id?:                  string
+  persona_name:         string
+  persona_tone?:        string
+  persona_instructions: string | null
+  scope_text:           string | null
+  knowledge_text:       string | null
+  restrictions:         string | null
+  is_active?:           boolean
+  updated_at?:          string
 }
 
 interface KnowledgeDoc {
@@ -36,11 +37,12 @@ interface GroupRow {
 }
 
 const EMPTY_CONFIG: AssistantConfig = {
-  persona_name:    'NavHub Assistant',
-  persona_tone:    'professional',
-  scope_text:      null,
-  knowledge_text:  null,
-  restrictions:    null,
+  persona_name:         'NavHub Assistant',
+  persona_tone:         'professional',
+  persona_instructions: null,
+  scope_text:           null,
+  knowledge_text:       null,
+  restrictions:         null,
 }
 
 // ─── Config Form (shared between Platform and Group tabs) ───────────────────
@@ -85,6 +87,20 @@ function ConfigForm({
           placeholder="NavHub Assistant"
           className="bg-zinc-900 border-zinc-700 text-zinc-100"
         />
+      </div>
+
+      <div className="space-y-1.5">
+        <Label className="text-zinc-300">Persona Instructions</Label>
+        <textarea
+          value={config.persona_instructions ?? ''}
+          onChange={e => field('persona_instructions', e.target.value || null)}
+          rows={5}
+          placeholder='Describe how the assistant should behave and interact with users. e.g. "Be concise and direct. Always suggest the most relevant NavHub feature. When unsure, ask one focused question."'
+          className="w-full resize-y rounded-md border border-zinc-700 bg-zinc-900 text-zinc-100 p-3 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-500"
+        />
+        <p className="text-xs text-zinc-500">
+          Injected into the system prompt under <span className="font-mono text-zinc-300">## How to interact</span>. Group-level overrides platform-level.
+        </p>
       </div>
 
       <div className="space-y-1.5">

@@ -174,19 +174,25 @@ export async function POST(request: Request) {
   // its non-null fields. This lets super_admins set product-wide guidance and
   // group_admins customise per-tenant persona, tone, knowledge, restrictions.
   // Loaded BEFORE buildSystemPrompt so personaName flows into the opening line.
-  type CfgRow = { persona_name?: string; scope_text?: string | null; knowledge_text?: string | null; restrictions?: string | null }
+  type CfgRow = {
+    persona_name?:         string
+    persona_instructions?: string | null
+    scope_text?:           string | null
+    knowledge_text?:       string | null
+    restrictions?:         string | null
+  }
   let merged: CfgRow = {}
   try {
     const admin = createAdminClient()
     const [platformRes, groupRes] = await Promise.all([
       admin
         .from('assistant_config')
-        .select('persona_name, scope_text, knowledge_text, restrictions')
+        .select('persona_name, persona_instructions, scope_text, knowledge_text, restrictions')
         .is('group_id', null)
         .maybeSingle(),
       admin
         .from('assistant_config')
-        .select('persona_name, scope_text, knowledge_text, restrictions')
+        .select('persona_name, persona_instructions, scope_text, knowledge_text, restrictions')
         .eq('group_id', activeGroupId)
         .maybeSingle(),
     ])
@@ -195,18 +201,20 @@ export async function POST(request: Request) {
     const groupCfg    = (groupRes.data    as CfgRow | null) ?? {}
 
     merged = {
-      persona_name:   groupCfg.persona_name   ?? platformCfg.persona_name,
-      scope_text:     groupCfg.scope_text     ?? platformCfg.scope_text,
-      knowledge_text: groupCfg.knowledge_text ?? platformCfg.knowledge_text,
-      restrictions:   groupCfg.restrictions   ?? platformCfg.restrictions,
+      persona_name:         groupCfg.persona_name         ?? platformCfg.persona_name,
+      persona_instructions: groupCfg.persona_instructions ?? platformCfg.persona_instructions,
+      scope_text:           groupCfg.scope_text           ?? platformCfg.scope_text,
+      knowledge_text:       groupCfg.knowledge_text       ?? platformCfg.knowledge_text,
+      restrictions:         groupCfg.restrictions         ?? platformCfg.restrictions,
     }
   } catch {
     // Config table may not exist on older deployments — degrade silently.
   }
 
-  // Inject the resolved persona name into the context so buildSystemPrompt
-  // uses it as the assistant's name in the opening line.
-  context.personaName = merged.persona_name?.trim() || undefined
+  // Inject the resolved persona name + instructions into the context so
+  // buildSystemPrompt uses them in the opening line + "## How to interact" block.
+  context.personaName         = merged.persona_name?.trim() || undefined
+  context.personaInstructions = merged.persona_instructions?.trim() || undefined
 
   let systemPrompt = buildSystemPrompt(context, isAdmin)
 

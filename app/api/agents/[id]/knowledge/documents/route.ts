@@ -16,16 +16,23 @@ export async function GET(
   const admin = createAdminClient()
   const { data, error } = await admin
     .from('agent_knowledge_documents')
-    .select('id, agent_id, document_id, file_path, file_name, file_type, file_size, created_at, documents(title)')
+    .select('id, agent_id, document_id, report_id, file_path, file_name, file_type, file_size, created_at, documents(title), custom_reports(name)')
     .eq('agent_id', params.id)
     .order('created_at', { ascending: false })
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const enriched = (data ?? []).map(d => {
-    const doc = d.documents as { title: string } | { title: string }[] | null
-    const title = Array.isArray(doc) ? doc[0]?.title : doc?.title ?? null
-    return { ...d, document_title: title, documents: undefined }
+    const doc      = d.documents      as { title: string } | { title: string }[] | null
+    const report   = d.custom_reports  as { name:  string } | { name:  string }[] | null
+    const docTitle    = Array.isArray(doc)    ? doc[0]?.title    : doc?.title    ?? null
+    const reportTitle = Array.isArray(report) ? report[0]?.name  : report?.name  ?? null
+    return {
+      ...d,
+      document_title: docTitle ?? reportTitle,
+      documents:      undefined,
+      custom_reports: undefined,
+    }
   })
 
   return NextResponse.json({ data: enriched })
@@ -88,11 +95,42 @@ export async function POST(
     return NextResponse.json({ data }, { status: 201 })
   }
 
-  // JSON mode — link existing document
-  const body = await request.json() as { document_id?: string }
-  if (!body.document_id) return NextResponse.json({ error: 'document_id required' }, { status: 400 })
+  // JSON mode — link existing document or report
+  const body = await request.json() as { document_id?: string; report_id?: string }
 
-  // Look up the document to get file info
+  // ── Path 1: link a custom_report ─────────────────────────────────────────
+  if (body.report_id) {
+    const { data: report } = await admin
+      .from('custom_reports')
+      .select('id, name, file_path, file_type')
+      .eq('id', body.report_id)
+      .eq('group_id', activeGroupId)
+      .eq('is_active', true)
+      .single()
+
+    if (!report) return NextResponse.json({ error: 'Report not found' }, { status: 404 })
+
+    const { data, error } = await admin
+      .from('agent_knowledge_documents')
+      .insert({
+        agent_id:  params.id,
+        report_id: report.id,
+        file_name: report.name,
+        file_type: report.file_type ?? 'report',
+        file_path: report.file_path ?? null,
+      })
+      .select()
+      .single()
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ data }, { status: 201 })
+  }
+
+  // ── Path 2: link a NavHub document ───────────────────────────────────────
+  if (!body.document_id) {
+    return NextResponse.json({ error: 'document_id or report_id required' }, { status: 400 })
+  }
+
   const { data: doc } = await admin
     .from('documents')
     .select('id, title, file_name, file_type, file_path')

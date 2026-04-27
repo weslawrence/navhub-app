@@ -169,12 +169,13 @@ export async function POST(request: Request) {
   // Build full context server-side
   const context = await buildAssistantContext(activeGroupId, pathname, userRole)
 
-  let systemPrompt = buildSystemPrompt(context, isAdmin)
-
   // ── Load assistant config from DB (platform default + group override) ────
   // The platform-level row (group_id IS NULL) is the baseline; group_id overrides
   // its non-null fields. This lets super_admins set product-wide guidance and
-  // group_admins customise per-tenant tone, knowledge, restrictions.
+  // group_admins customise per-tenant persona, tone, knowledge, restrictions.
+  // Loaded BEFORE buildSystemPrompt so personaName flows into the opening line.
+  type CfgRow = { persona_name?: string; scope_text?: string | null; knowledge_text?: string | null; restrictions?: string | null }
+  let merged: CfgRow = {}
   try {
     const admin = createAdminClient()
     const [platformRes, groupRes] = await Promise.all([
@@ -190,18 +191,26 @@ export async function POST(request: Request) {
         .maybeSingle(),
     ])
 
-    type CfgRow = { persona_name?: string; scope_text?: string | null; knowledge_text?: string | null; restrictions?: string | null }
     const platformCfg = (platformRes.data as CfgRow | null) ?? {}
     const groupCfg    = (groupRes.data    as CfgRow | null) ?? {}
 
-    // Group config overrides platform config field-by-field (only when set).
-    const merged: CfgRow = {
+    merged = {
       persona_name:   groupCfg.persona_name   ?? platformCfg.persona_name,
       scope_text:     groupCfg.scope_text     ?? platformCfg.scope_text,
       knowledge_text: groupCfg.knowledge_text ?? platformCfg.knowledge_text,
       restrictions:   groupCfg.restrictions   ?? platformCfg.restrictions,
     }
+  } catch {
+    // Config table may not exist on older deployments — degrade silently.
+  }
 
+  // Inject the resolved persona name into the context so buildSystemPrompt
+  // uses it as the assistant's name in the opening line.
+  context.personaName = merged.persona_name?.trim() || undefined
+
+  let systemPrompt = buildSystemPrompt(context, isAdmin)
+
+  try {
     if (merged.knowledge_text) {
       systemPrompt += `\n\n## Additional Knowledge\n${merged.knowledge_text}`
     }
@@ -211,6 +220,8 @@ export async function POST(request: Request) {
     if (merged.restrictions) {
       systemPrompt += `\n\n## Restrictions\n${merged.restrictions}`
     }
+
+    const admin = createAdminClient()
 
     // Reference documents (platform + group level)
     const { data: knowledgeDocs } = await admin

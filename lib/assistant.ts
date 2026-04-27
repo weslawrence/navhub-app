@@ -6,6 +6,7 @@
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface AssistantContext {
+  personaName?:     string   // configured per platform / per group (migration 046)
   pathname:         string
   groupName:        string
   companyName?:     string
@@ -124,7 +125,10 @@ export function buildSystemPrompt(context: AssistantContext, isAdmin = false): s
     ? context.folders.map(f => `• ${f.name}`).join('\n')
     : '(no document folders)'
 
-  let prompt = `You are ${context.groupName ? `the NavHub Assistant for ${context.groupName}` : 'NavHub Assistant'}, an intelligent helper built into the NavHub platform.
+  const assistantName = context.personaName?.trim()
+    || (context.groupName ? `the NavHub Assistant for ${context.groupName}` : 'NavHub Assistant')
+
+  let prompt = `You are ${assistantName}, an intelligent helper built into the NavHub platform.
 
 You are a knowledgeable, helpful assistant with full understanding of NavHub's features. Your job is to help users get the most out of the platform — guiding them on features, answering questions about their data, helping craft agent briefs, and assisting with any task they bring to you.
 

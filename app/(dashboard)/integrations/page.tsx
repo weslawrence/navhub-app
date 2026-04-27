@@ -411,9 +411,16 @@ export default function IntegrationsPage() {
   const [imports,      setImports]      = useState<FinancialImport[]>([])
 
   // Slack workspace state
-  const [slackStatus,  setSlackStatus]  = useState<{ connected: boolean; team_name?: string; configured: boolean }>({ connected: false, configured: false })
-  const [slackWorking, setSlackWorking] = useState(false)
-  const [slackMsg,     setSlackMsg]     = useState<string | null>(null)
+  const [slackStatus,  setSlackStatus]  = useState<{
+    connected:        boolean
+    team_name?:       string
+    default_channel?: string | null
+    configured:       boolean
+  }>({ connected: false, configured: false })
+  const [slackChannels, setSlackChannels] = useState<{ id: string; name: string; is_member?: boolean }[]>([])
+  const [slackWorking,  setSlackWorking]  = useState(false)
+  const [slackMsg,      setSlackMsg]      = useState<string | null>(null)
+  const [savingChannel, setSavingChannel] = useState(false)
 
   const [tab, setTab] = useState<Tab>('financials')
 
@@ -453,12 +460,27 @@ export default function IntegrationsPage() {
     setCompanies(((cJ.data ?? []) as Company[]).filter(c => c.is_active))
     setFolders(fJ.data ?? [])
     setImports(iJ.data ?? [])
-    const slackData = (sJ as { data?: { team_name?: string } | null; configured?: boolean })
-    setSlackStatus({
-      connected:  !!slackData.data,
-      team_name:  slackData.data?.team_name,
-      configured: !!slackData.configured,
+    const slackData = (sJ as {
+      data?: { team_name?: string; default_channel?: string | null } | null
+      configured?: boolean
     })
+    setSlackStatus({
+      connected:       !!slackData.data,
+      team_name:       slackData.data?.team_name,
+      default_channel: slackData.data?.default_channel ?? null,
+      configured:      !!slackData.configured,
+    })
+
+    // Load channels when connected
+    if (slackData.data) {
+      try {
+        const chRes  = await fetch('/api/integrations/slack/channels')
+        const chJson = await chRes.json() as { channels?: { id: string; name: string; is_member?: boolean }[] }
+        setSlackChannels(chJson.channels ?? [])
+      } catch { /* ignore */ }
+    } else {
+      setSlackChannels([])
+    }
   }, [])
 
   useEffect(() => { void loadData() }, [loadData])
@@ -499,6 +521,25 @@ export default function IntegrationsPage() {
       await loadData()
       setSlackMsg('Slack disconnected')
     } finally { setSlackWorking(false) }
+  }
+
+  async function saveDefaultChannel(channel: string | null) {
+    setSavingChannel(true)
+    setSlackMsg(null)
+    try {
+      const res  = await fetch('/api/integrations/slack/status', {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ default_channel: channel }),
+      })
+      if (!res.ok) {
+        const json = await res.json() as { error?: string }
+        setSlackMsg(json.error ?? 'Failed to save channel')
+      } else {
+        setSlackStatus(prev => ({ ...prev, default_channel: channel }))
+        setSlackMsg('Default channel updated')
+      }
+    } finally { setSavingChannel(false) }
   }
 
   const isAdmin        = role === 'super_admin' || role === 'group_admin'
@@ -732,23 +773,64 @@ export default function IntegrationsPage() {
                 )}
 
                 {slackStatus.connected ? (
-                  <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
-                    <div>
-                      <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                        <Check className="h-3.5 w-3.5 text-green-600" />
-                        Connected to <span>{slackStatus.team_name ?? 'Slack workspace'}</span>
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Agents can send notifications to any channel the bot is a member of.
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
+                      <div>
+                        <p className="text-sm font-medium text-foreground flex items-center gap-1.5">
+                          <Check className="h-3.5 w-3.5 text-green-600" />
+                          Connected to <span>{slackStatus.team_name ?? 'Slack workspace'}</span>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Agents can send notifications to any channel the bot is a member of.
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={connectSlack}
+                          disabled={!slackStatus.configured}
+                          title="Reauthorise the workspace (e.g. to grant new scopes)"
+                        >
+                          Reconnect
+                        </Button>
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => void disconnectSlack()}
+                          disabled={slackWorking}
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Default channel picker */}
+                    <div className="rounded-md border bg-muted/10 px-3 py-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <Label className="text-xs">Default channel</Label>
+                        {savingChannel && <span className="text-[11px] text-muted-foreground">Saving…</span>}
+                      </div>
+                      {slackChannels.length > 0 ? (
+                        <select
+                          value={slackStatus.default_channel ?? ''}
+                          onChange={e => void saveDefaultChannel(e.target.value || null)}
+                          disabled={savingChannel}
+                          className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                        >
+                          <option value="">— No default —</option>
+                          {slackChannels.map(c => (
+                            <option key={c.id} value={`#${c.name}`}>#{c.name}{c.is_member ? '' : ' (bot not in channel)'}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          Couldn&apos;t load channels. Try Reconnect to grant the bot the
+                          <code className="font-mono mx-1">channels:read</code> scope.
+                        </p>
+                      )}
+                      <p className="text-[11px] text-muted-foreground">
+                        Agents fall back to this channel when their own override is empty.
                       </p>
                     </div>
-                    <Button
-                      size="sm" variant="outline"
-                      onClick={() => void disconnectSlack()}
-                      disabled={slackWorking}
-                    >
-                      Disconnect
-                    </Button>
                   </div>
                 ) : (
                   <Button

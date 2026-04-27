@@ -29,7 +29,7 @@ export async function GET() {
   const state = JSON.stringify({ group_id: activeGroupId, user_id: session.user.id })
   const params = new URLSearchParams({
     client_id:    clientId,
-    scope:        'chat:write,channels:read,incoming-webhook',
+    scope:        'chat:write,channels:read,channels:join,incoming-webhook',
     redirect_uri: `${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/slack/callback`,
     state,
   })

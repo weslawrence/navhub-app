@@ -96,6 +96,41 @@ export async function POST(
 
   const admin = createAdminClient()
 
+  // Refuse if there's already a pending (unaccepted) invite for this email
+  // and group — avoids spamming the invitee with duplicate magic-link emails.
+  const { data: pendingInvite } = await admin
+    .from('group_invites')
+    .select('id')
+    .eq('group_id', params.id)
+    .eq('email',    email)
+    .is('accepted_at', null)
+    .maybeSingle()
+  if (pendingInvite) {
+    return NextResponse.json(
+      { error: 'This email already has a pending invite' },
+      { status: 409 }
+    )
+  }
+
+  // If the email belongs to an existing Supabase user, refuse if they're
+  // already a member of this group.
+  const { data: existingUserList } = await admin.auth.admin.listUsers({ perPage: 1000 })
+  const preExistingUser = existingUserList?.users.find(u => u.email === email)
+  if (preExistingUser) {
+    const { data: existingMember } = await admin
+      .from('user_groups')
+      .select('user_id')
+      .eq('group_id', params.id)
+      .eq('user_id', preExistingUser.id)
+      .maybeSingle()
+    if (existingMember) {
+      return NextResponse.json(
+        { error: 'This user is already a member of this group' },
+        { status: 409 }
+      )
+    }
+  }
+
   // Fetch the group name for email copy
   const { data: group } = await admin
     .from('groups')

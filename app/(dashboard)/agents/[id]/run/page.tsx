@@ -83,6 +83,7 @@ export default function AgentRunPage() {
   const [notifySlackOn, setNotifySlackOn] = useState(false)
   const [notifyEmail,   setNotifyEmail]   = useState('')
   const [notifySlack,   setNotifySlack]   = useState('')
+  const [slackChannels, setSlackChannels] = useState<{ id: string; name: string }[]>([])
 
   // Per-run attachments
   interface AttachmentChip {
@@ -133,6 +134,14 @@ export default function AgentRunPage() {
   }, [agentId, router])
 
   useEffect(() => { void loadAgent() }, [loadAgent])
+
+  // Load Slack channels (if a connection exists)
+  useEffect(() => {
+    fetch('/api/integrations/slack/channels')
+      .then(r => r.json())
+      .then((j: { channels?: { id: string; name: string }[] }) => setSlackChannels(j.channels ?? []))
+      .catch(() => {})
+  }, [])
 
   // Load folders for output picker (fetch depending on type)
   useEffect(() => {
@@ -499,13 +508,27 @@ export default function AgentRunPage() {
               className="rounded border-input"
             />
             <span className="text-xs text-muted-foreground w-14">Slack</span>
-            <Input
-              value={notifySlack}
-              onChange={e => setNotifySlack(e.target.value)}
-              placeholder="#channel"
-              disabled={!notifySlackOn}
-              className="flex-1"
-            />
+            {slackChannels.length > 0 ? (
+              <select
+                value={notifySlack}
+                onChange={e => setNotifySlack(e.target.value)}
+                disabled={!notifySlackOn}
+                className="flex-1 h-9 rounded-md border border-input bg-background px-2 text-sm disabled:opacity-50"
+              >
+                <option value="">— Use agent default —</option>
+                {slackChannels.map(c => (
+                  <option key={c.id} value={`#${c.name}`}>#{c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <Input
+                value={notifySlack}
+                onChange={e => setNotifySlack(e.target.value)}
+                placeholder="#channel"
+                disabled={!notifySlackOn}
+                className="flex-1"
+              />
+            )}
           </div>
         </CardContent>
       </Card>

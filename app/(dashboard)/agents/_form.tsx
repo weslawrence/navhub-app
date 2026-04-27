@@ -121,6 +121,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [notifyEmail,        setNotifyEmail]        = useState('')
   const [notifySlack,        setNotifySlack]        = useState('')
   const [slackStatus,        setSlackStatus]        = useState<{ connected: boolean; team_name?: string }>({ connected: false })
+  const [slackChannels,      setSlackChannels]      = useState<{ id: string; name: string }[]>([])
 
   // Knowledge state
   const [knowledgeText,   setKnowledgeText]   = useState('')
@@ -148,8 +149,16 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     fetch('/api/integrations/slack/status')
       .then(r => r.json())
       .then((j: { data?: { team_name?: string } | null }) => {
-        if (j.data) setSlackStatus({ connected: true, team_name: j.data.team_name })
-        else        setSlackStatus({ connected: false })
+        if (j.data) {
+          setSlackStatus({ connected: true, team_name: j.data.team_name })
+          // Load channels for the dropdown
+          fetch('/api/integrations/slack/channels')
+            .then(r => r.json())
+            .then((cj: { channels?: { id: string; name: string }[] }) => setSlackChannels(cj.channels ?? []))
+            .catch(() => {})
+        } else {
+          setSlackStatus({ connected: false })
+        }
       })
       .catch(() => {})
 
@@ -1267,7 +1276,20 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
               <CardContent>
                 <div className="space-y-1.5">
                   <Label>Channel override</Label>
-                  <Input value={slackChannel} onChange={e => setSlackChannel(e.target.value)} placeholder="#finance (uses group default if blank)" />
+                  {slackStatus.connected && slackChannels.length > 0 ? (
+                    <select
+                      value={slackChannel}
+                      onChange={e => setSlackChannel(e.target.value)}
+                      className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    >
+                      <option value="">— Use group default —</option>
+                      {slackChannels.map(c => (
+                        <option key={c.id} value={`#${c.name}`}>#{c.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <Input value={slackChannel} onChange={e => setSlackChannel(e.target.value)} placeholder="#finance (uses group default if blank)" />
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -1458,12 +1480,25 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
               <div className="space-y-1.5">
                 <Label>Slack channel</Label>
-                <Input
-                  value={notifySlack}
-                  onChange={e => setNotifySlack(e.target.value)}
-                  placeholder="#channel-name"
-                  disabled={!slackStatus.connected}
-                />
+                {slackStatus.connected && slackChannels.length > 0 ? (
+                  <select
+                    value={notifySlack}
+                    onChange={e => setNotifySlack(e.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="">— Use group default —</option>
+                    {slackChannels.map(c => (
+                      <option key={c.id} value={`#${c.name}`}>#{c.name}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <Input
+                    value={notifySlack}
+                    onChange={e => setNotifySlack(e.target.value)}
+                    placeholder="#channel-name"
+                    disabled={!slackStatus.connected}
+                  />
+                )}
                 {slackStatus.connected ? (
                   <p className="text-xs text-muted-foreground">
                     Connected to <span className="font-medium text-foreground">{slackStatus.team_name ?? 'Slack workspace'}</span>.

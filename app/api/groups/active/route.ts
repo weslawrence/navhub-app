@@ -21,7 +21,7 @@ export async function GET() {
 
   const { data: group } = await supabase
     .from('groups')
-    .select('id, name, slug, primary_color, palette_id, web_search_enabled, timezone, location')
+    .select('id, name, slug, primary_color, palette_id, web_search_enabled, timezone, location, brand_name, brand_color, logo_url')
     .eq('id', activeGroupId)
     .single()
 

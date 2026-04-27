@@ -56,6 +56,10 @@ export interface Group {
   slug:          string
   primary_color: string
   palette_id:    string | null   // added Phase 2c — references PALETTES[].id
+  // Per-group white-label branding (migration 047)
+  brand_name?:   string | null
+  brand_color?:  string | null
+  logo_url?:     string | null
   created_at:    string
 }
 

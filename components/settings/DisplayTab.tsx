@@ -122,6 +122,14 @@ export default function DisplayTab({
   const [tzSaving,        setTzSaving]        = useState(false)
   const [tzToast,         setTzToast]         = useState<string | null>(null)
 
+  // ── Branding state (migration 047) ───────────────────────────────────────
+  const [brandName,    setBrandName]    = useState('')
+  const [brandColor,   setBrandColor]   = useState('#6366f1')
+  const [logoUrl,      setLogoUrl]      = useState<string | null>(null)
+  const [brandSaving,  setBrandSaving]  = useState(false)
+  const [brandToast,   setBrandToast]   = useState<string | null>(null)
+  const [logoUploading, setLogoUploading] = useState(false)
+
   // Keep edit group name in sync with parent
   useEffect(() => { setEditGroupName(groupName) }, [groupName])
   useEffect(() => { setEditSlug(groupSlug) }, [groupSlug])
@@ -137,11 +145,20 @@ export default function DisplayTab({
       }
     }).catch(() => {})
 
-    // Load group timezone + location
+    // Load group timezone + location + branding
     fetch('/api/groups/active').then(r => r.json()).then(json => {
-      const grp = json.data?.group as { timezone?: string; location?: string | null } | undefined
-      if (grp?.timezone) setTimezone(grp.timezone)
-      if (grp?.location) setLocation(grp.location)
+      const grp = json.data?.group as {
+        timezone?: string
+        location?: string | null
+        brand_name?: string | null
+        brand_color?: string | null
+        logo_url?: string | null
+      } | undefined
+      if (grp?.timezone)    setTimezone(grp.timezone)
+      if (grp?.location)    setLocation(grp.location)
+      if (grp?.brand_name)  setBrandName(grp.brand_name)
+      if (grp?.brand_color) setBrandColor(grp.brand_color)
+      if (grp?.logo_url)    setLogoUrl(grp.logo_url)
     }).catch(() => {})
   }, [])
 
@@ -237,6 +254,72 @@ export default function DisplayTab({
       setSlugError(err instanceof Error ? err.message : 'Failed to update')
     } finally {
       setSlugSaving(false)
+    }
+  }
+
+  async function handleSaveBranding() {
+    if (!groupId) return
+    setBrandSaving(true)
+    try {
+      const res = await fetch(`/api/groups/${groupId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          brand_name:  brandName.trim() || null,
+          brand_color: brandColor,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error ?? 'Failed to save branding')
+      setBrandToast('Branding saved')
+      setTimeout(() => setBrandToast(null), 2500)
+    } catch (err) {
+      setBrandToast(err instanceof Error ? err.message : 'Failed to save')
+      setTimeout(() => setBrandToast(null), 4000)
+    } finally {
+      setBrandSaving(false)
+    }
+  }
+
+  async function handleUploadLogo(file: File) {
+    if (!groupId) return
+    if (file.size > 1024 * 1024) {
+      setBrandToast('Logo too large — max 1 MB')
+      setTimeout(() => setBrandToast(null), 4000)
+      return
+    }
+    setLogoUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res  = await fetch(`/api/groups/${groupId}/logo`, { method: 'POST', body: fd })
+      const json = await res.json() as { data?: { logo_url: string }; error?: string }
+      if (!res.ok || !json.data) throw new Error(json.error ?? 'Upload failed')
+      setLogoUrl(json.data.logo_url)
+      setBrandToast('Logo updated')
+      setTimeout(() => setBrandToast(null), 2500)
+    } catch (err) {
+      setBrandToast(err instanceof Error ? err.message : 'Upload failed')
+      setTimeout(() => setBrandToast(null), 4000)
+    } finally {
+      setLogoUploading(false)
+    }
+  }
+
+  async function handleRemoveLogo() {
+    if (!groupId) return
+    setLogoUploading(true)
+    try {
+      const res = await fetch(`/api/groups/${groupId}/logo`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('Failed to remove logo')
+      setLogoUrl(null)
+      setBrandToast('Logo removed')
+      setTimeout(() => setBrandToast(null), 2500)
+    } catch (err) {
+      setBrandToast(err instanceof Error ? err.message : 'Failed to remove')
+      setTimeout(() => setBrandToast(null), 4000)
+    } finally {
+      setLogoUploading(false)
     }
   }
 
@@ -389,6 +472,123 @@ export default function DisplayTab({
                 Preview: <span className="text-foreground">app.navhub.co/<span className="text-primary">{editSlug || groupSlug}</span>/dashboard</span>
               </p>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Branding (admin only) — migration 047 ───────────────────────────── */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Palette className="h-4 w-4 text-muted-foreground" />
+              Branding
+            </CardTitle>
+            <CardDescription>
+              Customise how the app appears to your team. Leave blank to use NavHub defaults.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-1.5">
+              <Label htmlFor="brand-name">App Name</Label>
+              <Input
+                id="brand-name"
+                value={brandName}
+                onChange={e => setBrandName(e.target.value.slice(0, 30))}
+                placeholder="e.g. AxisHub"
+                maxLength={30}
+              />
+              <p className="text-xs text-muted-foreground">
+                Appears in the sidebar, browser tab, and emails. Defaults to <span className="font-medium">NavHub</span>.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="brand-color">Primary Colour</Label>
+              <div className="flex items-center gap-3">
+                <input
+                  id="brand-color"
+                  type="color"
+                  value={brandColor}
+                  onChange={e => setBrandColor(e.target.value.toLowerCase())}
+                  className="h-10 w-14 rounded border border-input cursor-pointer bg-transparent"
+                />
+                <Input
+                  value={brandColor}
+                  onChange={e => setBrandColor(e.target.value.toLowerCase())}
+                  placeholder="#6366f1"
+                  className="font-mono text-sm w-32"
+                />
+                <span className="text-xs text-muted-foreground">
+                  Used for active states, buttons, and accent elements.
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Logo</Label>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center justify-center h-16 w-32 rounded-md border border-dashed border-input bg-muted/30 overflow-hidden">
+                  {logoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={logoUrl} alt="Logo" className="max-h-14 max-w-[112px] object-contain" />
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">No logo</span>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2">
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={logoUploading}
+                      onClick={() => {
+                        const i = document.createElement('input')
+                        i.type = 'file'
+                        i.accept = 'image/png,image/svg+xml,image/webp,image/jpeg'
+                        i.onchange = () => { if (i.files?.[0]) void handleUploadLogo(i.files[0]) }
+                        i.click()
+                      }}
+                    >
+                      {logoUploading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                      {logoUrl ? 'Replace logo' : 'Upload logo'}
+                    </Button>
+                    {logoUrl && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        disabled={logoUploading}
+                        onClick={() => void handleRemoveLogo()}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    PNG, SVG, WebP or JPEG. Max 1 MB. Recommended 240×80px, transparent background.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t">
+              {brandToast && (
+                <span className={cn(
+                  'text-xs',
+                  brandToast.toLowerCase().includes('failed') || brandToast.toLowerCase().includes('large')
+                    ? 'text-destructive'
+                    : 'text-green-600',
+                )}>
+                  {brandToast}
+                </span>
+              )}
+              <Button size="sm" onClick={() => void handleSaveBranding()} disabled={brandSaving}>
+                {brandSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Check className="h-3.5 w-3.5 mr-1.5" />}
+                Save Branding
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}

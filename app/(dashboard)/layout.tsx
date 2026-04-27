@@ -110,6 +110,20 @@ export default async function DashboardLayout({
         }}
       />
 
+      {/*
+        Per-group brand accent (migration 047). Falls back to the palette's
+        primary colour when no brand_color is set. Defined inline so the
+        client-side useEffect in AppShell never causes a colour flash.
+      */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `:root { --brand-color: ${
+            (activeGroup as { brand_color?: string | null }).brand_color
+              ?? getPalette(activeGroup.palette_id).primary
+          }; }`,
+        }}
+      />
+
       {/* Impersonation banner — fixed at top, amber, above AppShell */}
       {impersonatedGroupName && (
         <ImpersonationBanner groupName={impersonatedGroupName} />

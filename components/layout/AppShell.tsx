@@ -99,7 +99,21 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
     document.documentElement.style.setProperty('--palette-accent',    palette.accent)
     document.documentElement.style.setProperty('--palette-surface',   palette.surface)
     document.documentElement.style.setProperty('--group-primary',     palette.primary)
-  }, [activeGroup.palette_id])
+    // Per-group brand accent (migration 047) — falls back to palette.primary
+    const brand = (activeGroup as Group & { brand_color?: string | null }).brand_color
+    document.documentElement.style.setProperty('--brand-color', brand || palette.primary)
+  }, [activeGroup.palette_id, activeGroup])
+
+  // Brand resolution (with NavHub default)
+  const branding = {
+    name: ((activeGroup as Group & { brand_name?: string | null }).brand_name) || 'NavHub',
+    logo: ((activeGroup as Group & { logo_url?:   string | null }).logo_url)   || null,
+  }
+
+  // Browser tab title reflects the brand
+  useEffect(() => {
+    if (typeof document !== 'undefined') document.title = branding.name
+  }, [branding.name])
 
   useEffect(() => {
     setMounted(true)
@@ -345,8 +359,19 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
           <Menu className="h-5 w-5" />
         </button>
 
-        <Link href="/dashboard" className="font-bold text-lg tracking-tight mr-2">
-          Nav<span style={{ color: 'var(--palette-primary)' }}>Hub</span>
+        <Link href="/dashboard" className="font-bold text-lg tracking-tight mr-2 flex items-center gap-2">
+          {branding.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={branding.logo}
+              alt={branding.name}
+              className="h-7 w-auto max-w-[160px] object-contain"
+            />
+          ) : branding.name === 'NavHub' ? (
+            <>Nav<span style={{ color: 'var(--brand-color, var(--palette-primary))' }}>Hub</span></>
+          ) : (
+            <span style={{ color: 'var(--brand-color, var(--palette-primary))' }}>{branding.name}</span>
+          )}
         </Link>
 
         <div className="flex-1" />
@@ -415,7 +440,7 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
               </DropdownMenuItem>
               <div className="px-3 py-2 border-t border-border">
                 <p className="text-[11px] text-muted-foreground text-center">
-                  NavHub v{pkg.version}.{process.env.NEXT_PUBLIC_BUILD_DATE ?? '0'}{process.env.NEXT_PUBLIC_BUILD_HASH ? ` · ${process.env.NEXT_PUBLIC_BUILD_HASH}` : ''}
+                  {branding.name} v{pkg.version}.{process.env.NEXT_PUBLIC_BUILD_DATE ?? '0'}{process.env.NEXT_PUBLIC_BUILD_HASH ? ` · ${process.env.NEXT_PUBLIC_BUILD_HASH}` : ''}
                 </p>
               </div>
             </DropdownMenuContent>

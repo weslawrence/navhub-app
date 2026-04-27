@@ -115,6 +115,34 @@ export async function PATCH(request: Request, { params }: Params) {
     }
   }
 
+  // ── Branding (migration 047) ─────────────────────────────────────────────
+  if ('brand_name' in body) {
+    if (body.brand_name === null) {
+      updates.brand_name = null
+    } else if (typeof body.brand_name === 'string') {
+      const v = body.brand_name.trim()
+      if (v.length > 30) {
+        return NextResponse.json({ error: 'Brand name max 30 characters' }, { status: 422 })
+      }
+      updates.brand_name = v || null
+    }
+  }
+  if ('brand_color' in body) {
+    if (body.brand_color === null) {
+      updates.brand_color = null
+    } else if (typeof body.brand_color === 'string') {
+      const v = body.brand_color.trim()
+      if (!/^#[0-9a-fA-F]{6}$/.test(v)) {
+        return NextResponse.json({ error: 'brand_color must be a #RRGGBB hex value' }, { status: 422 })
+      }
+      updates.brand_color = v.toLowerCase()
+    }
+  }
+  if ('logo_url' in body) {
+    // Only allow nulling here; uploads go through /api/groups/[id]/logo
+    if (body.logo_url === null) updates.logo_url = null
+  }
+
   if (Object.keys(updates).length === 0) {
     return NextResponse.json({ error: 'No fields to update' }, { status: 422 })
   }
@@ -124,7 +152,7 @@ export async function PATCH(request: Request, { params }: Params) {
     .from('groups')
     .update(updates)
     .eq('id', params.id)
-    .select('id, name, slug, primary_color, palette_id, web_search_enabled, timezone, location')
+    .select('id, name, slug, primary_color, palette_id, web_search_enabled, timezone, location, brand_name, brand_color, logo_url')
     .single()
 
   if (error) {

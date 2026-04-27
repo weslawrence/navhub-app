@@ -334,11 +334,11 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
-          {invites.length === 0 ? (
+          {invites.filter(i => !i.accepted_at).length === 0 ? (
             <p className="px-6 py-4 text-sm text-muted-foreground">No pending invites.</p>
           ) : (
             <ul className="divide-y">
-              {invites.map(invite => (
+              {invites.filter(i => !i.accepted_at).map(invite => (
                 <li key={invite.id} className="flex items-center gap-3 px-6 py-3">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-foreground truncate">{invite.email}</p>

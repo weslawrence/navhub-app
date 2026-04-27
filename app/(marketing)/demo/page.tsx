@@ -35,17 +35,32 @@ export default function DemoPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 sm:px-6 pt-24 pb-20">
+    <div className="min-h-screen flex items-start justify-center px-4 sm:px-6 pt-24 pb-20">
       <div className="w-full max-w-lg">
 
         {/* Header */}
         <div className="mb-8 text-center space-y-3">
           <h1 className="text-3xl sm:text-4xl font-bold text-white">
-            Request a Demo
+            See NavHub in action
           </h1>
-          <p className="text-slate-400">
-            Tell us about your business. We&apos;ll be in touch within 1 business day.
+          <p className="text-slate-400 leading-relaxed">
+            See how NavHub brings AI-native intelligence to your business — with your data,
+            your models, and your governance.
           </p>
+        </div>
+
+        {/* What you'll see */}
+        <div className="mb-6 rounded-xl border border-white/[0.08] bg-[#0d1626]/60 p-5 space-y-2">
+          <p className="text-xs font-semibold text-sky-400 tracking-widest uppercase font-[family-name:var(--font-dm-mono)]">
+            In the demo, you&apos;ll see
+          </p>
+          <ul className="space-y-1.5 text-sm text-slate-300">
+            <li className="flex gap-2.5"><span className="text-emerald-400">✓</span> Configuring AI agents with company-specific knowledge</li>
+            <li className="flex gap-2.5"><span className="text-emerald-400">✓</span> Generating financial reports and documents with AI</li>
+            <li className="flex gap-2.5"><span className="text-emerald-400">✓</span> Governing access across your organisation</li>
+            <li className="flex gap-2.5"><span className="text-emerald-400">✓</span> Connecting your data ecosystem (Xero, SharePoint, marketing platforms)</li>
+            <li className="flex gap-2.5"><span className="text-emerald-400">✓</span> BYO AI model configuration</li>
+          </ul>
         </div>
 
         {/* Card */}

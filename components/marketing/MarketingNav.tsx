@@ -5,9 +5,10 @@ import Link from 'next/link'
 import { Menu, X } from 'lucide-react'
 
 const NAV_LINKS = [
-  { label: 'Features', href: '/#features' },
-  { label: 'Demo',     href: '/demo'       },
-  { label: 'Contact',  href: '/contact'    },
+  { label: 'Features',   href: '/#features'  },
+  { label: 'Security',   href: '/security'   },
+  { label: 'Enterprise', href: '/enterprise' },
+  { label: 'Pricing',    href: '/pricing'    },
 ]
 
 export default function MarketingNav() {

@@ -63,6 +63,9 @@ export async function middleware(request: NextRequest) {
     pathname === '/'                            ||
     pathname === '/demo'                        ||
     pathname === '/contact'                     ||
+    pathname === '/security'                    ||
+    pathname === '/enterprise'                  ||
+    pathname === '/pricing'                     ||
     pathname.startsWith('/api/marketing/')      ||
     // SharePoint OAuth callback — Microsoft redirects unauthenticated
     pathname.startsWith('/api/integrations/sharepoint/callback') ||

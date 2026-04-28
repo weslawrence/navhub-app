@@ -1573,14 +1573,18 @@ Important:
         .eq('id', runId)
         .single()
       if (cancelCheck?.cancellation_requested) {
+        // Persist whatever the agent has produced so far (text + tool calls)
+        // so the run detail page can show partial progress instead of a blank.
         await admin
           .from('agent_runs')
           .update({
             status:       'cancelled',
             cancelled_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
+            output:       fullOutput,
             tool_calls:   toolCallLogs,
             tokens_used:  totalTokens,
+            output:       fullOutput || null,
           })
           .eq('id', runId)
         onChunk({ type: 'cancelled' })
@@ -1662,13 +1666,14 @@ Important:
           const answer   = await handleAskUser(question, runId, onChunk)
 
           if (answer === '__CANCELLED__') {
-            // Cancellation detected during wait — clean up and return
+            // Cancellation detected during ask_user wait — preserve partial output
             await admin
               .from('agent_runs')
               .update({
                 status:       'cancelled',
                 cancelled_at: new Date().toISOString(),
                 completed_at: new Date().toISOString(),
+                output:       fullOutput,
                 tool_calls:   toolCallLogs,
                 tokens_used:  totalTokens,
               })

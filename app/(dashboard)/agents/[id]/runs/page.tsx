@@ -92,6 +92,25 @@ export default function AgentRunsPage() {
 
   useEffect(() => { void loadRuns(page) }, [loadRuns, page])
 
+  // Refresh while any run is in an active state (queued / running / awaiting_input).
+  // Catches status changes triggered from the run detail page (e.g. cancel)
+  // without making the user reload manually.
+  useEffect(() => {
+    const hasActive = runs.some(r =>
+      ['queued', 'running', 'awaiting_input'].includes(r.status as string),
+    )
+    if (!hasActive) return
+    const interval = setInterval(() => { void loadRuns(page) }, 10_000)
+    return () => clearInterval(interval)
+  }, [runs, loadRuns, page])
+
+  // Refresh on window focus — typical when returning from /agents/runs/[id]
+  useEffect(() => {
+    function onFocus() { void loadRuns(page) }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadRuns, page])
+
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
   return (

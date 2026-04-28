@@ -72,17 +72,21 @@ export default function AgentRunPage() {
   const [period,         setPeriod]         = useState(periodOptions[0])
   const [selectedCompanyIds, setSelectedCompanyIds] = useState<string[]>([])
 
-  // Output settings
-  const [outputType,   setOutputType]   = useState<'document' | 'report' | ''>('')
-  const [outputFolderId, setOutputFolderId] = useState('')
-  const [outputName,   setOutputName]   = useState('')
-  const [outputStatus, setOutputStatus] = useState<'draft' | 'published'>('draft')
+  // Output settings (pre-populated from query params for "Run Again")
+  const initialOutputType = (searchParams.get('output_type') as 'document' | 'report' | null) ?? ''
+  const initialStatus     = (searchParams.get('status')      as 'draft' | 'published' | null) ?? 'draft'
+  const [outputType,   setOutputType]   = useState<'document' | 'report' | ''>(initialOutputType)
+  const [outputFolderId, setOutputFolderId] = useState(searchParams.get('folder_id')   ?? '')
+  const [outputName,   setOutputName]   = useState(searchParams.get('output_name') ?? '')
+  const [outputStatus, setOutputStatus] = useState<'draft' | 'published'>(initialStatus)
 
-  // Notifications
-  const [notifyEmailOn, setNotifyEmailOn] = useState(false)
-  const [notifySlackOn, setNotifySlackOn] = useState(false)
-  const [notifyEmail,   setNotifyEmail]   = useState('')
-  const [notifySlack,   setNotifySlack]   = useState('')
+  // Notifications (pre-populated from query params for "Run Again")
+  const initialNotifyEmail = searchParams.get('notify_email') ?? ''
+  const initialNotifySlack = searchParams.get('notify_slack') ?? ''
+  const [notifyEmailOn, setNotifyEmailOn] = useState(!!initialNotifyEmail)
+  const [notifySlackOn, setNotifySlackOn] = useState(!!initialNotifySlack)
+  const [notifyEmail,   setNotifyEmail]   = useState(initialNotifyEmail)
+  const [notifySlack,   setNotifySlack]   = useState(initialNotifySlack)
   const [slackChannels, setSlackChannels] = useState<{ id: string; name: string }[]>([])
 
   // Per-run attachments
@@ -124,10 +128,11 @@ export default function AgentRunPage() {
       setAgent(agJson.data)
       setCompanies((coJson.data ?? []).filter(c => (c as { is_active?: boolean }).is_active !== false))
       if (grJson.data?.group?.timezone) setGroupTimezone(grJson.data.group.timezone)
-      // Pre-populate notifications from agent defaults
+      // Pre-populate notifications from agent defaults — but only when the
+      // query-param "Run Again" copy didn't already supply them.
       const a = agJson.data as unknown as { notify_email?: string | null; notify_slack_channel?: string | null }
-      if (a.notify_email)         setNotifyEmail(a.notify_email)
-      if (a.notify_slack_channel) setNotifySlack(a.notify_slack_channel)
+      if (a.notify_email && !initialNotifyEmail)         setNotifyEmail(a.notify_email)
+      if (a.notify_slack_channel && !initialNotifySlack) setNotifySlack(a.notify_slack_channel)
     } finally {
       setLoading(false)
     }

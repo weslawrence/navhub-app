@@ -452,6 +452,33 @@ export default function RunStreamPage() {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  /** Build the /agents/[id]/run URL carrying every persisted run setting. */
+  function buildRunAgainUrl(r: typeof run, recurring: boolean) {
+    if (!r?.agent_id) return
+    const params = new URLSearchParams()
+    const r2 = r as unknown as {
+      input_context?:        { extra_instructions?: string }
+      run_name?:             string | null
+      output_folder_id?:     string | null
+      output_status?:        string | null
+      output_type?:          string | null
+      output_name_override?: string | null
+      notify_email?:         string | null
+      notify_slack_channel?: string | null
+    }
+    if (r2.input_context?.extra_instructions) params.set('brief', r2.input_context.extra_instructions)
+    if (r2.run_name)                          params.set('name',  r2.run_name)
+    if (r2.output_folder_id)                  params.set('folder_id',     r2.output_folder_id)
+    if (r2.output_status)                     params.set('status',        r2.output_status)
+    if (r2.output_type)                       params.set('output_type',   r2.output_type)
+    if (r2.output_name_override)              params.set('output_name',   r2.output_name_override)
+    if (r2.notify_email)                      params.set('notify_email',  r2.notify_email)
+    if (r2.notify_slack_channel)              params.set('notify_slack',  r2.notify_slack_channel)
+    if (recurring)                            params.set('recurring',     'true')
+    const qs = params.toString()
+    router.push(`/agents/${r.agent_id}/run${qs ? `?${qs}` : ''}`)
+  }
+
   async function handleSendReply() {
     if (!awaitingInput || !replyText.trim()) return
     setSendingReply(true)
@@ -675,15 +702,7 @@ export default function RunStreamPage() {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs"
-                    onClick={() => {
-                      const params = new URLSearchParams()
-                      const brief = run.input_context?.extra_instructions ?? ''
-                      const name  = (run as unknown as { run_name?: string | null }).run_name ?? ''
-                      if (brief) params.set('brief', brief)
-                      if (name)  params.set('name',  name)
-                      params.set('recurring', 'true')
-                      router.push(`/agents/${run.agent_id}/run?${params.toString()}`)
-                    }}
+                    onClick={() => buildRunAgainUrl(run, true)}
                     title="Re-run this brief on a recurring schedule"
                   >
                     <CalendarClock className="h-3 w-3 mr-1" /> Make Recurring
@@ -693,16 +712,7 @@ export default function RunStreamPage() {
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs"
-                  onClick={() => {
-                    if (!run?.agent_id) return
-                    const params = new URLSearchParams()
-                    const brief = run.input_context?.extra_instructions ?? ''
-                    const name  = (run as unknown as { run_name?: string | null }).run_name ?? ''
-                    if (brief) params.set('brief', brief)
-                    if (name)  params.set('name',  name)
-                    const qs = params.toString()
-                    router.push(`/agents/${run.agent_id}/run${qs ? `?${qs}` : ''}`)
-                  }}
+                  onClick={() => buildRunAgainUrl(run, false)}
                 >
                   <Play className="h-3 w-3 mr-1" /> Run Again
                 </Button>

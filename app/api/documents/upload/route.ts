@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server'
 import { cookies }      from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { extractDocumentText } from '@/lib/document-extract'
 import type { DocumentType } from '@/lib/types'
+
+export const runtime     = 'nodejs'
+export const maxDuration = 60
 
 const ALLOWED_TYPES: Record<string, string> = {
   '.pdf':  'application/pdf',
@@ -73,7 +77,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: `Storage upload failed: ${storageErr.message}` }, { status: 500 })
   }
 
-  // Insert document record
+  // Auto-extract content for supported file types BEFORE the insert so the
+  // document is searchable / agent-readable as soon as it appears in the UI.
+  // (Inline await — same lesson as SharePoint sync; Vercel kills fire-and-forget.)
+  let extractedContent = ''
+  let extractError: string | null = null
+  try {
+    extractedContent = await extractDocumentText(file.name, contentType, buffer)
+  } catch (err) {
+    extractError = err instanceof Error ? err.message : String(err)
+    console.error('[upload] auto-extract failed:', extractError)
+  }
+
+  // Insert document record (status defaults to draft — uploads are not auto-published)
   const { data: doc, error: dbErr } = await admin
     .from('documents')
     .insert({
@@ -83,8 +99,8 @@ export async function POST(request: Request) {
       title,
       document_type:    'financial_analysis' as DocumentType,
       audience:         'internal',
-      content_markdown: '',
-      status:           'published',
+      content_markdown: extractedContent,
+      status:           'draft',
       upload_source:    'uploaded',
       file_path:        storagePath,
       file_name:        file.name,
@@ -103,10 +119,12 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     data: {
-      document_id: docId,
+      document_id:     docId,
       title,
-      file_path: storagePath,
-      document: doc,
+      file_path:       storagePath,
+      document:        doc,
+      extracted_chars: extractedContent.length,
+      extract_error:   extractError,
     },
   }, { status: 201 })
 }

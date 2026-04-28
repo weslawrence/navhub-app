@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server'
 import { cookies }      from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
+import { extractDocumentText } from '@/lib/document-extract'
+
+export const runtime     = 'nodejs'
+export const maxDuration = 60
 
 // GET — list attachments for a run
 export async function GET(
@@ -87,15 +91,25 @@ export async function POST(
     return NextResponse.json({ error: `Storage upload failed: ${storageErr.message}` }, { status: 500 })
   }
 
+  // Auto-extract text content so read_attachment can serve it instantly
+  // without re-downloading from Storage on every tool call.
+  let contentText = ''
+  try {
+    contentText = await extractDocumentText(file.name, contentType, buffer)
+  } catch (err) {
+    console.error('[attachments] extract failed:', err)
+  }
+
   // Insert into agent_run_attachments
   const { data: attachment, error: dbErr } = await admin
     .from('agent_run_attachments')
     .insert({
-      run_id:    params.runId,
-      file_path: storagePath,
-      file_name: file.name,
-      file_type: contentType,
-      file_size: file.size,
+      run_id:       params.runId,
+      file_path:    storagePath,
+      file_name:    file.name,
+      file_type:    contentType,
+      file_size:    file.size,
+      content_text: contentText || null,
     })
     .select()
     .single()

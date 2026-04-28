@@ -255,12 +255,18 @@ function relativeDate(isoString: string): string {
 // ─── Assistant Panel ──────────────────────────────────────────────────────────
 
 interface AssistantPanelProps {
-  isAdmin?:  boolean
-  onClose:   () => void
-  groupId?:  string
+  isAdmin?:     boolean
+  onClose:      () => void
+  groupId?:     string
+  personaName?: string
 }
 
-export default function AssistantPanel({ isAdmin = false, onClose, groupId }: AssistantPanelProps) {
+export default function AssistantPanel({
+  isAdmin = false,
+  onClose,
+  groupId,
+  personaName = 'NavHub Assistant',
+}: AssistantPanelProps) {
   const pathname = usePathname()
 
   const [messages,          setMessages]          = useState<PanelMessage[]>([])
@@ -764,7 +770,7 @@ export default function AssistantPanel({ isAdmin = false, onClose, groupId }: As
         >
           <Sparkles className="h-4 w-4 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold leading-none">NavHub Assistant</p>
+            <p className="text-sm font-semibold leading-none">{personaName}</p>
             <p className="text-[10px] text-muted-foreground mt-0.5">Powered by Claude</p>
           </div>
 

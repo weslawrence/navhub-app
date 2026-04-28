@@ -62,7 +62,11 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
       const iJson = await iRes.json()
       const cJson = await cRes.json()
       if (mJson.data) setMembers(mJson.data)
-      if (iJson.data) setInvites(iJson.data)
+      // Defence-in-depth: API already filters by accepted_at IS NULL, but
+      // strip any accepted rows here too in case of cache or RLS surprises.
+      if (iJson.data) setInvites(
+        (iJson.data as GroupInvite[]).filter(i => !i.accepted_at),
+      )
       if (cJson.data) setCompanies((cJson.data as Array<{ id: string; name: string; is_active: boolean }>).filter(c => c.is_active).map(c => ({ id: c.id, name: c.name })))
     } catch (err) { console.error('Members load error:', err) } finally {
       setLoading(false)
@@ -70,6 +74,14 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
   }, [groupId])
 
   useEffect(() => { void loadMembers() }, [loadMembers])
+
+  // Refresh on window focus — catches the case where an invitee accepts in
+  // another tab while this view is still open.
+  useEffect(() => {
+    function onFocus() { void loadMembers() }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [loadMembers])
 
   // Auto-clear invite toast
   useEffect(() => {

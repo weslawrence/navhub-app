@@ -162,22 +162,28 @@ export async function POST(
   const existingUser = userList?.users.find(u => u.email === email)
 
   if (!existingUser) {
-    // ── NEW user — send Supabase magic-link invite email ──────────────────────
+    // ── NEW user — generate signup link directly so the invite email itself
+    //    contains a working "Accept invitation" button (no second email).
     const redirectTo =
       `${appUrl}/accept-invite?group_id=${params.id}&role=${encodeURIComponent(role)}`
 
-    const { error: supabaseErr } = await admin.auth.admin.inviteUserByEmail(email, {
-      redirectTo,
-      data: { group_id: params.id, role, invited_by: session.user.id },
-    })
-
-    if (supabaseErr) {
-      // Non-fatal — invite record saved; log error
-      console.error('[invite] Supabase invite error:', supabaseErr.message)
+    let signupLink = `${appUrl}/login`
+    try {
+      const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+        type:  'invite',
+        email,
+        options: { redirectTo, data: { group_id: params.id, role, invited_by: session.user.id } },
+      })
+      if (linkErr) {
+        console.error('[invite] generateLink (invite) error:', linkErr.message)
+      }
+      const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
+      if (action) signupLink = action
+    } catch (err) {
+      console.error('[invite] generateLink (invite) threw:', err instanceof Error ? err.message : String(err))
     }
 
-    // Also send a Resend notification so the invitee knows which group they're joining
-    void getResend().emails.send({
+    await getResend().emails.send({
       from:    `NavHub <invites@${fromDomain}>`,
       to:      email,
       subject: `You've been invited to join ${groupName} on NavHub`,
@@ -186,9 +192,15 @@ export async function POST(
           <h2 style="margin:0 0 8px">You've been invited to <strong>${groupName}</strong></h2>
           <p style="margin:0 0 16px;color:#555">
             You've been invited to join <strong>${groupName}</strong> on NavHub as
-            <strong>${roleLabel}</strong>. Check your inbox for a separate email with a
-            link to set your password and activate your account.
+            <strong>${roleLabel}</strong>.
           </p>
+          <p style="margin:24px 0">
+            <a href="${signupLink}"
+               style="display:inline-block;padding:10px 20px;background:#0ea5e9;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
+              Accept invitation &amp; set up your account →
+            </a>
+          </p>
+          <p style="margin:0 0 8px;font-size:12px;color:#777">This link expires in 24 hours.</p>
           <p style="margin-top:24px;font-size:12px;color:#aaa">
             If you weren't expecting this, you can safely ignore this email.
           </p>
@@ -226,8 +238,23 @@ export async function POST(
       .update({ accepted_at: new Date().toISOString() })
       .eq('id', invite.id)
 
-    // Notification email
-    void getResend().emails.send({
+    // Existing user — generate a magic link so they can sign in straight from
+    // the email; fall back to the plain login page if the call fails.
+    let loginLink = `${appUrl}/dashboard`
+    try {
+      const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
+        type:    'magiclink',
+        email,
+        options: { redirectTo: `${appUrl}/dashboard` },
+      })
+      if (linkErr) console.error('[invite] generateLink (magiclink) error:', linkErr.message)
+      const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
+      if (action) loginLink = action
+    } catch (err) {
+      console.error('[invite] generateLink (magiclink) threw:', err instanceof Error ? err.message : String(err))
+    }
+
+    await getResend().emails.send({
       from:    `NavHub <invites@${fromDomain}>`,
       to:      email,
       subject: `You've been added to ${groupName} on NavHub`,
@@ -238,10 +265,13 @@ export async function POST(
             You now have access to <strong>${groupName}</strong> on NavHub with the role
             <strong>${roleLabel}</strong>.
           </p>
-          <a href="${appUrl}/dashboard"
-             style="display:inline-block;padding:10px 20px;background:#0ea5e9;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
-            Open NavHub
-          </a>
+          <p style="margin:24px 0">
+            <a href="${loginLink}"
+               style="display:inline-block;padding:10px 20px;background:#0ea5e9;color:#fff;border-radius:6px;text-decoration:none;font-weight:600">
+              Open NavHub →
+            </a>
+          </p>
+          <p style="margin:0 0 8px;font-size:12px;color:#777">This link expires in 24 hours.</p>
           <p style="margin-top:24px;font-size:12px;color:#aaa">
             If you weren't expecting this, you can safely ignore this email.
           </p>

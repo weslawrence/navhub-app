@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Sparkles } from 'lucide-react'
 import AssistantPanel from './AssistantPanel'
 
@@ -19,7 +19,20 @@ export default function AssistantButton({
   collapsed = false,
   onOpen,
 }: AssistantButtonProps) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen]                 = useState(false)
+  const [personaName, setPersonaName]   = useState('NavHub Assistant')
+
+  // Resolve the configured persona name (platform → group override)
+  useEffect(() => {
+    let cancelled = false
+    fetch('/api/assistant/persona')
+      .then(r => r.json())
+      .then((j: { persona_name?: string }) => {
+        if (!cancelled && j.persona_name?.trim()) setPersonaName(j.persona_name.trim())
+      })
+      .catch(() => { /* keep default */ })
+    return () => { cancelled = true }
+  }, [groupId])
 
   function handleOpen() {
     setOpen(true)
@@ -33,8 +46,8 @@ export default function AssistantButton({
         <button
           type="button"
           onClick={handleOpen}
-          title="NavHub Assistant"
-          aria-label="Open NavHub Assistant"
+          title={personaName}
+          aria-label={`Open ${personaName}`}
           className={
             collapsed
               ? 'w-full flex items-center justify-center py-2 rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors'
@@ -45,13 +58,14 @@ export default function AssistantButton({
             className="h-4 w-4 flex-shrink-0"
             style={{ color: 'var(--palette-primary)' }}
           />
-          {!collapsed && <span>NavHub Assistant</span>}
+          {!collapsed && <span>{personaName}</span>}
         </button>
 
         {open && (
           <AssistantPanel
             isAdmin={isAdmin}
             groupId={groupId}
+            personaName={personaName}
             onClose={() => setOpen(false)}
           />
         )}

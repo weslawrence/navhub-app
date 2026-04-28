@@ -1548,14 +1548,38 @@ Important:
     const toolCallLogs: ToolCallLog[] = []
 
     // Loop guards — prevent infinite tool call loops
-    const MAX_ITERATIONS   = 10
+    const MAX_ITERATIONS    = 10
     const MAX_TOOL_FAILURES = 3
-    let   iterationCount   = 0
+    const MAX_RUN_DURATION_MS = 5 * 60 * 1000   // 5 minutes — hard wall-clock cap
+    const runStartTime      = Date.now()
+    let   iterationCount    = 0
     const toolFailureCounts: Record<string, number> = {}
 
     // Agentic loop — continue until no more tool calls
     while (continueLoop) {
       iterationCount++
+
+      // ── Wall-clock timeout (defends against unbounded tool/model runs) ──
+      const elapsed = Date.now() - runStartTime
+      if (elapsed > MAX_RUN_DURATION_MS) {
+        const msg = '\n\n⚠️ Agent stopped: maximum run duration (5 minutes) exceeded.'
+        fullOutput += msg
+        onChunk({ type: 'text', content: msg })
+        await admin
+          .from('agent_runs')
+          .update({
+            status:        'error',
+            error_message: 'Run timeout: exceeded 5 minute maximum duration',
+            completed_at:  new Date().toISOString(),
+            output:        fullOutput,
+            tool_calls:    toolCallLogs,
+            tokens_used:   totalTokens,
+          })
+          .eq('id', runId)
+        onChunk({ type: 'error', message: 'Run timeout' })
+        return
+      }
+
       if (iterationCount > MAX_ITERATIONS) {
         const msg = '\n\n⚠️ Agent stopped: maximum iterations reached.'
         fullOutput += msg
@@ -1759,7 +1783,8 @@ Important:
       .eq('id', runId)
       .single()
     if (finalRun) {
-      void sendRunNotifications(finalRun as RunForNotify, agent as unknown as AgentForNotify, agent.group_id)
+      // Awaited — Vercel kills fire-and-forget after the response is sent.
+      await sendRunNotifications(finalRun as RunForNotify, agent as unknown as AgentForNotify, agent.group_id)
     }
 
     onChunk({ type: 'done', tokens: totalTokens })
@@ -1783,7 +1808,7 @@ Important:
       .eq('id', runId)
       .single()
     if (errRun) {
-      void sendRunNotifications(errRun as RunForNotify, agent as unknown as AgentForNotify, agent.group_id)
+      await sendRunNotifications(errRun as RunForNotify, agent as unknown as AgentForNotify, agent.group_id)
     }
 
     onChunk({ type: 'error', message })

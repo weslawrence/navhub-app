@@ -1581,10 +1581,9 @@ Important:
             status:       'cancelled',
             cancelled_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
-            output:       fullOutput,
+            output:       fullOutput || null,
             tool_calls:   toolCallLogs,
             tokens_used:  totalTokens,
-            output:       fullOutput || null,
           })
           .eq('id', runId)
         onChunk({ type: 'cancelled' })

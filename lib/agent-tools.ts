@@ -1079,6 +1079,15 @@ export async function createDocument(
 ): Promise<string> {
   const admin = createAdminClient()
 
+  // Log oversized payloads — large markdown bodies still write fine to
+  // documents.content_markdown (Postgres TEXT is unbounded), but help us
+  // diagnose model-side truncation if anything looks wrong downstream.
+  if (params.content_markdown && params.content_markdown.length > 50_000) {
+    console.warn(
+      `[create_document] Large document: ${params.content_markdown.length} chars for "${params.title}"`,
+    )
+  }
+
   const { data, error } = await admin.from('documents').insert({
     group_id:         context.groupId,
     title:            params.title,

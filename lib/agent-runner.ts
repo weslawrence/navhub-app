@@ -249,7 +249,7 @@ const ALL_TOOL_DEFS: Record<string, object> = {
         },
         content_markdown: {
           type: 'string',
-          description: 'Full document content in markdown. Use headings (##), tables, bullet lists as appropriate.',
+          description: 'The full markdown content of the document. Include ALL sections and content — do not truncate or summarise. Multi-page, multi-section documents are fully supported. Use headings (##), tables, bullet lists as appropriate.',
         },
         company_id: { type: 'string', description: 'Optional — associate with a specific company UUID.' },
         folder_id:  { type: 'string', description: 'Optional — save to a specific folder UUID.' },
@@ -1523,7 +1523,12 @@ Important:
 - Use create_document / update_document to save written outputs.
 - Use render_report to generate reports from templates (after list_report_templates + read_report_template).
 - Use read_financials to access P&L / Balance Sheet data.
-- Only use ask_user when you genuinely need information only the user can provide — never to confirm tool choice or method.`
+- Only use ask_user when you genuinely need information only the user can provide — never to confirm tool choice or method.
+
+Long / multi-section documents:
+- create_document accepts the full markdown body in content_markdown — there is no soft cap, do not truncate to fit.
+- If create_document fails or returns an error, retry once with update_document using the document_id returned by the failed/partial create.
+- If you must split a very long document, create it first with the title + a brief intro, then call update_document repeatedly with the same document_id appending each section's full content.`
     }
 
     // Initial messages

@@ -365,13 +365,59 @@ export default function RunStreamPage() {
 
   const loadMetaAndStream = useCallback(async () => {
     const infoRes = await fetch(`/api/agents/runs/${params.runId}/info`).catch(() => null)
+    let initialStatus: RunStatus | null = null
+    let runRow: AgentRun | null = null
     if (infoRes?.ok) {
       const infoJson = await infoRes.json()
-      if (infoJson.data?.run)   setRun(infoJson.data.run)
+      runRow = (infoJson.data?.run ?? null) as AgentRun | null
+      if (runRow)               setRun(runRow)
       if (infoJson.data?.agent) setAgent(infoJson.data.agent)
-      if (infoJson.data?.run?.status) setStatus(infoJson.data.run.status)
+      if (runRow?.status)       { setStatus(runRow.status); initialStatus = runRow.status }
     }
     setLoading(false)
+
+    // ── Restore prior state without re-streaming ──────────────────────────
+    // If the run is already in a terminal or paused state, don't open a new
+    // SSE stream — that would re-trigger the agent loop server-side. Instead,
+    // hydrate the UI from the stored run record.
+    const NO_STREAM: RunStatus[] = ['success', 'error', 'cancelled', 'awaiting_input']
+    if (initialStatus && NO_STREAM.includes(initialStatus) && runRow) {
+      const r = runRow as unknown as {
+        output?:                 string | null
+        tool_calls?:             Array<{ tool: string; input?: unknown; output?: string }>
+        tokens_used?:            number | null
+        error_message?:          string | null
+        awaiting_input_question?: string | null
+        started_at?:             string | null
+        completed_at?:           string | null
+      }
+      if (r.output) setTextOutput(r.output)
+      if (Array.isArray(r.tool_calls)) {
+        // Reverse so newest is on top (matches live-stream behaviour)
+        const events: ToolEventEntry[] = [...r.tool_calls].reverse().map(tc => ({
+          tool:          tc.tool,
+          input:         (tc.input as Record<string, unknown> | undefined),
+          output:        tc.output,
+          inProgress:    false,
+          resultSummary: summariseTool(tc.tool, tc.output ?? ''),
+        }))
+        setToolEvents(events)
+      }
+      if (typeof r.tokens_used === 'number') setTokens(r.tokens_used)
+      if (r.error_message)                   setErrorMsg(r.error_message)
+      if (r.started_at && r.completed_at) {
+        setDurationSecs(Math.round(
+          (new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000,
+        ))
+      }
+      // Restore the awaiting-input prompt so the user can reply without
+      // re-opening the SSE stream (the respond endpoint resolves the
+      // pending interaction by run_id when interaction_id is omitted).
+      if (initialStatus === 'awaiting_input' && r.awaiting_input_question) {
+        setAwaitingInput({ question: r.awaiting_input_question, interaction_id: '' })
+      }
+      return
+    }
 
     const runRes = await fetch(`/api/agents/runs/${params.runId}/stream`).catch(() => null)
     if (!runRes?.ok || !runRes.body) {

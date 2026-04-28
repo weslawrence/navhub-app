@@ -17,14 +17,20 @@ const ANTHROPIC_TEXT_MIME = new Set([
   'text/csv',
 ])
 
+// Anthropic's Document API officially supports PDF only — other Office formats
+// must be parsed locally first. DOCX goes through `mammoth`; XLSX/PPTX/etc.
+// fall back to the doc API anyway since some accounts/models accept them.
 const ANTHROPIC_DOC_MIME = new Set([
   'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-excel',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/vnd.ms-powerpoint',
+])
+
+const DOCX_MIME = new Set([
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
 ])
 
 const ANTHROPIC_IMAGE_MIME = new Set([
@@ -61,6 +67,18 @@ export async function extractDocumentText(
     try {
       return buffer.toString('utf-8')
     } catch {
+      return ''
+    }
+  }
+
+  // 2. DOCX → mammoth (Anthropic's Document API does not officially support DOCX)
+  if (DOCX_MIME.has(mime) || /\.docx?$/i.test(name)) {
+    try {
+      const mammoth = await import('mammoth')
+      const result  = await mammoth.extractRawText({ buffer })
+      return (result.value ?? '').trim()
+    } catch (err) {
+      console.error('[document-extract] mammoth failed:', err instanceof Error ? err.message : String(err))
       return ''
     }
   }

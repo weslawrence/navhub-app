@@ -1781,25 +1781,67 @@ export async function readAttachment(
     .single()
 
   if (!attachment) {
-    return JSON.stringify({ success: false, error: `Attachment "${params.file_name}" not found for this run` })
+    return JSON.stringify({
+      success: false,
+      error:   `Attachment "${params.file_name}" not found for this run`,
+    })
   }
 
-  const { data: urlData } = await admin.storage
-    .from('agent-runs')
-    .createSignedUrl((attachment as { file_path: string }).file_path, 300)
+  const fileName    = (attachment as { file_name:    string }).file_name
+  const fileType    = (attachment as { file_type:    string }).file_type ?? ''
+  const filePath    = (attachment as { file_path:    string }).file_path ?? ''
+  const contentText = (attachment as { content_text?: string | null }).content_text
 
-  if (!urlData?.signedUrl) {
-    return JSON.stringify({ success: false, error: 'Could not access file' })
+  // ── Fast path: pre-extracted content_text already on the row ───────────
+  // Linked NavHub documents materialised at run start get their
+  // content_markdown copied into content_text — no Storage round-trip needed.
+  if (contentText && contentText.trim().length > 0) {
+    return JSON.stringify({
+      success:   true,
+      type:      'text',
+      content:   contentText.slice(0, 50000),
+      file_name: fileName,
+    })
   }
 
-  const response = await fetch(urlData.signedUrl)
+  if (!filePath) {
+    return JSON.stringify({
+      success: false,
+      error:   'Attachment has no stored content (no file_path and no content_text)',
+    })
+  }
+
+  // ── Storage path: pick the right bucket ────────────────────────────────
+  // User-uploaded run attachments live in 'agent-runs'.
+  // Files linked from Documents (path includes '/documents/') live in 'documents'.
+  // Try the most likely bucket first, then fall back to the other.
+  const primaryBucket  = filePath.includes('/documents/') ? 'documents' : 'agent-runs'
+  const fallbackBucket = primaryBucket === 'documents'    ? 'agent-runs' : 'documents'
+
+  let signedUrl: string | null = null
+  for (const bucket of [primaryBucket, fallbackBucket]) {
+    const { data: urlData } = await admin.storage
+      .from(bucket)
+      .createSignedUrl(filePath, 300)
+    if (urlData?.signedUrl) {
+      signedUrl = urlData.signedUrl
+      break
+    }
+  }
+
+  if (!signedUrl) {
+    return JSON.stringify({
+      success: false,
+      error:   `Could not access file at "${filePath}" in agent-runs or documents bucket`,
+    })
+  }
+
+  const response = await fetch(signedUrl)
   if (!response.ok) {
     return JSON.stringify({ success: false, error: 'Failed to download attachment' })
   }
 
-  const fileName = (attachment as { file_name: string }).file_name
-  const fileType = (attachment as { file_type: string }).file_type ?? ''
-  const isImage  = /\.(png|jpg|jpeg|gif|webp)$/i.test(fileName) || fileType.startsWith('image/')
+  const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(fileName) || fileType.startsWith('image/')
 
   if (isImage) {
     const buffer    = await response.arrayBuffer()

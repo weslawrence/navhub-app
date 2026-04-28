@@ -123,6 +123,18 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
     }
   }
 
+  async function handleResendInvite(inviteId: string, email: string) {
+    if (!groupId) return
+    try {
+      const res  = await fetch(`/api/groups/${groupId}/invites/${inviteId}/resend`, { method: 'POST' })
+      const json = await res.json() as { error?: string }
+      if (!res.ok) throw new Error(json.error ?? 'Failed to resend invite')
+      setInviteToast(`Invite resent to ${email}`)
+    } catch (err) {
+      setInviteToast(err instanceof Error ? err.message : 'Failed to resend invite')
+    }
+  }
+
   async function handleCancelInvite(inviteId: string) {
     if (!groupId) return
     try {
@@ -379,14 +391,25 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
                       </Button>
                     </span>
                   ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs px-2 text-muted-foreground hover:text-destructive"
-                      onClick={() => setCancelConfirm(invite.id)}
-                    >
-                      Revoke
-                    </Button>
+                    <span className="flex gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs px-2 text-muted-foreground hover:text-foreground"
+                        onClick={() => void handleResendInvite(invite.id, invite.email)}
+                        title="Resend invite email"
+                      >
+                        Resend
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs px-2 text-muted-foreground hover:text-destructive"
+                        onClick={() => setCancelConfirm(invite.id)}
+                      >
+                        Revoke
+                      </Button>
+                    </span>
                   )}
                 </li>
               ))}

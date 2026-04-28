@@ -1673,18 +1673,37 @@ Long / multi-section documents:
       const openAICreds: Record<string, string> = { ...credentials }
       if (cfgApiKey && cfgProvider === 'openai')    openAICreds['OPENAI_API_KEY']    = cfgApiKey
 
+      // Belt-and-braces: race the model call against an explicit 2-minute
+      // budget. callClaude/callGPT4o already have AbortController + idle
+      // timers, but if the underlying socket is held open without progress
+      // those abort paths can stall too.
+      const MODEL_TIMEOUT_MS = 2 * 60 * 1000
+      const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> =>
+        Promise.race([
+          p,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`TIMEOUT:${label}`)), MODEL_TIMEOUT_MS),
+          ),
+        ])
+
       if (useOpenAI) {
-        result = await callGPT4o(messages, toolDefs, systemPrompt, openAICreds, (chunk) => {
-          onChunk({ type: 'text', content: chunk })
-          fullOutput += chunk
-        })
+        result = await withTimeout(
+          callGPT4o(messages, toolDefs, systemPrompt, openAICreds, (chunk) => {
+            onChunk({ type: 'text', content: chunk })
+            fullOutput += chunk
+          }),
+          'callGPT4o',
+        )
       } else {
         // Use the resolved model name from config when present; fall back to agent.model
         const modelToUse = cfgProvider === 'anthropic' && cfgModelName ? cfgModelName : agent.model
-        result = await callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
-          onChunk({ type: 'text', content: chunk })
-          fullOutput += chunk
-        }, claudeCreds)
+        result = await withTimeout(
+          callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
+            onChunk({ type: 'text', content: chunk })
+            fullOutput += chunk
+          }, claudeCreds),
+          'callClaude',
+        )
       }
 
       totalTokens += result.tokens

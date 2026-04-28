@@ -776,6 +776,13 @@ async function callClaude(
   }
   if (tools.length > 0) body.tools = tools
 
+  // Abort the fetch + stream if Anthropic stalls. Two layers:
+  //   1. Connect/headers timeout — 30s — guards against hung TCP / TLS.
+  //   2. Per-chunk idle timeout — 60s — guards against a stalled stream
+  //      (no SSE event for a minute → almost certainly dead).
+  const controller   = new AbortController()
+  const connectTimer = setTimeout(() => controller.abort(), 30_000)
+
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method:  'POST',
     headers: {
@@ -783,8 +790,12 @@ async function callClaude(
       'anthropic-version': '2023-06-01',
       'content-type':      'application/json',
     },
-    body: JSON.stringify(body),
+    body:   JSON.stringify(body),
+    signal: controller.signal,
   })
+
+  // Headers received → cancel the connect timer, switch to per-chunk idle timer
+  clearTimeout(connectTimer)
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: { message?: string } }
@@ -802,9 +813,17 @@ async function callClaude(
   const decoder = new TextDecoder()
   let buffer    = ''
 
-  while (true) {
+  // Per-chunk idle watchdog
+  let idleTimer = setTimeout(() => controller.abort(), 60_000)
+  const resetIdle = () => {
+    clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => controller.abort(), 60_000)
+  }
+
+  try { while (true) {
     const { done, value } = await reader.read()
     if (done) break
+    resetIdle()
 
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
@@ -850,6 +869,8 @@ async function callClaude(
         if (usage) inputTokens = usage.input_tokens ?? 0
       }
     }
+  } } finally {
+    clearTimeout(idleTimer)
   }
 
   // Parse accumulated tool inputs
@@ -1248,6 +1269,21 @@ export async function executeAgentRun(
 
   const groupId = agent.group_id
 
+  // ── Hard wall-clock safety net ──────────────────────────────────────────
+  // The agentic loop has a per-iteration timeout check, but if a tool or
+  // network call hangs INSIDE an iteration the check never runs. As a
+  // last-resort guard, schedule a setTimeout that flips
+  // cancellation_requested after 5 minutes — the next checkpoint will then
+  // finalise the run with the proper save-state flow.
+  const HARD_TIMEOUT_MS = 5 * 60 * 1000
+  const hardTimeoutHandle = setTimeout(() => {
+    void admin
+      .from('agent_runs')
+      .update({ cancellation_requested: true })
+      .eq('id', runId)
+      .eq('status', 'running')
+  }, HARD_TIMEOUT_MS)
+
   try {
     // Load credentials
     const credentials = await loadCredentials(agent.id)
@@ -1527,8 +1563,12 @@ Important:
 
 Long / multi-section documents:
 - create_document accepts the full markdown body in content_markdown — there is no soft cap, do not truncate to fit.
-- If create_document fails or returns an error, retry once with update_document using the document_id returned by the failed/partial create.
-- If you must split a very long document, create it first with the title + a brief intro, then call update_document repeatedly with the same document_id appending each section's full content.`
+- For documents longer than 2 pages, prefer the create-then-update pattern:
+  STEP 1: Call create_document with the COMPLETE content if it fits in a single tool call, OR with the title + a brief intro otherwise.
+  STEP 2: Read the document_id from the TOP LEVEL of the create_document response (it is also under "data.document_id" for backwards compat — either works).
+  STEP 3: Call update_document using that exact document_id string to add or replace the full content.
+- The create_document response shape is: {"success":true,"document_id":"<uuid>","title":"...","view_url":"...","data":{...}}. Use the top-level document_id verbatim — never pass "undefined", an empty string, or a guess.
+- Never call update_document without first verifying you have the document_id from a successful create_document call earlier in this same run.`
     }
 
     // Initial messages
@@ -1817,5 +1857,9 @@ Long / multi-section documents:
     }
 
     onChunk({ type: 'error', message })
+  } finally {
+    // Always clear the hard-timeout safety net — including on early `return`s
+    // from cancellation/iteration-cap/timeout branches inside the try block.
+    clearTimeout(hardTimeoutHandle)
   }
 }

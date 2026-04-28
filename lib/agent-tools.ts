@@ -1103,13 +1103,21 @@ export async function createDocument(
 
   if (error) return `Error creating document: ${error.message}`
 
-  const appUrl  = process.env.NEXT_PUBLIC_APP_URL ?? ''
-  const viewUrl = `${appUrl}/documents/${(data as { id: string }).id}`
+  const appUrl     = process.env.NEXT_PUBLIC_APP_URL ?? ''
+  const documentId = (data as { id: string }).id
+  const viewUrl    = `${appUrl}/documents/${documentId}`
 
+  // document_id is on the TOP LEVEL of the response so the model can't
+  // miss it. The legacy `data.document_id` is preserved for backwards
+  // compatibility with any prompt patterns that already navigate it.
   return JSON.stringify({
     success:     true,
+    document_id: documentId,
+    title:       params.title,
+    view_url:    viewUrl,
+    message:     `Document created. Use document_id "${documentId}" with update_document to modify or append content.`,
     data: {
-      document_id:   (data as { id: string }).id,
+      document_id:   documentId,
       title:         params.title,
       document_type: params.document_type,
       audience:      params.audience,
@@ -1126,26 +1134,41 @@ export async function updateDocument(
   params:  UpdateDocumentParams,
   context: ToolContext
 ): Promise<string> {
+  // Hard guard against the agent calling update_document before it has a
+  // document_id from create_document — common cause of silent failures.
+  const docId = (params.document_id ?? '').toString().trim()
+  if (!docId || docId === 'undefined' || docId === 'null') {
+    return JSON.stringify({
+      success: false,
+      error:   'document_id is required and must be the exact string returned by create_document. Look at the create_document response for the top-level "document_id" field, then pass that value as document_id here.',
+    })
+  }
+
   const admin = createAdminClient()
 
   // Verify ownership
   const { data: existing } = await admin
     .from('documents')
     .select('id, title, content_markdown')
-    .eq('id', params.document_id)
+    .eq('id', docId)
     .eq('group_id', context.groupId)
     .single()
 
-  if (!existing) return `Error: Document ${params.document_id} not found or not accessible.`
+  if (!existing) {
+    return JSON.stringify({
+      success: false,
+      error:   `Document "${docId}" not found or not accessible. The document_id must match a document created in this group.`,
+    })
+  }
 
   // Auto-version current content
   const { count } = await admin
     .from('document_versions')
     .select('id', { count: 'exact', head: true })
-    .eq('document_id', params.document_id)
+    .eq('document_id', docId)
 
   void admin.from('document_versions').insert({
-    document_id:      params.document_id,
+    document_id:      docId,
     content_markdown: (existing as { content_markdown: string }).content_markdown,
     version:          (count ?? 0) + 1,
     created_by:       null,
@@ -1161,14 +1184,16 @@ export async function updateDocument(
   const { error } = await admin
     .from('documents')
     .update(updates)
-    .eq('id', params.document_id)
+    .eq('id', docId)
 
   if (error) return `Error updating document: ${error.message}`
 
   return JSON.stringify({
-    success: true,
+    success:     true,
+    document_id: docId,
+    title:       params.title ?? (existing as { title: string }).title,
     data: {
-      document_id: params.document_id,
+      document_id: docId,
       title:       params.title ?? (existing as { title: string }).title,
       reason:      params.reason ?? 'Updated by agent',
     },

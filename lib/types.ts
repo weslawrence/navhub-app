@@ -336,7 +336,7 @@ export type PersonaPreset =
   | 'custom'
 
 export type RunStatus =
-  | 'queued' | 'running' | 'success' | 'error' | 'cancelled' | 'awaiting_input'
+  | 'queued' | 'running' | 'cancelling' | 'success' | 'error' | 'cancelled' | 'awaiting_input'
 
 export interface Agent {
   id:                    string

@@ -38,11 +38,13 @@ export async function POST(
     )
   }
 
-  // Set the cancellation flag — agent-runner.ts polls this at each iteration
+  // Set the cancellation flag + flip status to 'cancelling' so the UI gets
+  // immediate feedback while the runner unwinds (it'll detect the flag at
+  // its next stream checkpoint and finalise to 'cancelled').
   const admin = createAdminClient()
   const { error } = await admin
     .from('agent_runs')
-    .update({ cancellation_requested: true })
+    .update({ cancellation_requested: true, status: 'cancelling' })
     .eq('id', params.runId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })

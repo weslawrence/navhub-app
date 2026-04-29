@@ -763,7 +763,8 @@ async function callClaude(
   systemPrompt: string,
   onChunk:      (chunk: string) => void,
   credentials?: Record<string, string>,
-  maxTokens?:   number
+  maxTokens?:   number,
+  isCancelled?: () => Promise<boolean>
 ): Promise<ModelResponse> {
   // Use BYO key from agent credentials if available, fall back to env var
   const apiKey = credentials?.['anthropic_api_key'] ?? process.env.ANTHROPIC_API_KEY
@@ -822,10 +823,27 @@ async function callClaude(
     idleTimer = setTimeout(() => controller.abort(), 60_000)
   }
 
+  let chunkCount = 0
   try { while (true) {
     const { done, value } = await reader.read()
     if (done) break
     resetIdle()
+
+    // Mid-stream cancellation check — poll DB every 20 SSE frames so the user
+    // doesn't have to mash the Cancel button waiting for a long model response
+    // to finish before the iteration-boundary check fires.
+    chunkCount++
+    if (isCancelled && chunkCount % 20 === 0) {
+      try {
+        if (await isCancelled()) {
+          controller.abort()
+          throw new Error('CANCELLED_MID_STREAM')
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message === 'CANCELLED_MID_STREAM') throw err
+        // DB blip — ignore, fall back to iteration-boundary check
+      }
+    }
 
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
@@ -1744,14 +1762,42 @@ and emoji. There is no length limit — pick a title that reads well and describ
       } else {
         // Use the resolved model name from config when present; fall back to agent.model
         const modelToUse = cfgProvider === 'anthropic' && cfgModelName ? cfgModelName : agent.model
-        result = await withTimeout(
-          callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
-            onChunk({ type: 'text', content: chunk })
-            fullOutput += chunk
-            resetActivityTimer()
-          }, claudeCreds, MAX_TOKENS_PER_CALL),
-          'callClaude',
-        )
+        // Mid-stream cancellation poller — passed into callClaude so it can
+        // bail in the middle of a long model response, not just at iteration
+        // boundaries.
+        const isCancelledFn = async () => {
+          const { data } = await admin
+            .from('agent_runs')
+            .select('cancellation_requested')
+            .eq('id', runId)
+            .single()
+          return !!(data as { cancellation_requested?: boolean } | null)?.cancellation_requested
+        }
+        try {
+          result = await withTimeout(
+            callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
+              onChunk({ type: 'text', content: chunk })
+              fullOutput += chunk
+              resetActivityTimer()
+            }, claudeCreds, MAX_TOKENS_PER_CALL, isCancelledFn),
+            'callClaude',
+          )
+        } catch (err) {
+          if (err instanceof Error && err.message === 'CANCELLED_MID_STREAM') {
+            await admin.from('agent_runs').update({
+              status:       'cancelled',
+              cancelled_at: new Date().toISOString(),
+              completed_at: new Date().toISOString(),
+              output:       fullOutput || null,
+              tool_calls:   toolCallLogs,
+              tokens_used:  totalTokens,
+            }).eq('id', runId)
+            onChunk({ type: 'cancelled' })
+            continueLoop = false
+            break
+          }
+          throw err
+        }
       }
 
       totalTokens += result.tokens

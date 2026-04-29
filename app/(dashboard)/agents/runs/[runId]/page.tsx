@@ -87,6 +87,7 @@ const TOOL_STATUS_MESSAGES: Record<string, string> = {
 const STATUS_CONFIG: Record<RunStatus, { label: string; badgeClass: string }> = {
   queued:          { label: 'Queued',         badgeClass: 'bg-muted text-muted-foreground' },
   running:         { label: 'Running',        badgeClass: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
+  cancelling:      { label: 'Cancelling…',    badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
   success:         { label: 'Complete',       badgeClass: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
   error:           { label: 'Error',          badgeClass: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
   cancelled:       { label: 'Cancelled',      badgeClass: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
@@ -357,6 +358,9 @@ export default function RunStreamPage() {
   const [run,           setRun]           = useState<AgentRun | null>(null)
   const [status,        setStatus]        = useState<RunStatus>('queued')
   const [textOutput,    setTextOutput]    = useState('')
+  // Mirror of textOutput so we can preserve streamed output across renders
+  // even if the DB hydration hasn't yet caught the cancel flush.
+  const savedOutputRef = useRef('')
   // Stored newest-first so the UI renders newest at top without reversing
   const [toolEvents,    setToolEvents]    = useState<ToolEventEntry[]>([])
   const [tokens,        setTokens]        = useState(0)
@@ -425,7 +429,14 @@ export default function RunStreamPage() {
         started_at?:             string | null
         completed_at?:           string | null
       }
-      if (r.output) setTextOutput(r.output)
+      if (r.output) {
+        setTextOutput(r.output)
+        savedOutputRef.current = r.output
+      } else if (savedOutputRef.current) {
+        // Cancelled run that finalised before the DB save committed — keep
+        // whatever we streamed so output doesn't blink to empty.
+        setTextOutput(savedOutputRef.current)
+      }
       if (Array.isArray(r.tool_calls)) {
         // Reverse so newest is on top (matches live-stream behaviour)
         const events: ToolEventEntry[] = [...r.tool_calls].reverse().map(tc => ({
@@ -480,7 +491,11 @@ export default function RunStreamPage() {
         catch { continue }
 
         if (event.type === 'text') {
-          setTextOutput(prev => prev + event.content)
+          setTextOutput(prev => {
+            const next = prev + event.content
+            savedOutputRef.current = next
+            return next
+          })
           // Switch the progress label off "Starting…" the moment text begins flowing
           setCurrentStatus(prev => (prev === 'Starting…' ? 'Writing output…' : prev))
         } else if (event.type === 'tool_start') {
@@ -510,6 +525,9 @@ export default function RunStreamPage() {
           setDurationSecs(Math.round((Date.now() - start) / 1000))
         } else if (event.type === 'cancelled') {
           setStatus('cancelled')
+          // Re-hydrate output from the ref in case any state churn cleared
+          // textOutput before the DB save catches up.
+          if (savedOutputRef.current) setTextOutput(savedOutputRef.current)
           setDurationSecs(Math.round((Date.now() - start) / 1000))
         } else if (event.type === 'awaiting_input') {
           setStatus('awaiting_input')
@@ -700,7 +718,7 @@ export default function RunStreamPage() {
 
   const cfg       = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
   const isDone    = status === 'success' || status === 'error' || status === 'cancelled'
-  const isActive  = status === 'running' || status === 'awaiting_input'
+  const isActive  = status === 'running' || status === 'awaiting_input' || status === 'cancelling'
   const isRunning = status === 'queued' || status === 'running'
 
   // ── Derived values for section badges ──
@@ -789,7 +807,7 @@ export default function RunStreamPage() {
           )}
 
           {/* Cancel button — while running or awaiting input */}
-          {isActive && !cancelConfirm && (
+          {isActive && status !== 'cancelling' && !cancelConfirm && (
             <Button
               size="sm"
               variant="outline"
@@ -799,7 +817,13 @@ export default function RunStreamPage() {
               <Ban className="h-3.5 w-3.5 mr-1.5" /> Cancel Run
             </Button>
           )}
-          {isActive && cancelConfirm && (
+          {status === 'cancelling' && (
+            <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Cancelling…
+            </div>
+          )}
+          {isActive && status !== 'cancelling' && cancelConfirm && (
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-xs text-muted-foreground">Cancel this run?</span>
               <Button
@@ -905,9 +929,58 @@ export default function RunStreamPage() {
         )}
       </div>
 
-      {/* ── 1. Output section — top, streams live ── */}
+      {/* ── Follow-up thread — newest first, ABOVE the original output so the
+          conversation reads top-down. The original run section is auto-
+          collapsed once any follow-up exists. ── */}
+      {followUpThread.length > 0 && (
+        <div className="space-y-3">
+          {[...followUpThread].reverse().map((entry, reversedIdx) => {
+            const i        = followUpThread.length - 1 - reversedIdx
+            const isLatest = i === followUpThread.length - 1
+            return (
+            <CollapsibleSection
+              key={i}
+              title={`Follow-up ${i + 1}`}
+              defaultOpen={isLatest}
+              badge={
+                entry.status === 'running' ? 'Running…'
+                : entry.status === 'queued'  ? 'Queued'
+                : entry.status === 'error'   ? 'Error'
+                : entry.output ? `~${entry.output.trim().split(/\s+/).length.toLocaleString()} words` : undefined
+              }
+            >
+              <div className="space-y-3 pt-0.5">
+                <div className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Brief:</span> {entry.brief}
+                </div>
+                {entry.output && (
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                    {entry.output}
+                    {entry.status === 'running' && (
+                      <span className="inline-block w-2 h-4 -mb-0.5 align-middle bg-muted-foreground/60 animate-pulse ml-0.5" />
+                    )}
+                  </pre>
+                )}
+                {entry.status === 'running' && !entry.output && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Agent working…
+                  </div>
+                )}
+              </div>
+            </CollapsibleSection>
+            )
+          })}
+        </div>
+      )}
+
+      {/* ── Original run output — below follow-ups, collapses once a follow-up
+          exists so the latest exchange is what the user sees first. ── */}
       {showOutput && (
-        <CollapsibleSection title="Output" defaultOpen={true} badge={outputBadge}>
+        <CollapsibleSection
+          title={followUpThread.length > 0 ? 'Original run' : 'Output'}
+          defaultOpen={followUpThread.length === 0}
+          badge={outputBadge}
+        >
           <div className="space-y-3 pt-0.5">
 
             {/* Model + tokens meta — shown when done */}
@@ -998,48 +1071,6 @@ export default function RunStreamPage() {
             {/* Run Again / Make Recurring moved to the sticky top bar */}
           </div>
         </CollapsibleSection>
-      )}
-
-      {/* ── Follow-up thread — newest first, only latest expanded by default ── */}
-      {followUpThread.length > 0 && (
-        <div className="space-y-3">
-          {[...followUpThread].reverse().map((entry, reversedIdx) => {
-            const i        = followUpThread.length - 1 - reversedIdx
-            const isLatest = i === followUpThread.length - 1
-            return (
-            <CollapsibleSection
-              key={i}
-              title={`Follow-up ${i + 1}`}
-              defaultOpen={isLatest}
-              badge={
-                entry.status === 'running' ? 'Running…'
-                : entry.status === 'queued'  ? 'Queued'
-                : entry.status === 'error'   ? 'Error'
-                : entry.output ? `~${entry.output.trim().split(/\s+/).length.toLocaleString()} words` : undefined
-              }
-            >
-              <div className="space-y-3 pt-0.5">
-                <div className="text-xs text-muted-foreground">
-                  <span className="font-medium text-foreground">Brief:</span> {entry.brief}
-                </div>
-                {entry.output && (
-                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
-                    {entry.output}
-                    {entry.status === 'running' && (
-                      <span className="inline-block w-2 h-4 -mb-0.5 align-middle bg-muted-foreground/60 animate-pulse ml-0.5" />
-                    )}
-                  </pre>
-                )}
-                {entry.status === 'running' && !entry.output && (
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                    <Loader2 className="h-3 w-3 animate-spin" /> Agent working…
-                  </div>
-                )}
-              </div>
-            </CollapsibleSection>
-            )
-          })}
-        </div>
       )}
 
       {/* ── Awaiting input reply card ── */}

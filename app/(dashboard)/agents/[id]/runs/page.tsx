@@ -18,6 +18,7 @@ import type { Agent, AgentRun, RunStatus } from '@/lib/types'
 const STATUS_CONFIG: Record<RunStatus, { label: string; icon: React.ComponentType<{ className?: string }>; class: string }> = {
   queued:          { label: 'Queued',         icon: Clock,          class: 'bg-muted text-muted-foreground' },
   running:         { label: 'Running',        icon: Loader2,        class: 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' },
+  cancelling:      { label: 'Cancelling…',    icon: Loader2,        class: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },
   success:         { label: 'Complete',       icon: CheckCircle2,   class: 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' },
   error:           { label: 'Error',          icon: XCircle,        class: 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' },
   cancelled:       { label: 'Cancelled',      icon: AlertCircle,    class: 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' },

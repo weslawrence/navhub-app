@@ -65,4 +65,15 @@
   .text-balance {
     text-wrap: balance;
   }
+
+  /* Indeterminate progress bar — used on agent run pages while a run is active. */
+  @keyframes progress-indeterminate {
+    0%   { transform: translateX(-100%) scaleX(0.5); }
+    50%  { transform: translateX(50%)   scaleX(0.3); }
+    100% { transform: translateX(200%)  scaleX(0.5); }
+  }
+  .animate-progress-indeterminate {
+    animation: progress-indeterminate 1.5s ease-in-out infinite;
+    width: 40%;
+  }
 }

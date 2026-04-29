@@ -1568,7 +1568,23 @@ Long / multi-section documents:
   STEP 2: Read the document_id from the TOP LEVEL of the create_document response (it is also under "data.document_id" for backwards compat — either works).
   STEP 3: Call update_document using that exact document_id string to add or replace the full content.
 - The create_document response shape is: {"success":true,"document_id":"<uuid>","title":"...","view_url":"...","data":{...}}. Use the top-level document_id verbatim — never pass "undefined", an empty string, or a guess.
-- Never call update_document without first verifying you have the document_id from a successful create_document call earlier in this same run.`
+- Never call update_document without first verifying you have the document_id from a successful create_document call earlier in this same run.
+
+When tools fail:
+- Retry ONCE with corrected parameters when create_document, update_document, render_report, or read_attachment returns an error.
+- If the second attempt also fails, do NOT silently give up. Call ask_user with the question: "I'm having trouble saving the document. Would you like me to output the full text here so you can copy it into a document manually?"
+- If the user says yes, output the complete document content as formatted markdown directly in the response.
+- If read_attachment fails, ask_user to re-upload the file or paste the content as text.
+- Never retry any individual tool more than twice consecutively — surface the problem to the user instead.
+
+Task estimation:
+- At the very start of every run, before doing any work or calling any tool, output ONE line in this exact format:
+  ⏱ Estimated time: [X minutes] — [brief description of what you'll do]
+- Examples:
+  ⏱ Estimated time: 2 minutes — Reading 2 documents and updating the operating document
+  ⏱ Estimated time: 5 minutes — Analysing financials for 3 companies and generating a board report
+  ⏱ Estimated time: 1 minute — Creating a summary document from the attached brief
+- Then immediately begin the task without waiting for confirmation.`
     }
 
     // Initial messages

@@ -1077,6 +1077,14 @@ export async function createDocument(
   params:  CreateDocumentParams,
   context: ToolContext
 ): Promise<string> {
+  // Hard guard against missing title — common cause of silent agent retries.
+  if (!params.title?.trim()) {
+    return JSON.stringify({
+      success: false,
+      error:   'title is required. Provide a descriptive document name before calling create_document.',
+    })
+  }
+
   const admin = createAdminClient()
 
   // Log oversized payloads — large markdown bodies still write fine to

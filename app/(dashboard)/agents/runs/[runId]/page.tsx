@@ -5,8 +5,8 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, CheckCircle2, XCircle, Loader2, Clock, Copy, Check,
-  Play, ChevronDown, ChevronRight, FileText, AlertCircle, ExternalLink, Library,
-  Ban, MessageSquare, Send, CalendarClock,
+  ChevronDown, ChevronRight, FileText, AlertCircle, ExternalLink, Library,
+  Ban, MessageSquare, Send, CalendarClock, RotateCcw, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge }  from '@/components/ui/badge'
@@ -53,6 +53,33 @@ const TOOL_LABEL: Record<string, string> = {
   update_document:        'Update Document',
   ask_user:               'Ask User',
   read_attachment:        'Read Attachment',
+}
+
+// ─── Friendly tool → status text (shown in the live progress bar) ──────────
+
+const TOOL_STATUS_MESSAGES: Record<string, string> = {
+  read_attachment:       'Reading attached files…',
+  read_document:         'Reading saved document…',
+  list_documents:        'Searching documents…',
+  read_financials:       'Retrieving financial data…',
+  read_cashflow:         'Retrieving cash flow data…',
+  read_cashflow_items:   'Reading cash flow items…',
+  summarise_cashflow:    'Summarising cash flow…',
+  create_document:       'Creating document…',
+  update_document:       'Updating document…',
+  render_report:         'Generating report…',
+  generate_report:       'Generating report…',
+  list_report_templates: 'Loading report templates…',
+  read_report_template:  'Reading report template…',
+  create_report_template: 'Creating report template…',
+  update_report_template: 'Updating report template…',
+  read_marketing_data:   'Retrieving marketing data…',
+  summarise_marketing:   'Analysing marketing data…',
+  ask_user:              'Waiting for your input…',
+  send_slack:            'Sending Slack notification…',
+  send_email:            'Sending email…',
+  web_search:            'Searching the web…',
+  analyse_document:      'Analysing document…',
 }
 
 // ─── Status config ─────────────────────────────────────────────────────────────
@@ -345,6 +372,13 @@ export default function RunStreamPage() {
   const [replyError,     setReplyError]     = useState<string | null>(null)
   const [attachments,    setAttachments]    = useState<Array<{ file_name: string; file_type: string; file_size: number | null }>>([])
 
+  // ── Live progress + follow-up state ─────────────────────────────────────
+  const [currentStatus,  setCurrentStatus]  = useState<string>('Starting…')
+  const [followUpText,   setFollowUpText]   = useState('')
+  const [queuedFollowUp, setQueuedFollowUp] = useState<string | null>(null)
+  interface FollowUpEntry { brief: string; output: string; status: 'queued' | 'running' | 'success' | 'error' }
+  const [followUpThread, setFollowUpThread] = useState<FollowUpEntry[]>([])
+
   const topRef = useRef<HTMLDivElement>(null)
 
   // Scroll to top of output as new text arrives (content is at top of page)
@@ -447,9 +481,12 @@ export default function RunStreamPage() {
 
         if (event.type === 'text') {
           setTextOutput(prev => prev + event.content)
+          // Switch the progress label off "Starting…" the moment text begins flowing
+          setCurrentStatus(prev => (prev === 'Starting…' ? 'Writing output…' : prev))
         } else if (event.type === 'tool_start') {
           // PREPEND so newest is at the top of the list
           setToolEvents(prev => [{ tool: event.tool, input: event.input, inProgress: true }, ...prev])
+          setCurrentStatus(TOOL_STATUS_MESSAGES[event.tool] ?? `Running ${event.tool}…`)
         } else if (event.type === 'tool_end') {
           const summary = summariseTool(event.tool, event.output ?? '')
           setToolEvents(prev => {
@@ -525,6 +562,110 @@ export default function RunStreamPage() {
     router.push(`/agents/${r.agent_id}/run${qs ? `?${qs}` : ''}`)
   }
 
+  // ── Follow-up: post a new run with this agent + brief, stream it inline ──
+  const startFollowUp = useCallback(async (brief: string) => {
+    if (!run?.agent_id) return
+    const idx = followUpThread.length
+    setFollowUpThread(prev => [...prev, { brief, output: '', status: 'queued' }])
+
+    try {
+      const createRes = await fetch(`/api/agents/${run.agent_id}/run`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          extra_instructions: brief,
+          run_name:           `Follow-up: ${brief.slice(0, 50)}`,
+        }),
+      })
+      const createJson = await createRes.json() as { data?: { run_id?: string }; error?: string }
+      const newRunId   = createJson.data?.run_id
+      if (!newRunId) {
+        setFollowUpThread(prev => {
+          const next = [...prev]
+          next[idx] = { ...next[idx], status: 'error', output: createJson.error ?? 'Failed to start follow-up' }
+          return next
+        })
+        return
+      }
+
+      // Stream via the same SSE endpoint the main run uses
+      const sseRes = await fetch(`/api/agents/runs/${newRunId}/stream`)
+      if (!sseRes.ok || !sseRes.body) {
+        setFollowUpThread(prev => {
+          const next = [...prev]
+          next[idx] = { ...next[idx], status: 'error', output: 'Stream connection failed' }
+          return next
+        })
+        return
+      }
+      setFollowUpThread(prev => {
+        const next = [...prev]
+        next[idx] = { ...next[idx], status: 'running' }
+        return next
+      })
+
+      const reader  = sseRes.body.getReader()
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          let event: RunEvent
+          try { event = JSON.parse(line.slice(6)) as RunEvent } catch { continue }
+          if (event.type === 'text') {
+            setFollowUpThread(prev => {
+              const next = [...prev]
+              next[idx] = { ...next[idx], output: next[idx].output + event.content }
+              return next
+            })
+          } else if (event.type === 'done' || event.type === 'error' || event.type === 'cancelled') {
+            setFollowUpThread(prev => {
+              const next = [...prev]
+              next[idx] = {
+                ...next[idx],
+                status: event.type === 'done' ? 'success' : 'error',
+              }
+              return next
+            })
+          }
+        }
+      }
+    } catch (err) {
+      setFollowUpThread(prev => {
+        const next = [...prev]
+        next[idx] = { ...next[idx], status: 'error', output: err instanceof Error ? err.message : String(err) }
+        return next
+      })
+    }
+  }, [run, followUpThread.length])
+
+  async function handleFollowUp() {
+    const brief = followUpText.trim()
+    if (!brief) return
+    setFollowUpText('')
+    if (isRunning) {
+      // Queue — fires when the parent run reaches a terminal status
+      setQueuedFollowUp(brief)
+      return
+    }
+    void startFollowUp(brief)
+  }
+
+  // When the parent run finishes, drain any queued follow-up
+  useEffect(() => {
+    if (!queuedFollowUp) return
+    if (status === 'success' || status === 'error' || status === 'cancelled') {
+      const brief = queuedFollowUp
+      setQueuedFollowUp(null)
+      void startFollowUp(brief)
+    }
+  }, [status, queuedFollowUp, startFollowUp])
+
   async function handleSendReply() {
     if (!awaitingInput || !replyText.trim()) return
     setSendingReply(true)
@@ -554,6 +695,7 @@ export default function RunStreamPage() {
   const cfg       = STATUS_CONFIG[status] ?? STATUS_CONFIG.queued
   const isDone    = status === 'success' || status === 'error' || status === 'cancelled'
   const isActive  = status === 'running' || status === 'awaiting_input'
+  const isRunning = status === 'queued' || status === 'running'
 
   // ── Derived values for section badges ──
   const completedToolCount = toolEvents.filter(te => !te.inProgress).length
@@ -670,6 +812,91 @@ export default function RunStreamPage() {
             </div>
           )}
         </div>
+
+        {/* ── Action row: Run Again / Make Recurring + follow-up input ── */}
+        {run?.agent_id && (
+          <div className="mt-2 flex items-center gap-2 flex-wrap">
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => buildRunAgainUrl(run, false)}
+              title="Re-run with the same brief on this agent"
+            >
+              <RotateCcw className="h-3 w-3 mr-1.5" /> Run Again
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => buildRunAgainUrl(run, true)}
+              title="Schedule this brief on a recurring schedule"
+            >
+              <CalendarClock className="h-3 w-3 mr-1.5" /> Make Recurring
+            </Button>
+
+            <div className="w-px h-5 bg-border mx-0.5" />
+
+            <input
+              type="text"
+              value={followUpText}
+              onChange={e => setFollowUpText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && followUpText.trim()) {
+                  e.preventDefault()
+                  void handleFollowUp()
+                }
+              }}
+              placeholder={
+                isRunning
+                  ? 'Type a follow-up — will fire once this run finishes…'
+                  : 'Ask the agent for a follow-up…'
+              }
+              className="flex-1 min-w-[200px] h-7 text-xs rounded-md border border-input bg-background px-3 focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <Button
+              size="sm"
+              className="h-7 text-xs gap-1.5"
+              onClick={() => void handleFollowUp()}
+              disabled={!followUpText.trim()}
+            >
+              {isRunning ? <Clock className="h-3 w-3" /> : <Send className="h-3 w-3" />}
+              {isRunning ? 'Queue' : 'Send'}
+            </Button>
+          </div>
+        )}
+
+        {/* Queued follow-up indicator */}
+        {queuedFollowUp && (
+          <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-md bg-amber-100 dark:bg-amber-950/40 text-xs text-amber-700 dark:text-amber-300">
+            <Clock className="h-3 w-3 shrink-0" />
+            <span className="flex-1 truncate">
+              Follow-up queued: &ldquo;{queuedFollowUp.length > 80 ? queuedFollowUp.slice(0, 77) + '…' : queuedFollowUp}&rdquo;
+            </span>
+            <button
+              onClick={() => setQueuedFollowUp(null)}
+              className="text-amber-500 hover:text-amber-700 dark:hover:text-amber-100"
+              title="Cancel queued follow-up"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
+
+        {/* Live progress bar + status text */}
+        {isRunning && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                <span>{currentStatus}</span>
+              </div>
+            </div>
+            <div className="h-0.5 rounded-full overflow-hidden bg-muted">
+              <div className="h-full rounded-full bg-primary animate-progress-indeterminate" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── 1. Output section — top, streams live ── */}
@@ -740,32 +967,47 @@ export default function RunStreamPage() {
               </p>
             )}
 
-            {/* Run Again / Make Recurring — inside output section when done */}
-            {isDone && (
-              <div className="flex justify-end gap-2 pt-1 border-t">
-                {run?.agent_id && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs"
-                    onClick={() => buildRunAgainUrl(run, true)}
-                    title="Re-run this brief on a recurring schedule"
-                  >
-                    <CalendarClock className="h-3 w-3 mr-1" /> Make Recurring
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  onClick={() => buildRunAgainUrl(run, false)}
-                >
-                  <Play className="h-3 w-3 mr-1" /> Run Again
-                </Button>
-              </div>
-            )}
+            {/* Run Again / Make Recurring moved to the sticky top bar */}
           </div>
         </CollapsibleSection>
+      )}
+
+      {/* ── Follow-up thread — stacked beneath the main output ── */}
+      {followUpThread.length > 0 && (
+        <div className="space-y-3">
+          {followUpThread.map((entry, i) => (
+            <CollapsibleSection
+              key={i}
+              title={`Follow-up ${i + 1}`}
+              defaultOpen
+              badge={
+                entry.status === 'running' ? 'Running…'
+                : entry.status === 'queued'  ? 'Queued'
+                : entry.status === 'error'   ? 'Error'
+                : entry.output ? `~${entry.output.trim().split(/\s+/).length.toLocaleString()} words` : undefined
+              }
+            >
+              <div className="space-y-3 pt-0.5">
+                <div className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">Brief:</span> {entry.brief}
+                </div>
+                {entry.output && (
+                  <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed">
+                    {entry.output}
+                    {entry.status === 'running' && (
+                      <span className="inline-block w-2 h-4 -mb-0.5 align-middle bg-muted-foreground/60 animate-pulse ml-0.5" />
+                    )}
+                  </pre>
+                )}
+                {entry.status === 'running' && !entry.output && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Agent working…
+                  </div>
+                )}
+              </div>
+            </CollapsibleSection>
+          ))}
+        </div>
       )}
 
       {/* ── Awaiting input reply card ── */}

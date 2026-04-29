@@ -36,16 +36,51 @@ export async function POST(
   try { body = await request.json() } catch { /* body optional */ }
 
   const admin = createAdminClient()
+
+  // ── Follow-up handling ──────────────────────────────────────────────────
+  // If parent_run_id is supplied and belongs to the same group, prepend the
+  // parent's output (sliced) to extra_instructions so the new run has the
+  // prior context without the agent having to re-derive it.
+  let extraInstructions = typeof body.extra_instructions === 'string'
+    ? body.extra_instructions
+    : (typeof body.brief === 'string' ? body.brief : undefined)
+
+  let parentRunId: string | null = null
+  if (typeof body.parent_run_id === 'string' && body.parent_run_id.length > 0) {
+    const { data: parentRun } = await admin
+      .from('agent_runs')
+      .select('id, group_id, run_name, output')
+      .eq('id', body.parent_run_id)
+      .eq('group_id', activeGroupId)
+      .maybeSingle()
+    if (parentRun) {
+      parentRunId = parentRun.id as string
+      const parentName   = (parentRun.run_name as string | null) ?? 'Previous run'
+      const parentOutput = (parentRun.output    as string | null) ?? ''
+      extraInstructions = [
+        extraInstructions ?? '',
+        '',
+        '## Your previous work on this task',
+        `Run name: ${parentName}`,
+        '',
+        parentOutput.slice(0, 6000),
+        '',
+        'Continue from where you left off, building on this previous work. Do not repeat work already done.',
+      ].join('\n')
+    }
+  }
+
   const insertData: Record<string, unknown> = {
     agent_id:          params.id,
     group_id:          activeGroupId,
     triggered_by:      'manual',
     triggered_by_user: session.user.id,
     status:            'queued',
+    parent_run_id:     parentRunId,
     input_context:     {
-      period:               typeof body.period              === 'string' ? body.period : undefined,
-      company_ids:          Array.isArray(body.company_ids) ? body.company_ids : undefined,
-      extra_instructions:   typeof body.extra_instructions  === 'string' ? body.extra_instructions : undefined,
+      period:             typeof body.period      === 'string' ? body.period      : undefined,
+      company_ids:        Array.isArray(body.company_ids) ? body.company_ids       : undefined,
+      extra_instructions: extraInstructions,
     },
   }
   if (typeof body.run_name             === 'string') insertData.run_name             = body.run_name

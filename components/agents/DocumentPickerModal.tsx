@@ -190,6 +190,40 @@ export default function DocumentPickerModal({
               {folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </select>
           )}
+
+          {/* Select all / Clear — operates on the filtered list, not the whole library */}
+          {multiSelect && (
+            <div className="flex items-center justify-between text-xs pt-1">
+              <span className="text-muted-foreground">
+                {picked.size > 0 ? `${picked.size} selected` : `${filtered.length} ${itemNoun}${filtered.length === 1 ? '' : 's'} visible`}
+              </span>
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPicked(prev => {
+                      const next = new Set(prev)
+                      filtered.forEach(d => next.add(d.id))
+                      return next
+                    })
+                  }}
+                  disabled={filtered.length === 0}
+                  className="text-primary hover:underline disabled:opacity-40 disabled:no-underline"
+                >
+                  Select all
+                </button>
+                {picked.size > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setPicked(new Set())}
+                    className="text-muted-foreground hover:underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* List */}

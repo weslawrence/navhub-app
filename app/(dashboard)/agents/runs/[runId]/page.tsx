@@ -575,6 +575,9 @@ export default function RunStreamPage() {
         body:    JSON.stringify({
           extra_instructions: brief,
           run_name:           `Follow-up: ${brief.slice(0, 50)}`,
+          // Link to the originating run so the API can prepend the parent's
+          // output to the extra_instructions for context-aware continuation.
+          parent_run_id:      params.runId,
         }),
       })
       const createJson = await createRes.json() as { data?: { run_id?: string }; error?: string }
@@ -972,14 +975,17 @@ export default function RunStreamPage() {
         </CollapsibleSection>
       )}
 
-      {/* ── Follow-up thread — stacked beneath the main output ── */}
+      {/* ── Follow-up thread — newest first, only latest expanded by default ── */}
       {followUpThread.length > 0 && (
         <div className="space-y-3">
-          {followUpThread.map((entry, i) => (
+          {[...followUpThread].reverse().map((entry, reversedIdx) => {
+            const i        = followUpThread.length - 1 - reversedIdx
+            const isLatest = i === followUpThread.length - 1
+            return (
             <CollapsibleSection
               key={i}
               title={`Follow-up ${i + 1}`}
-              defaultOpen
+              defaultOpen={isLatest}
               badge={
                 entry.status === 'running' ? 'Running…'
                 : entry.status === 'queued'  ? 'Queued'
@@ -1006,7 +1012,8 @@ export default function RunStreamPage() {
                 )}
               </div>
             </CollapsibleSection>
-          ))}
+            )
+          })}
         </div>
       )}
 

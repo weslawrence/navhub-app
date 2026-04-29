@@ -45,6 +45,41 @@ function AwaitingInputIndicator({ runId }: { runId: string }) {
   )
 }
 
+// Inspect tool_calls to surface what was produced — drives the pill row on
+// each run card so users can see at a glance whether a run wrote a document,
+// rendered a report, or just streamed text.
+function detectOutputs(run: AgentRun): { text: boolean; document: boolean; report: boolean } {
+  const text = !!(run.output && run.output.trim().length > 0)
+  let document = false
+  let report   = !!run.draft_report_id
+  const calls = (run.tool_calls ?? []) as Array<{ tool: string; output?: string }>
+  for (const c of calls) {
+    const ok = !!c.output && c.output.includes('"success":true')
+    if (!ok) continue
+    if (c.tool === 'create_document' || c.tool === 'update_document') document = true
+    if (c.tool === 'render_report' || c.tool === 'generate_report')   report   = true
+  }
+  return { text, document, report }
+}
+
+function OutputPills({ run }: { run: AgentRun }) {
+  const o = detectOutputs(run)
+  if (!o.text && !o.document && !o.report) return <span className="text-[11px] text-muted-foreground">—</span>
+  return (
+    <div className="flex gap-1 flex-wrap">
+      {o.text && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">Text</span>
+      )}
+      {o.document && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300">Document</span>
+      )}
+      {o.report && (
+        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300">Report</span>
+      )}
+    </div>
+  )
+}
+
 function duration(run: AgentRun): string {
   if (!run.started_at || !run.completed_at) return '—'
   const ms = new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()
@@ -164,6 +199,7 @@ export default function AgentRunsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/40">
+                    <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Run</th>
                     <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Status</th>
                     <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Started</th>
                     <th className="px-4 py-2.5 text-left text-xs font-medium text-muted-foreground">Duration</th>
@@ -173,8 +209,27 @@ export default function AgentRunsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {runs.map(run => (
+                  {runs.map(run => {
+                    const r2 = run as AgentRun & { run_name?: string | null }
+                    const briefRaw = run.input_context?.extra_instructions ?? ''
+                    const brief    = briefRaw.length > 60 ? briefRaw.slice(0, 57) + '…' : briefRaw
+                    const titleText = r2.run_name?.trim() || (briefRaw ? brief : 'Untitled run')
+                    return (
                     <tr key={run.id} className="hover:bg-muted/20 transition-colors">
+                      <td className="px-4 py-3 max-w-[260px]">
+                        <Link
+                          href={`/agents/runs/${run.id}`}
+                          className="text-sm font-medium text-foreground hover:text-primary truncate block"
+                          title={r2.run_name ?? briefRaw}
+                        >
+                          {titleText}
+                        </Link>
+                        {r2.run_name && briefRaw && (
+                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate" title={briefRaw}>
+                            {brief}
+                          </p>
+                        )}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-1.5 flex-wrap">
                           <RunStatusBadge status={run.status} />
@@ -187,13 +242,6 @@ export default function AgentRunsPage() {
                         </div>
                         {run.status === 'awaiting_input' && (
                           <AwaitingInputIndicator runId={run.id} />
-                        )}
-                        {run.input_context?.extra_instructions && (
-                          <p className="text-[11px] text-muted-foreground mt-0.5 max-w-[160px] truncate">
-                            {run.input_context.extra_instructions.length > 60
-                              ? run.input_context.extra_instructions.slice(0, 57) + '…'
-                              : run.input_context.extra_instructions}
-                          </p>
                         )}
                       </td>
                       <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
@@ -209,10 +257,8 @@ export default function AgentRunsPage() {
                             : 'Sonnet 4'
                           : '—'}
                       </td>
-                      <td className="px-4 py-3 text-xs text-muted-foreground max-w-xs">
-                        <span className="truncate block">
-                          {run.output ? run.output.slice(0, 100) + (run.output.length > 100 ? '…' : '') : run.error_message ?? '—'}
-                        </span>
+                      <td className="px-4 py-3">
+                        <OutputPills run={run} />
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Button size="sm" variant="ghost" className="h-7 text-xs px-2" asChild>
@@ -220,7 +266,8 @@ export default function AgentRunsPage() {
                         </Button>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

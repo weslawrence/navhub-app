@@ -6,6 +6,7 @@ import {
   Plus, FolderOpen, FileText, Sparkles, Lock, Share2, MoreHorizontal,
   Folder, Trash2, MoveRight, Search, SlidersHorizontal, Upload,
   LayoutTemplate, Tag, ChevronDown, Cloud, Download, Pencil, Eye,
+  LayoutGrid, List as ListIcon, ArrowUp, ArrowDown,
 } from 'lucide-react'
 import { Button }   from '@/components/ui/button'
 import { cn }       from '@/lib/utils'
@@ -19,6 +20,10 @@ import {
 import NewDocumentModal    from '@/components/documents/NewDocumentModal'
 import UploadDropzone      from '@/components/documents/UploadDropzone'
 import TagEditor           from '@/components/shared/TagEditor'
+import { useLocalStorage } from '@/lib/hooks/useLocalStorage'
+
+type DocSortKey = 'updated' | 'created' | 'title' | 'type'
+type DocViewMode = 'tile' | 'list'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -103,7 +108,7 @@ function DocumentCard({
               className="font-medium text-sm leading-snug text-foreground bg-transparent border-b border-primary outline-none w-full"
             />
           ) : (
-            <h3 className="font-medium text-sm leading-snug line-clamp-2 text-foreground">{doc.title}</h3>
+            <h3 className="font-medium text-sm leading-snug line-clamp-2 text-foreground" title={doc.title}>{doc.title}</h3>
           )}
         </div>
 
@@ -225,6 +230,9 @@ export default function DocumentsPage() {
   // Filter state
   const [activeFolder,  setActiveFolder]  = useState<string | null>(null) // null=all, 'unfiled'=unfiled, <id>=folder
   const [filterType,    setFilterType]    = useState('')
+  const [viewMode,      setViewMode]      = useLocalStorage<DocViewMode>('navhub:docs:view',      'tile')
+  const [sortBy,        setSortBy]        = useLocalStorage<DocSortKey>('navhub:docs:sort',       'updated')
+  const [sortDir,       setSortDir]       = useLocalStorage<'asc' | 'desc'>('navhub:docs:sortDir', 'desc')
   const [filterCompany, setFilterCompany] = useState('')
   const [search,        setSearch]        = useState('')
 
@@ -378,6 +386,22 @@ export default function DocumentsPage() {
       if (!selectedTags.every(t => docTags.includes(t))) return false
     }
     return true
+  })
+
+  // Apply sort. Stable for ties via id.
+  const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0
+    if (sortBy === 'updated') {
+      cmp = new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime()
+    } else if (sortBy === 'created') {
+      cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+    } else if (sortBy === 'title') {
+      cmp = a.title.localeCompare(b.title)
+    } else if (sortBy === 'type') {
+      cmp = (a.document_type ?? '').localeCompare(b.document_type ?? '')
+    }
+    if (cmp === 0) cmp = a.id.localeCompare(b.id)
+    return sortDir === 'desc' ? -cmp : cmp
   })
 
   // Count per folder
@@ -598,6 +622,50 @@ export default function DocumentsPage() {
                 ))}
               </select>
             )}
+
+            {/* Sort key */}
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as DocSortKey)}
+              className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+              title="Sort documents by"
+            >
+              <option value="updated">Last modified</option>
+              <option value="created">Date created</option>
+              <option value="title">Title A–Z</option>
+              <option value="type">Document type</option>
+            </select>
+            <button
+              onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+              className="h-8 w-8 rounded-md border border-input bg-background flex items-center justify-center text-muted-foreground hover:bg-muted"
+              title={sortDir === 'desc' ? 'Newest / Z–A first' : 'Oldest / A–Z first'}
+            >
+              {sortDir === 'desc' ? <ArrowDown className="h-3.5 w-3.5" /> : <ArrowUp className="h-3.5 w-3.5" />}
+            </button>
+
+            {/* View toggle */}
+            <div className="flex border border-input rounded-md overflow-hidden">
+              <button
+                onClick={() => setViewMode('tile')}
+                className={cn(
+                  'h-8 w-8 flex items-center justify-center transition',
+                  viewMode === 'tile' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'
+                )}
+                title="Tile view"
+              >
+                <LayoutGrid className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={cn(
+                  'h-8 w-8 flex items-center justify-center transition border-l border-input',
+                  viewMode === 'list' ? 'bg-primary text-primary-foreground' : 'bg-background text-muted-foreground hover:bg-muted'
+                )}
+                title="List view"
+              >
+                <ListIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
@@ -628,10 +696,10 @@ export default function DocumentsPage() {
           />
         )}
 
-        {/* Document grid */}
+        {/* Document grid / list */}
         {loading ? (
           <div className="flex items-center justify-center min-h-48 text-sm text-muted-foreground">Loading…</div>
-        ) : filtered.length === 0 && documents.length === 0 ? (
+        ) : sorted.length === 0 && documents.length === 0 ? (
           <UploadDropzone
             onUpload={handleUpload}
             uploading={uploading}
@@ -639,7 +707,7 @@ export default function DocumentsPage() {
             errors={uploadErrors}
             compact={false}
           />
-        ) : filtered.length === 0 ? (
+        ) : sorted.length === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-48 text-center space-y-3">
             <FileText className="h-10 w-10 text-muted-foreground/40" />
             <p className="text-sm text-muted-foreground">No documents found.</p>
@@ -647,11 +715,60 @@ export default function DocumentsPage() {
               <Plus className="h-4 w-4 mr-1" /> Create your first document
             </Button>
           </div>
+        ) : viewMode === 'list' ? (
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/30 text-left">
+                  <th className="px-3 py-2 font-medium text-[11px] uppercase tracking-wider text-muted-foreground">Title</th>
+                  <th className="px-3 py-2 font-medium text-[11px] uppercase tracking-wider text-muted-foreground">Type</th>
+                  <th className="px-3 py-2 font-medium text-[11px] uppercase tracking-wider text-muted-foreground">Status</th>
+                  <th className="px-3 py-2 font-medium text-[11px] uppercase tracking-wider text-muted-foreground">Modified</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(doc => {
+                  const typeLabel = (DOCUMENT_TYPE_LABELS as Record<string, string>)[doc.document_type] ?? doc.document_type
+                  return (
+                    <tr key={doc.id} className="border-b last:border-0 hover:bg-muted/20">
+                      <td className="px-3 py-2.5">
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          {doc.agent_run_id && <Sparkles className="h-3 w-3 text-violet-500 shrink-0" />}
+                          {doc.locked_by    && <Lock     className="h-3 w-3 text-amber-500 shrink-0" />}
+                          {doc.is_shareable && <Share2   className="h-3 w-3 text-emerald-500 shrink-0" />}
+                          <Link
+                            href={`/documents/${doc.id}`}
+                            className="font-medium text-foreground hover:text-primary truncate"
+                            title={doc.title}
+                          >
+                            {doc.title}
+                          </Link>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <span className={cn('inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium', docTypeBadgeClass(doc.document_type))}>
+                          {typeLabel}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground capitalize">{doc.status}</td>
+                      <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                        {new Date(doc.updated_at).toLocaleDateString('en-AU')}
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <Link href={`/documents/${doc.id}`} className="text-xs text-muted-foreground hover:text-foreground">Open</Link>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         ) : (
           <div className="space-y-8">
             {/* Published section */}
             {(() => {
-              const published = filtered.filter(d => d.status === 'published')
+              const published = sorted.filter(d => d.status === 'published')
               if (published.length === 0) return null
               return (
                 <div className="space-y-3">
@@ -673,7 +790,7 @@ export default function DocumentsPage() {
 
             {/* Drafts section */}
             {(() => {
-              const drafts = filtered.filter(d => d.status !== 'published')
+              const drafts = sorted.filter(d => d.status !== 'published')
               if (drafts.length === 0) return null
               return (
                 <div className="space-y-3">

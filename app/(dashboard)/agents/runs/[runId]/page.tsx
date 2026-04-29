@@ -414,55 +414,18 @@ export default function RunStreamPage() {
     }
     setLoading(false)
 
-    // ── Restore prior state without re-streaming ──────────────────────────
-    // If the run is already in a terminal or paused state, don't open a new
-    // SSE stream — that would re-trigger the agent loop server-side. Instead,
-    // hydrate the UI from the stored run record.
-    const NO_STREAM: RunStatus[] = ['success', 'error', 'cancelled', 'awaiting_input']
-    if (initialStatus && NO_STREAM.includes(initialStatus) && runRow) {
-      const r = runRow as unknown as {
-        output?:                 string | null
-        tool_calls?:             Array<{ tool: string; input?: unknown; output?: string }>
-        tokens_used?:            number | null
-        error_message?:          string | null
-        awaiting_input_question?: string | null
-        started_at?:             string | null
-        completed_at?:           string | null
-      }
-      if (r.output) {
-        setTextOutput(r.output)
-        savedOutputRef.current = r.output
-      } else if (savedOutputRef.current) {
-        // Cancelled run that finalised before the DB save committed — keep
-        // whatever we streamed so output doesn't blink to empty.
-        setTextOutput(savedOutputRef.current)
-      }
-      if (Array.isArray(r.tool_calls)) {
-        // Reverse so newest is on top (matches live-stream behaviour)
-        const events: ToolEventEntry[] = [...r.tool_calls].reverse().map(tc => ({
-          tool:          tc.tool,
-          input:         (tc.input as Record<string, unknown> | undefined),
-          output:        tc.output,
-          inProgress:    false,
-          resultSummary: summariseTool(tc.tool, tc.output ?? ''),
-        }))
-        setToolEvents(events)
-      }
-      if (typeof r.tokens_used === 'number') setTokens(r.tokens_used)
-      if (r.error_message)                   setErrorMsg(r.error_message)
-      if (r.started_at && r.completed_at) {
-        setDurationSecs(Math.round(
-          (new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000,
-        ))
-      }
-      // Restore the awaiting-input prompt so the user can reply without
-      // re-opening the SSE stream (the respond endpoint resolves the
-      // pending interaction by run_id when interaction_id is omitted).
-      if (initialStatus === 'awaiting_input' && r.awaiting_input_question) {
-        setAwaitingInput({ question: r.awaiting_input_question, interaction_id: '' })
-      }
-      return
-    }
+    // ── Always connect to the SSE stream ──────────────────────────────────
+    // The stream route now polls the DB and replays saved state for
+    // terminal runs. No more separate hydration path — the same handler
+    // services live + replay cases.
+    const r0 = (runRow ?? {}) as Partial<{
+      tokens_used:   number | null
+      error_message: string | null
+      started_at:    string | null
+      completed_at:  string | null
+    }>
+    if (typeof r0.tokens_used === 'number') setTokens(r0.tokens_used)
+    if (r0.error_message)                   setErrorMsg(r0.error_message)
 
     const runRes = await fetch(`/api/agents/runs/${params.runId}/stream`).catch(() => null)
     if (!runRes?.ok || !runRes.body) {
@@ -470,8 +433,22 @@ export default function RunStreamPage() {
       return
     }
 
-    const start = Date.now()
-    setStatus('running')
+    // For replayed terminal runs the stream emits a `done`/`cancelled`/`error`
+    // event almost immediately. Anchor `start` to the actual run start time
+    // when available so the displayed duration reflects the real elapsed
+    // wall-clock — not the time since the page opened.
+    const start = r0.started_at ? new Date(r0.started_at).getTime() : Date.now()
+    if (!initialStatus || initialStatus === 'queued' || initialStatus === 'running') {
+      setStatus('running')
+    }
+    // Helper: prefer DB-recorded completion time when computing duration so
+    // replayed terminal runs show the real run length, not page-open delta.
+    const computeDuration = () => {
+      if (r0.started_at && r0.completed_at) {
+        return Math.round((new Date(r0.completed_at).getTime() - new Date(r0.started_at).getTime()) / 1000)
+      }
+      return Math.round((Date.now() - start) / 1000)
+    }
 
     const reader  = runRes.body.getReader()
     const decoder = new TextDecoder()
@@ -518,17 +495,17 @@ export default function RunStreamPage() {
         } else if (event.type === 'done') {
           setTokens(event.tokens)
           setStatus('success')
-          setDurationSecs(Math.round((Date.now() - start) / 1000))
+          setDurationSecs(computeDuration())
         } else if (event.type === 'error') {
           setErrorMsg(event.message)
           setStatus('error')
-          setDurationSecs(Math.round((Date.now() - start) / 1000))
+          setDurationSecs(computeDuration())
         } else if (event.type === 'cancelled') {
           setStatus('cancelled')
           // Re-hydrate output from the ref in case any state churn cleared
           // textOutput before the DB save catches up.
           if (savedOutputRef.current) setTextOutput(savedOutputRef.current)
-          setDurationSecs(Math.round((Date.now() - start) / 1000))
+          setDurationSecs(computeDuration())
         } else if (event.type === 'awaiting_input') {
           setStatus('awaiting_input')
           setAwaitingInput({ question: event.question, interaction_id: event.interaction_id })

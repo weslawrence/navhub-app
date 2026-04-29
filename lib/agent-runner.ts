@@ -1648,10 +1648,15 @@ and use the full token budget when generating long structured outputs. Don't hol
     // doesn't second-guess punctuation in document titles.
     systemPrompt += `
 
-## Document titles
-When creating or updating documents, use natural human-readable titles. Any printable characters are allowed,
-including spaces, apostrophes, em dashes, ampersands, brackets, slashes, colons, quotes, accented letters,
-and emoji. There is no length limit — pick a title that reads well and describes the document clearly.`
+## Document titles and special characters
+- Use natural human-readable titles. ALL punctuation is supported: brackets [], parentheses (),
+  em dashes —, colons :, semicolons ;, apostrophes ', ampersands &, accented letters and emoji.
+- The DB stores titles verbatim. There is no length limit — pick a title that reads well.
+- The only characters that cause downstream filename issues when documents are exported (DOCX, PPTX,
+  SharePoint sync) are: < > : " / \\ | ? *. If create_document fails because of a title, retry the
+  same title with only those nine characters replaced with a hyphen.
+- Never silently skip saving. If create_document fails twice with title-related errors, call ask_user
+  to surface the issue rather than hiding it.`
 
     // Initial messages
     const messages: AnthropicMessage[] = [
@@ -1673,6 +1678,28 @@ and emoji. There is no length limit — pick a title that reads well and describ
     let totalTokens    = 0
     let continueLoop   = true
     const toolCallLogs: ToolCallLog[] = []
+
+    // Incremental output persistence — every N chunks we flush fullOutput
+    // (and current tool_calls / tokens) to the DB so the run-detail page can
+    // observe progress even if no SSE consumer is connected. The poll-based
+    // stream route reads from these columns to reconstruct streaming.
+    let chunksSinceLastSave = 0
+    const SAVE_EVERY_CHUNKS = 10
+    const persistProgress = () => {
+      void admin.from('agent_runs').update({
+        output:       fullOutput,
+        tool_calls:   toolCallLogs,
+        tokens_used:  totalTokens,
+      }).eq('id', runId)
+    }
+    const onTextChunk = (chunk: string) => {
+      fullOutput += chunk
+      chunksSinceLastSave++
+      if (chunksSinceLastSave >= SAVE_EVERY_CHUNKS) {
+        chunksSinceLastSave = 0
+        persistProgress()
+      }
+    }
 
     // Loop guards — prevent infinite tool call loops. Iteration cap, max
     // tokens per response and per-tool failure tolerance all scale with the
@@ -1754,7 +1781,7 @@ and emoji. There is no length limit — pick a title that reads well and describ
         result = await withTimeout(
           callGPT4o(messages, toolDefs, systemPrompt, openAICreds, (chunk) => {
             onChunk({ type: 'text', content: chunk })
-            fullOutput += chunk
+            onTextChunk(chunk)
             resetActivityTimer()
           }),
           'callGPT4o',
@@ -1777,7 +1804,7 @@ and emoji. There is no length limit — pick a title that reads well and describ
           result = await withTimeout(
             callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
               onChunk({ type: 'text', content: chunk })
-              fullOutput += chunk
+              onTextChunk(chunk)
               resetActivityTimer()
             }, claudeCreds, MAX_TOKENS_PER_CALL, isCancelledFn),
             'callClaude',
@@ -1805,6 +1832,10 @@ and emoji. There is no length limit — pick a title that reads well and describ
       if (result.text) {
         fullOutput += result.text
       }
+      // Flush per-iteration progress so observers (the poll-based stream
+      // route, the run-detail page, the runs list) see fresh output and
+      // accurate token totals even between long tool calls.
+      persistProgress()
 
       if (result.tool_calls.length === 0) {
         // No more tool calls — done

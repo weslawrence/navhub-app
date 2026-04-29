@@ -4413,3 +4413,91 @@ which aggregates completed runs (`tokens_used > 0`) into:
 Cost is estimated client-server with a per-model rate map
 (`COST_PER_1K_TOKENS` in the route). Falls back to Sonnet pricing for
 unrecognised models.
+
+---
+
+## Background Run Execution + Documents View Toggle + Runs List Pills
+
+### Migration 053 — execution_mode
+```sql
+ALTER TABLE agent_runs
+  ADD COLUMN IF NOT EXISTS execution_mode text NOT NULL DEFAULT 'background'
+    CHECK (execution_mode IN ('background', 'streaming'));
+```
+
+### Background execution model
+
+Previously the SSE GET stream route was the actual run executor — closing the
+tab killed the run. New flow:
+
+1. `POST /api/agents/[id]/run` creates the row, then kicks off
+   `executeAgentRun` as a `void` IIFE before returning the run_id. POST has
+   `maxDuration = 300`. The runner persists progress to the DB incrementally:
+   every 10 streamed chunks (and after each iteration's text accumulation)
+   `output / tool_calls / tokens_used` are flushed via a fire-and-forget
+   `admin.from('agent_runs').update(...)`.
+2. `GET /api/agents/runs/[runId]/stream` no longer invokes `executeAgentRun`.
+   It opens a `ReadableStream` that:
+   - Replays current `output` + completed `tool_calls` (emitted as
+     `tool_start` + `tool_end` event pairs so the timeline reconstructs)
+   - Polls `agent_runs` every 2s for `output` / `tool_calls` / `status`
+     deltas and emits the corresponding `RunEvent`s
+   - On terminal status (`success` / `error` / `cancelled`) emits the
+     final event and closes
+   - Tears down on `request.signal.abort()`
+3. The run-detail page (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+   no longer special-cases terminal states — it always opens the stream.
+   `start` is anchored to `runRow.started_at` so replayed terminal runs
+   show the real run length, not page-open delta. `computeDuration()`
+   prefers `completed_at - started_at` when both are present on the row.
+
+The runner's incremental `persistProgress()` / `onTextChunk()` helpers wrap
+both the GPT-4o and Claude callsites so progress is saved regardless of
+provider.
+
+### Documents page — view toggle, sort, list view
+
+`lib/hooks/useLocalStorage.ts` (new) — SSR-safe useState mirror that
+persists each value to `window.localStorage`. Returns `[value, setValue]`
+where `setValue` accepts an updater function.
+
+Toolbar additions on `/documents`:
+- **Sort key** select: Last modified | Date created | Title A–Z | Document type
+- **Sort direction** toggle button (ArrowUp / ArrowDown)
+- **View toggle**: tile (LayoutGrid) | list (ListIcon) — persisted to
+  `navhub:docs:view` / `navhub:docs:sort` / `navhub:docs:sortDir`
+
+`sorted` array is computed after the existing `filtered` filter, with a
+stable tiebreaker on `id`. Tile view (default) keeps the Published / Drafts
+split. List view renders a single table with columns: Title | Type | Status
+| Modified | (Open). Title cells in both views carry `title={doc.title}`
+for native browser tooltips on truncated names.
+
+### Agent run list — title + output pills
+
+`/agents/[id]/runs/page.tsx` now leads with a "Run" column:
+- Title prefers `run_name` and falls back to a 60-char `extra_instructions`
+  truncation (or "Untitled run").
+- When both are present the brief preview is shown beneath the run name.
+
+Replaced the single-line output preview with `<OutputPills>` driven by
+`detectOutputs()`:
+- **Text** — `run.output` non-empty
+- **Document** — any `tool_calls` entry where `tool` is `create_document` /
+  `update_document` and the JSON output contains `"success":true`
+- **Report** — `run.draft_report_id` is set OR a `render_report` /
+  `generate_report` call returned success
+
+### Document title special characters
+
+`buildSystemPrompt` now ships a stronger guidance block:
+- All printable characters are supported in titles (brackets, em dashes,
+  colons, apostrophes, ampersands, accented letters, emoji)
+- DB stores titles verbatim — no length limit
+- Only `< > : " / \ | ? *` cause downstream filename issues; on a
+  title-related failure, retry with only those nine characters replaced
+  by a hyphen
+- Never silently skip saving — escalate to `ask_user` after two failures
+
+`createDocument` itself was already correct (passes title verbatim to the
+`documents` table). No tool-side change was needed beyond the prompt update.

@@ -69,7 +69,8 @@ export async function GET() {
 }
 
 // ─── POST /api/groups ─────────────────────────────────────────────────────────
-// Creates a new group. Adds creator as super_admin.
+// Creates a new group. Adds creator as group_admin of the new group (or
+// super_admin if they already hold super_admin elsewhere).
 // Body: { name: string, palette_id?: string }
 
 export async function POST(request: Request) {
@@ -77,6 +78,25 @@ export async function POST(request: Request) {
   const { data: { session } } = await supabase.auth.getSession()
   if (!session) {
     return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
+  }
+
+  // Anyone authenticated can create a group, but they must be at least a
+  // group_admin somewhere already (or hold super_admin platform-wide).
+  // Brand-new accounts with zero memberships can also create their first
+  // group — that's the onboarding path.
+  const { data: roleRows } = await supabase
+    .from('user_groups')
+    .select('role')
+    .eq('user_id', session.user.id)
+  const memberships = roleRows ?? []
+  const isPlatformSuperAdmin = memberships.some(r => r.role === 'super_admin')
+  const hasAnyAdminRole = memberships.some(r => ['super_admin', 'group_admin'].includes(r.role))
+  const isOnboarding = memberships.length === 0
+  if (!hasAnyAdminRole && !isOnboarding) {
+    return NextResponse.json(
+      { error: 'Admin access required — only group admins can create new groups' },
+      { status: 403 },
+    )
   }
 
   let body: Record<string, unknown>
@@ -108,13 +128,9 @@ export async function POST(request: Request) {
     )
   }
 
-  // Determine if this will be the user's first (default) group
-  const { data: existingMemberships } = await admin
-    .from('user_groups')
-    .select('group_id')
-    .eq('user_id', session.user.id)
-
-  const isFirstGroup = !existingMemberships || existingMemberships.length === 0
+  // Determine if this will be the user's first (default) group — reuse the
+  // earlier role-row fetch instead of round-tripping again.
+  const isFirstGroup = memberships.length === 0
 
   // Create group
   const { data: group, error: groupError } = await admin
@@ -132,11 +148,13 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: groupError?.message ?? 'Failed to create group' }, { status: 500 })
   }
 
-  // Add creator as super_admin
+  // Add creator as group_admin of the new group — or super_admin only when
+  // they already hold platform super_admin elsewhere (so platform admins
+  // keep their privileges across newly created tenants).
   await admin.from('user_groups').insert({
     user_id:    session.user.id,
     group_id:   group.id,
-    role:       'super_admin',
+    role:       isPlatformSuperAdmin ? 'super_admin' : 'group_admin',
     is_default: isFirstGroup,
   })
 

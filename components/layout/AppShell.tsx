@@ -409,15 +409,15 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
 
-              {/* Create Group — super_admin only */}
-              {isSuperAdmin && (
+              {/* Create Group — super_admin and group_admin */}
+              {(isSuperAdmin || isAdmin) && (
                 <>
                   <DropdownMenuItem
                     onSelect={() => setShowCreateGrp(true)}
                     className="cursor-pointer text-foreground"
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    Create Group
+                    Create new group
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>

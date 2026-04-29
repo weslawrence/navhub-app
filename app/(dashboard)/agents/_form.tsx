@@ -22,6 +22,7 @@ import {
 } from '@/lib/types'
 import { AVATAR_PRESETS } from '@/lib/agent-presets'
 import DocumentPickerModal, { type PickableDocument } from '@/components/agents/DocumentPickerModal'
+import BulkLinkAdder, { type BulkAddedLink } from '@/components/shared/BulkLinkAdder'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
 
@@ -1017,6 +1018,14 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
                       </div>
                     </div>
                   )}
+                  <BulkLinkAdder
+                    onAdd={(items: BulkAddedLink[]) => {
+                      setKnowledgeLinks(prev => [
+                        ...prev,
+                        ...items.map(i => ({ url: i.url, label: i.label })),
+                      ])
+                    }}
+                  />
                   {knowledgeLinks.length > 0 ? (
                     <div className="divide-y divide-border rounded-md border overflow-hidden">
                       {knowledgeLinks.map((link, idx) => (

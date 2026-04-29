@@ -18,6 +18,7 @@ import type {
   KnowledgeLink,
 } from '@/lib/types'
 import DocumentPickerModal from '@/components/agents/DocumentPickerModal'
+import BulkLinkAdder, { type BulkAddedLink } from '@/components/shared/BulkLinkAdder'
 
 // ─── Default tools info (display-only) ───────────────────────────────────────
 
@@ -1152,6 +1153,13 @@ function UniversalKnowledgePanel({ isAdmin }: { isAdmin: boolean }) {
                 <Button size="sm" variant="ghost" onClick={() => { setShowLinkForm(false); setEditingLinkIdx(null) }}>Cancel</Button>
               </div>
             </div>
+          )}
+          {isAdmin && (
+            <BulkLinkAdder
+              onAdd={(items: BulkAddedLink[]) =>
+                setLinks(prev => [...prev, ...items.map(i => ({ url: i.url, label: i.label }))])
+              }
+            />
           )}
           {links.length === 0 && !showLinkForm ? (
             <p className="text-xs text-muted-foreground py-2">No reference links.</p>

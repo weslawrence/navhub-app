@@ -106,6 +106,11 @@ function SharePointSitePicker({
   const [saving,     setSaving]     = useState(false)
   const [saved,      setSaved]      = useState(false)
 
+  // Keep local folderPath in sync with the parent's saved value. Without this,
+  // the picker keeps a stale local default after onSaved() reloads the
+  // connection — making the saved path "revert" on the next render.
+  useEffect(() => { setFolderPath(currentFolderPath) }, [currentFolderPath])
+
   useEffect(() => {
     fetch('/api/integrations/sharepoint/sites')
       .then(r => r.json())

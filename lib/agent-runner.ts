@@ -1269,20 +1269,25 @@ export async function executeAgentRun(
 
   const groupId = agent.group_id
 
-  // ── Hard wall-clock safety net ──────────────────────────────────────────
-  // The agentic loop has a per-iteration timeout check, but if a tool or
-  // network call hangs INSIDE an iteration the check never runs. As a
-  // last-resort guard, schedule a setTimeout that flips
-  // cancellation_requested after 5 minutes — the next checkpoint will then
-  // finalise the run with the proper save-state flow.
-  const HARD_TIMEOUT_MS = 5 * 60 * 1000
-  const hardTimeoutHandle = setTimeout(() => {
+  // ── Activity-aware idle timeout ─────────────────────────────────────────
+  // Was a fixed 5-minute wall-clock cap; that aborted long-but-active runs.
+  // Now: 3 minutes of NO activity (no streamed chunk, no completed tool)
+  // flips cancellation_requested. Active runs can take as long as they need;
+  // genuinely stuck ones are still killed at the next iteration checkpoint.
+  const IDLE_TIMEOUT_MS = 3 * 60 * 1000
+  const fireIdleTimeout = () => {
+    console.error(`[runner] Idle timeout — no activity for 3 minutes on run ${runId}`)
     void admin
       .from('agent_runs')
       .update({ cancellation_requested: true })
       .eq('id', runId)
       .eq('status', 'running')
-  }, HARD_TIMEOUT_MS)
+  }
+  let hardTimeoutHandle: ReturnType<typeof setTimeout> = setTimeout(fireIdleTimeout, IDLE_TIMEOUT_MS)
+  function resetActivityTimer() {
+    clearTimeout(hardTimeoutHandle)
+    hardTimeoutHandle = setTimeout(fireIdleTimeout, IDLE_TIMEOUT_MS)
+  }
 
   try {
     // Load credentials
@@ -1611,35 +1616,14 @@ Task estimation:
     // Loop guards — prevent infinite tool call loops
     const MAX_ITERATIONS    = 10
     const MAX_TOOL_FAILURES = 3
-    const MAX_RUN_DURATION_MS = 5 * 60 * 1000   // 5 minutes — hard wall-clock cap
-    const runStartTime      = Date.now()
     let   iterationCount    = 0
     const toolFailureCounts: Record<string, number> = {}
+    // Wall-clock cap removed — replaced by the activity-aware idle timer
+    // declared above (`resetActivityTimer`). Active long runs can now finish.
 
     // Agentic loop — continue until no more tool calls
     while (continueLoop) {
       iterationCount++
-
-      // ── Wall-clock timeout (defends against unbounded tool/model runs) ──
-      const elapsed = Date.now() - runStartTime
-      if (elapsed > MAX_RUN_DURATION_MS) {
-        const msg = '\n\n⚠️ Agent stopped: maximum run duration (5 minutes) exceeded.'
-        fullOutput += msg
-        onChunk({ type: 'text', content: msg })
-        await admin
-          .from('agent_runs')
-          .update({
-            status:        'error',
-            error_message: 'Run timeout: exceeded 5 minute maximum duration',
-            completed_at:  new Date().toISOString(),
-            output:        fullOutput,
-            tool_calls:    toolCallLogs,
-            tokens_used:   totalTokens,
-          })
-          .eq('id', runId)
-        onChunk({ type: 'error', message: 'Run timeout' })
-        return
-      }
 
       if (iterationCount > MAX_ITERATIONS) {
         const msg = '\n\n⚠️ Agent stopped: maximum iterations reached.'
@@ -1693,7 +1677,7 @@ Task estimation:
       // budget. callClaude/callGPT4o already have AbortController + idle
       // timers, but if the underlying socket is held open without progress
       // those abort paths can stall too.
-      const MODEL_TIMEOUT_MS = 2 * 60 * 1000
+      const MODEL_TIMEOUT_MS = 4 * 60 * 1000   // 4 minutes — long tool replies + thinking are OK
       const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> =>
         Promise.race([
           p,
@@ -1707,6 +1691,7 @@ Task estimation:
           callGPT4o(messages, toolDefs, systemPrompt, openAICreds, (chunk) => {
             onChunk({ type: 'text', content: chunk })
             fullOutput += chunk
+            resetActivityTimer()
           }),
           'callGPT4o',
         )
@@ -1717,6 +1702,7 @@ Task estimation:
           callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
             onChunk({ type: 'text', content: chunk })
             fullOutput += chunk
+            resetActivityTimer()
           }, claudeCreds),
           'callClaude',
         )
@@ -1796,6 +1782,7 @@ Task estimation:
 
         const durationMs = Date.now() - startTs
         onChunk({ type: 'tool_end', tool: toolName, output })
+        resetActivityTimer()
 
         // Track consecutive tool failures — stop if a tool fails too many times
         if (output.includes('"success":false') || output.startsWith('Error:')) {

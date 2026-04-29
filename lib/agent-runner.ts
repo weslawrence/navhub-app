@@ -37,8 +37,9 @@ import type {
   AgentModel,
   AgentTool,
   ToolCallLog,
+  TaskComplexity,
 } from '@/lib/types'
-import { PERSONA_PRESETS as PRESETS } from '@/lib/types'
+import { PERSONA_PRESETS as PRESETS, TASK_COMPLEXITY_SETTINGS } from '@/lib/types'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Event types emitted during a run
@@ -761,7 +762,8 @@ async function callClaude(
   tools:        object[],
   systemPrompt: string,
   onChunk:      (chunk: string) => void,
-  credentials?: Record<string, string>
+  credentials?: Record<string, string>,
+  maxTokens?:   number
 ): Promise<ModelResponse> {
   // Use BYO key from agent credentials if available, fall back to env var
   const apiKey = credentials?.['anthropic_api_key'] ?? process.env.ANTHROPIC_API_KEY
@@ -769,7 +771,7 @@ async function callClaude(
 
   const body: Record<string, unknown> = {
     model,
-    max_tokens: 12000,
+    max_tokens: maxTokens ?? 16_000,
     system:     systemPrompt,
     messages,
     stream:     true,
@@ -1367,11 +1369,13 @@ export async function executeAgentRun(
     // Pulled in once per run from the run.linked_document_ids column.
     const { data: runRow } = await admin
       .from('agent_runs')
-      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type, complex_task')
+      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type, task_complexity')
       .eq('id', runId)
       .single()
     const linkedIds    = (runRow?.linked_document_ids ?? []) as string[]
-    const isComplexTask = !!(runRow as { complex_task?: boolean } | null)?.complex_task
+    const taskComplexity = ((runRow as { task_complexity?: string } | null)?.task_complexity
+                              ?? 'standard') as TaskComplexity
+    const complexityCfg  = TASK_COMPLEXITY_SETTINGS[taskComplexity] ?? TASK_COMPLEXITY_SETTINGS.standard
     if (linkedIds.length > 0) {
       const { data: docs } = await admin
         .from('documents')
@@ -1593,19 +1597,43 @@ Task estimation:
 - Then immediately begin the task without waiting for confirmation.`
     }
 
-    // Complex-task mode preamble
-    if (isComplexTask) {
+    // Task-complexity preamble — different message per tier so the agent calibrates effort.
+    if (taskComplexity === 'standard') {
       systemPrompt += `
 
-## Complex task mode
-You are running in complex task mode with up to 30 iterations available.
-This is appropriate for tasks requiring many steps such as:
-- Reviewing and cataloguing multiple documents
-- Multi-stage analysis across many data sources
-- Generating long structured documents in multiple passes
-Work methodically. After every 5 tool calls, briefly summarise progress so far.
-If you are cataloguing documents, process them systematically — list all first, then read in batches.`
+## Effort level: medium job
+You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
+Solid work, no heroics needed — stay frugal with tool calls and tokens.`
+    } else if (taskComplexity === 'medium') {
+      systemPrompt += `
+
+## Effort level: big job
+You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
+Roll your sleeves up — the work is sizeable, but conserve effort where you can. Avoid unnecessary tool calls.`
+    } else if (taskComplexity === 'large') {
+      systemPrompt += `
+
+## Effort level: you've got your work cut out
+You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
+This one needs serious effort. Work methodically. After every 5 tool calls, briefly summarise progress so far.
+If you are cataloguing or transforming many items, process them systematically — list all first, then work in batches.`
+    } else if (taskComplexity === 'massive') {
+      systemPrompt += `
+
+## Effort level: open the throttle
+You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
+This is a massive job. Let's get it done. Work in clear phases, summarise progress every 5 tool calls,
+and use the full token budget when generating long structured outputs. Don't hold back, but stay organised.`
     }
+
+    // Document title freedom — explicit allow-list on characters so the agent
+    // doesn't second-guess punctuation in document titles.
+    systemPrompt += `
+
+## Document titles
+When creating or updating documents, use natural human-readable titles. Any printable characters are allowed,
+including spaces, apostrophes, em dashes, ampersands, brackets, slashes, colons, quotes, accented letters,
+and emoji. There is no length limit — pick a title that reads well and describes the document clearly.`
 
     // Initial messages
     const messages: AnthropicMessage[] = [
@@ -1628,12 +1656,12 @@ If you are cataloguing documents, process them systematically — list all first
     let continueLoop   = true
     const toolCallLogs: ToolCallLog[] = []
 
-    // Loop guards — prevent infinite tool call loops. Defaults bump from
-    // the historical 10/3 to 15/3 because most multi-document briefs need
-    // more than 10 model turns. Complex-task mode raises the iteration cap
-    // and the per-tool failure tolerance further.
-    const MAX_ITERATIONS    = isComplexTask ? 30 : 15
-    const MAX_TOOL_FAILURES = isComplexTask ? 5  : 3
+    // Loop guards — prevent infinite tool call loops. Iteration cap, max
+    // tokens per response and per-tool failure tolerance all scale with the
+    // selected task_complexity tier (see TASK_COMPLEXITY_SETTINGS).
+    const MAX_ITERATIONS    = complexityCfg.maxIterations
+    const MAX_TOOL_FAILURES = complexityCfg.maxToolFailures
+    const MAX_TOKENS_PER_CALL = complexityCfg.maxTokens
     let   iterationCount    = 0
     const toolFailureCounts: Record<string, number> = {}
     // Wall-clock cap removed — replaced by the activity-aware idle timer
@@ -1721,7 +1749,7 @@ If you are cataloguing documents, process them systematically — list all first
             onChunk({ type: 'text', content: chunk })
             fullOutput += chunk
             resetActivityTimer()
-          }, claudeCreds),
+          }, claudeCreds, MAX_TOKENS_PER_CALL),
           'callClaude',
         )
       }

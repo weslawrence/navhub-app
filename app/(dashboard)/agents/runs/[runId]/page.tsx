@@ -548,6 +548,7 @@ export default function RunStreamPage() {
       output_name_override?: string | null
       notify_email?:         string | null
       notify_slack_channel?: string | null
+      task_complexity?:      string | null
     }
     if (r2.input_context?.extra_instructions) params.set('brief', r2.input_context.extra_instructions)
     if (r2.run_name)                          params.set('name',  r2.run_name)
@@ -557,6 +558,8 @@ export default function RunStreamPage() {
     if (r2.output_name_override)              params.set('output_name',   r2.output_name_override)
     if (r2.notify_email)                      params.set('notify_email',  r2.notify_email)
     if (r2.notify_slack_channel)              params.set('notify_slack',  r2.notify_slack_channel)
+    if (r2.task_complexity && r2.task_complexity !== 'standard')
+                                              params.set('task_complexity', r2.task_complexity)
     if (recurring)                            params.set('recurring',     'true')
     const qs = params.toString()
     router.push(`/agents/${r.agent_id}/run${qs ? `?${qs}` : ''}`)
@@ -914,18 +917,33 @@ export default function RunStreamPage() {
                   {modelLabel && <span>{modelLabel}</span>}
                   {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
                 </div>
-                {tokens > 20000 && tokens <= 100000 && (
-                  <div className="text-amber-400 text-xs">
-                    ⚠️ High token usage — consider simplifying the brief or reducing enabled tools
-                  </div>
-                )}
-                {tokens > 100000 && (
-                  <div className="text-amber-400 text-xs">
-                    ⚠️ Very high token usage ({tokens.toLocaleString()} tokens).
-                    {!(run as { complex_task?: boolean } | null)?.complex_task &&
-                      ' For tasks like this, enable "Complex task" mode on the run form so the agent can plan its iterations accordingly.'}
-                  </div>
-                )}
+                {(() => {
+                  const tier = ((run as { task_complexity?: string } | null)?.task_complexity ?? 'standard') as
+                    'standard' | 'medium' | 'large' | 'massive'
+                  // Per-tier warn / hard-warn thresholds.
+                  const thresholds = {
+                    standard: { warn:  20_000, hard:  60_000, suggest: 'medium'  },
+                    medium:   { warn:  60_000, hard: 150_000, suggest: 'large'   },
+                    large:    { warn: 120_000, hard: 250_000, suggest: 'massive' },
+                    massive:  { warn: 200_000, hard: 400_000, suggest: null     },
+                  }[tier]
+                  if (tokens > thresholds.hard) {
+                    return (
+                      <div className="text-amber-400 text-xs">
+                        ⚠️ Very high token usage ({tokens.toLocaleString()} tokens).
+                        {thresholds.suggest && ` For tasks of this size, try the "${thresholds.suggest}" tier on the run form so the agent plans iterations accordingly.`}
+                      </div>
+                    )
+                  }
+                  if (tokens > thresholds.warn) {
+                    return (
+                      <div className="text-amber-400 text-xs">
+                        ⚠️ High token usage for this tier — consider simplifying the brief or reducing enabled tools
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
               </div>
             )}
 

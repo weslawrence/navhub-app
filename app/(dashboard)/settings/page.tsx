@@ -2,23 +2,25 @@
 
 import { useState, useEffect } from 'react'
 import { useSearchParams }      from 'next/navigation'
-import { Settings, SlidersHorizontal, Building2, Upload, Users, Bot } from 'lucide-react'
+import { Settings, SlidersHorizontal, Building2, Upload, Users, Bot, BarChart2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import DisplayTab      from '@/components/settings/DisplayTab'
 import CompaniesTab    from '@/components/settings/CompaniesTab'
 import UploadsTab      from '@/components/settings/UploadsTab'
 import MembersTab      from '@/components/settings/MembersTab'
 import AgentsTab       from '@/components/settings/AgentsTab'
+import UsageTab        from '@/components/settings/UsageTab'
 
 // ─── Tabs ────────────────────────────────────────────────────────────────────
 
-type Tab = 'display' | 'companies' | 'agents' | 'uploads' | 'members'
+type Tab = 'display' | 'companies' | 'agents' | 'uploads' | 'members' | 'usage'
 
 const TABS: { id: Tab; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
   { id: 'display',      label: 'Display',      Icon: SlidersHorizontal },
   { id: 'companies',    label: 'Companies',    Icon: Building2 },
   { id: 'agents',       label: 'Agents',       Icon: Bot },
   { id: 'uploads',      label: 'Uploads',      Icon: Upload },
+  { id: 'usage',        label: 'Usage',        Icon: BarChart2 },
   { id: 'members',      label: 'Members',      Icon: Users },
 ]
 
@@ -28,7 +30,7 @@ export default function SettingsPage() {
   const searchParams = useSearchParams()
   const paramTab     = searchParams.get('tab') as Tab | null
   // Legacy tab=integrations redirects to /integrations; fall back to 'display'
-  const initialTab: Tab = paramTab && ['display','companies','agents','uploads','members'].includes(paramTab) ? paramTab : 'display'
+  const initialTab: Tab = paramTab && ['display','companies','agents','uploads','members','usage'].includes(paramTab) ? paramTab : 'display'
 
   const [tab,           setTab]           = useState<Tab>(initialTab)
   const [groupId,       setGroupId]       = useState<string | null>(null)
@@ -125,6 +127,9 @@ export default function SettingsPage() {
         )}
         {tab === 'uploads' && (
           <UploadsTab isAdmin={isAdmin} fyEndMonth={fyEndMonth} />
+        )}
+        {tab === 'usage' && (
+          <UsageTab />
         )}
         {tab === 'members' && (
           <MembersTab

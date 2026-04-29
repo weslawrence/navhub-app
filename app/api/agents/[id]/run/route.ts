@@ -96,7 +96,10 @@ export async function POST(
     const ids = (body.linked_document_ids as unknown[]).filter((x): x is string => typeof x === 'string')
     insertData.linked_document_ids = ids
   }
-  if (body.complex_task === true) insertData.complex_task = true
+  if (typeof body.task_complexity === 'string'
+      && ['standard', 'medium', 'large', 'massive'].includes(body.task_complexity)) {
+    insertData.task_complexity = body.task_complexity
+  }
 
   const { data: run, error } = await admin
     .from('agent_runs')

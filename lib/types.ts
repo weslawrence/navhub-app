@@ -437,7 +437,25 @@ export interface AgentRun {
   // Per-run linked documents (migration 042) — UUIDs of NavHub documents
   // pulled into agent_run_attachments at run start.
   linked_document_ids:     string[]
+  // Per-run complexity tier (migration 052) — drives iteration cap, token budget
+  // and tool-failure tolerance.
+  task_complexity:         TaskComplexity
   created_at:              string
+}
+
+export type TaskComplexity = 'standard' | 'medium' | 'large' | 'massive'
+
+export interface TaskComplexitySettings {
+  maxIterations:   number
+  maxTokens:       number
+  maxToolFailures: number
+}
+
+export const TASK_COMPLEXITY_SETTINGS: Record<TaskComplexity, TaskComplexitySettings> = {
+  standard: { maxIterations: 15, maxTokens: 16_000, maxToolFailures: 3 },
+  medium:   { maxIterations: 25, maxTokens: 32_000, maxToolFailures: 4 },
+  large:    { maxIterations: 40, maxTokens: 48_000, maxToolFailures: 5 },
+  massive:  { maxIterations: 60, maxTokens: 64_000, maxToolFailures: 6 },
 }
 
 export interface AgentRunMessage {

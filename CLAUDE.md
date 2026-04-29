@@ -4341,3 +4341,75 @@ POST /api/admin/users/[id]/reset-password
 ### Admin Group Detail page changes (`app/(admin)/admin/groups/[id]/page.tsx`)
 - Member rows in the Users tab also include a "Reset Password" action consistent with the Users page
 
+
+---
+
+## Task Complexity Tiers + Token Usage Dashboard
+
+### Database (migration 052)
+Replaces the boolean `complex_task` flag on `agent_runs` with a four-tier
+`task_complexity` text column (`standard | medium | large | massive`),
+defaulting to `'standard'` and CHECK-constrained.
+
+```sql
+ALTER TABLE agent_runs
+  DROP COLUMN IF EXISTS complex_task;
+ALTER TABLE agent_runs
+  ADD COLUMN IF NOT EXISTS task_complexity text NOT NULL DEFAULT 'standard'
+  CHECK (task_complexity IN ('standard', 'medium', 'large', 'massive'));
+```
+
+### Tier settings (`lib/types.ts`)
+```typescript
+export type TaskComplexity = 'standard' | 'medium' | 'large' | 'massive'
+export const TASK_COMPLEXITY_SETTINGS: Record<TaskComplexity, TaskComplexitySettings> = {
+  standard: { maxIterations: 15, maxTokens: 16_000, maxToolFailures: 3 },
+  medium:   { maxIterations: 25, maxTokens: 32_000, maxToolFailures: 4 },
+  large:    { maxIterations: 40, maxTokens: 48_000, maxToolFailures: 5 },
+  massive:  { maxIterations: 60, maxTokens: 64_000, maxToolFailures: 6 },
+}
+```
+
+### Runner (`lib/agent-runner.ts`)
+- `callClaude(... credentials?, maxTokens?)` — explicit `maxTokens` arg, default `16_000`
+- Reads `task_complexity` from `agent_runs` row (alongside `linked_document_ids`, output settings)
+- Uses `TASK_COMPLEXITY_SETTINGS[tier]` to drive `MAX_ITERATIONS`, `MAX_TOOL_FAILURES`, and `MAX_TOKENS_PER_CALL` (passed into callClaude)
+- Injects a tier-specific preamble in the system prompt so the model calibrates effort:
+  - standard: "Solid work, no heroics needed — stay frugal"
+  - medium: "Roll your sleeves up — sizeable, but conserve where you can"
+  - large: "This needs serious effort. Work methodically. Summarise every 5 tool calls"
+  - massive: "Open the throttle. Use the full token budget when generating long outputs"
+- Always appends a **Document titles** block instructing the agent that any printable characters (apostrophes, em dashes, ampersands, brackets, slashes, quotes, accented letters, emoji) are allowed in document titles, with no length limit
+
+### Run launcher (`app/(dashboard)/agents/[id]/run/page.tsx`)
+Replaces the binary `Complex task` checkbox with a 2x2 button grid where each
+tier shows emoji + label + description + specs. State is persisted via the
+`task_complexity` URL param so "Run Again" carries the previous tier through.
+The POST body sends `task_complexity` only when the tier ≠ `'standard'`.
+
+### POST `/api/agents/[id]/run`
+Accepts `task_complexity: 'standard'|'medium'|'large'|'massive'`. Validated
+against the allow-list and written to `agent_runs.task_complexity`.
+
+### Run detail page (`app/(dashboard)/agents/runs/[runId]/page.tsx`)
+Token-usage warnings are now tier-aware:
+| Tier      | Soft warn | Hard warn | Suggests next tier? |
+|-----------|-----------|-----------|---------------------|
+| standard  | 20k       | 60k       | medium              |
+| medium    | 60k       | 150k      | large               |
+| large     | 120k      | 250k      | massive             |
+| massive   | 200k      | 400k      | (none)              |
+
+The "Run Again" URL builder also propagates `task_complexity` when the
+finished run used a non-standard tier.
+
+### Settings → Usage tab
+New tab between Uploads and Members. Backed by `GET /api/settings/token-usage`
+which aggregates completed runs (`tokens_used > 0`) into:
+- 3 summary cards: This month / Last 30 days / All time (tokens + USD cost + run count)
+- By job size — proportional bar chart per tier with run count
+- Top agents — proportional bar chart of top 25 by token consumption
+
+Cost is estimated client-server with a per-model rate map
+(`COST_PER_1K_TOKENS` in the route). Falls back to Sonnet pricing for
+unrecognised models.

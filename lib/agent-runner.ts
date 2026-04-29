@@ -769,7 +769,7 @@ async function callClaude(
 
   const body: Record<string, unknown> = {
     model,
-    max_tokens: 4096,
+    max_tokens: 12000,
     system:     systemPrompt,
     messages,
     stream:     true,

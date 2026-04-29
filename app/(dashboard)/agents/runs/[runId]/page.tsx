@@ -914,9 +914,16 @@ export default function RunStreamPage() {
                   {modelLabel && <span>{modelLabel}</span>}
                   {tokens > 0 && <span>· {tokens.toLocaleString()} tokens</span>}
                 </div>
-                {tokens > 20000 && (
+                {tokens > 20000 && tokens <= 100000 && (
                   <div className="text-amber-400 text-xs">
                     ⚠️ High token usage — consider simplifying the brief or reducing enabled tools
+                  </div>
+                )}
+                {tokens > 100000 && (
+                  <div className="text-amber-400 text-xs">
+                    ⚠️ Very high token usage ({tokens.toLocaleString()} tokens).
+                    {!(run as { complex_task?: boolean } | null)?.complex_task &&
+                      ' For tasks like this, enable "Complex task" mode on the run form so the agent can plan its iterations accordingly.'}
                   </div>
                 )}
               </div>

@@ -1367,10 +1367,11 @@ export async function executeAgentRun(
     // Pulled in once per run from the run.linked_document_ids column.
     const { data: runRow } = await admin
       .from('agent_runs')
-      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type')
+      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type, complex_task')
       .eq('id', runId)
       .single()
-    const linkedIds = (runRow?.linked_document_ids ?? []) as string[]
+    const linkedIds    = (runRow?.linked_document_ids ?? []) as string[]
+    const isComplexTask = !!(runRow as { complex_task?: boolean } | null)?.complex_task
     if (linkedIds.length > 0) {
       const { data: docs } = await admin
         .from('documents')
@@ -1592,6 +1593,20 @@ Task estimation:
 - Then immediately begin the task without waiting for confirmation.`
     }
 
+    // Complex-task mode preamble
+    if (isComplexTask) {
+      systemPrompt += `
+
+## Complex task mode
+You are running in complex task mode with up to 30 iterations available.
+This is appropriate for tasks requiring many steps such as:
+- Reviewing and cataloguing multiple documents
+- Multi-stage analysis across many data sources
+- Generating long structured documents in multiple passes
+Work methodically. After every 5 tool calls, briefly summarise progress so far.
+If you are cataloguing documents, process them systematically — list all first, then read in batches.`
+    }
+
     // Initial messages
     const messages: AnthropicMessage[] = [
       {
@@ -1613,9 +1628,12 @@ Task estimation:
     let continueLoop   = true
     const toolCallLogs: ToolCallLog[] = []
 
-    // Loop guards — prevent infinite tool call loops
-    const MAX_ITERATIONS    = 10
-    const MAX_TOOL_FAILURES = 3
+    // Loop guards — prevent infinite tool call loops. Defaults bump from
+    // the historical 10/3 to 15/3 because most multi-document briefs need
+    // more than 10 model turns. Complex-task mode raises the iteration cap
+    // and the per-tool failure tolerance further.
+    const MAX_ITERATIONS    = isComplexTask ? 30 : 15
+    const MAX_TOOL_FAILURES = isComplexTask ? 5  : 3
     let   iterationCount    = 0
     const toolFailureCounts: Record<string, number> = {}
     // Wall-clock cap removed — replaced by the activity-aware idle timer

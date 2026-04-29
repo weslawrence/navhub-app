@@ -96,6 +96,7 @@ export async function POST(
     const ids = (body.linked_document_ids as unknown[]).filter((x): x is string => typeof x === 'string')
     insertData.linked_document_ids = ids
   }
+  if (body.complex_task === true) insertData.complex_task = true
 
   const { data: run, error } = await admin
     .from('agent_runs')

@@ -50,6 +50,7 @@ export async function POST(request: Request) {
   const file      = formData.get('file') as File | null
   const folderId  = formData.get('folder_id') as string | null
   const titleInput = formData.get('title') as string | null
+  const docTypeInput = (formData.get('document_type') as string | null) ?? null
 
   if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 })
 
@@ -97,7 +98,7 @@ export async function POST(request: Request) {
       group_id:         activeGroupId,
       folder_id:        folderId ?? null,
       title,
-      document_type:    'financial_analysis' as DocumentType,
+      document_type:    (docTypeInput?.trim() || 'general') as DocumentType,
       audience:         'internal',
       content_markdown: extractedContent,
       status:           'draft',

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Play, Loader2, CalendarClock, Check, FileText, Upload, X, Paperclip } from 'lucide-react'
+import { ArrowLeft, Play, Loader2, CalendarClock, Check, FileText, Upload, X, Paperclip, AlertTriangle, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
 import { Label }  from '@/components/ui/label'
@@ -79,6 +79,7 @@ export default function AgentRunPage() {
   const [outputFolderId, setOutputFolderId] = useState(searchParams.get('folder_id')   ?? '')
   const [outputName,   setOutputName]   = useState(searchParams.get('output_name') ?? '')
   const [outputStatus, setOutputStatus] = useState<'draft' | 'published'>(initialStatus)
+  const [complexTask,  setComplexTask]  = useState(false)
 
   // Notifications (pre-populated from query params for "Run Again")
   const initialNotifyEmail = searchParams.get('notify_email') ?? ''
@@ -217,6 +218,7 @@ export default function AgentRunPage() {
           output_folder_id:     outputFolderId || undefined,
           output_status:        outputStatus,
           output_name_override: outputName.trim() || undefined,
+          complex_task:         complexTask || undefined,
           notify_email:         notifyEmailOn && notifyEmail.trim() ? notifyEmail.trim() : null,
           notify_slack_channel: notifySlackOn && notifySlack.trim() ? notifySlack.trim() : null,
           linked_document_ids:  linkedIds.length > 0 ? linkedIds : undefined,
@@ -482,6 +484,40 @@ export default function AgentRunPage() {
               />
             </div>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* Complex task toggle */}
+      <Card>
+        <CardContent className="pt-5 space-y-3">
+          <label className="flex items-start justify-between gap-4 cursor-pointer">
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-foreground flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 text-amber-500" />
+                Complex task
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Increases the agent&apos;s iteration limit for tasks that need many steps —
+                multi-document reviews, multi-stage analysis, long structured outputs.
+                Expect higher token usage and longer run times.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              checked={complexTask}
+              onChange={e => setComplexTask(e.target.checked)}
+              className="mt-1 rounded border-input shrink-0"
+            />
+          </label>
+          {complexTask && (
+            <div className="flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 px-3 py-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-amber-700 dark:text-amber-300">
+                Complex mode allows up to <span className="font-semibold">30 iterations</span> (default is 15).
+                Token usage may be significantly higher.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

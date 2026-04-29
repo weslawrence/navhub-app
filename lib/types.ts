@@ -682,6 +682,7 @@ export interface ForecastGrid {
 // ============================================================
 
 export type DocumentType =
+  | 'general'
   | 'financial_analysis'
   | 'cash_flow_review'
   | 'board_report'
@@ -847,6 +848,7 @@ export interface DocumentVersion {
 }
 
 export const DOCUMENT_TYPE_LABELS: Record<DocumentType, string> = {
+  general:            'General Document',
   financial_analysis: 'Financial Analysis',
   cash_flow_review:   'Cash Flow Review',
   board_report:       'Board Report',

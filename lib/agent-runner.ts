@@ -770,6 +770,37 @@ async function callClaude(
   const apiKey = credentials?.['anthropic_api_key'] ?? process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY environment variable not set')
 
+  // ── Bulletproof timer + abort plumbing ──────────────────────────────────
+  // Earlier implementations had every exit path leak at least one timer or
+  // miss clearing the connect timer in error branches, which is how some
+  // production runs ended up hung for hours. This block keeps a single
+  // closure-scoped controller and explicit clearTimers() called from every
+  // exit (success, error, abort, rate-limit) inside one big try/finally.
+  const controller = new AbortController()
+  const { signal } = controller
+
+  const CONNECT_TIMEOUT_MS = 45_000
+  const IDLE_TIMEOUT_MS    = 60_000
+
+  let connectTimer: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    console.error(`[callClaude] connect timeout — aborting after ${CONNECT_TIMEOUT_MS}ms`)
+    try { controller.abort() } catch { /* ignore */ }
+  }, CONNECT_TIMEOUT_MS)
+
+  let idleTimer: ReturnType<typeof setTimeout> | null = null
+  const resetIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer)
+    idleTimer = setTimeout(() => {
+      console.error(`[callClaude] idle timeout — no chunk for ${IDLE_TIMEOUT_MS}ms`)
+      try { controller.abort() } catch { /* ignore */ }
+    }, IDLE_TIMEOUT_MS)
+  }
+
+  const clearTimers = () => {
+    if (connectTimer) { clearTimeout(connectTimer); connectTimer = null }
+    if (idleTimer)    { clearTimeout(idleTimer);    idleTimer    = null }
+  }
+
   const body: Record<string, unknown> = {
     model,
     max_tokens: maxTokens ?? 16_000,
@@ -779,118 +810,143 @@ async function callClaude(
   }
   if (tools.length > 0) body.tools = tools
 
-  // Abort the fetch + stream if Anthropic stalls. Two layers:
-  //   1. Connect/headers timeout — 30s — guards against hung TCP / TLS.
-  //   2. Per-chunk idle timeout — 60s — guards against a stalled stream
-  //      (no SSE event for a minute → almost certainly dead).
-  const controller   = new AbortController()
-  const connectTimer = setTimeout(() => controller.abort(), 30_000)
+  let res: Response
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:  'POST',
+      headers: {
+        'x-api-key':         apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type':      'application/json',
+      },
+      body:   JSON.stringify(body),
+      signal,
+    })
 
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method:  'POST',
-    headers: {
-      'x-api-key':         apiKey,
-      'anthropic-version': '2023-06-01',
-      'content-type':      'application/json',
-    },
-    body:   JSON.stringify(body),
-    signal: controller.signal,
-  })
+    // Headers received — kill the connect timer immediately.
+    if (connectTimer) { clearTimeout(connectTimer); connectTimer = null }
+  } catch (err) {
+    clearTimers()
+    if (signal.aborted) throw new Error('callClaude aborted: connect-timeout')
+    throw err
+  }
 
-  // Headers received → cancel the connect timer, switch to per-chunk idle timer
-  clearTimeout(connectTimer)
+  // Handle rate limiting BEFORE attempting to read the body — propagate as a
+  // distinguishable error so executeAgentRun can sleep + retry rather than
+  // marking the run failed.
+  if (res.status === 429) {
+    const retryHdr   = res.headers.get('retry-after')
+    const retryAfter = retryHdr ? parseInt(retryHdr, 10) : 10
+    clearTimers()
+    console.warn(`[callClaude] rate limited (429) — retry after ${retryAfter}s`)
+    throw new Error(`RATE_LIMITED:${Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : 10}`)
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { error?: { message?: string } }
+    clearTimers()
     throw new Error(`Anthropic API error ${res.status}: ${err.error?.message ?? 'Unknown'}`)
   }
+
+  const reader = res.body?.getReader()
+  if (!reader) {
+    clearTimers()
+    throw new Error('No response body from Anthropic API')
+  }
+
+  // Start idle watchdog now that we own the stream.
+  resetIdle()
 
   let fullText  = ''
   const toolUses: ToolUseBlock[] = []
   let inputTokens = 0
   let outputTokens = 0
 
-  const reader = res.body?.getReader()
-  if (!reader) throw new Error('No response body from Anthropic API')
-
   const decoder = new TextDecoder()
   let buffer    = ''
-
-  // Per-chunk idle watchdog
-  let idleTimer = setTimeout(() => controller.abort(), 60_000)
-  const resetIdle = () => {
-    clearTimeout(idleTimer)
-    idleTimer = setTimeout(() => controller.abort(), 60_000)
-  }
-
   let chunkCount = 0
-  try { while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    resetIdle()
 
-    // Mid-stream cancellation check — poll DB every 20 SSE frames so the user
-    // doesn't have to mash the Cancel button waiting for a long model response
-    // to finish before the iteration-boundary check fires.
-    chunkCount++
-    if (isCancelled && chunkCount % 20 === 0) {
+  try {
+    while (true) {
+      let read: ReadableStreamReadResult<Uint8Array>
       try {
-        if (await isCancelled()) {
-          controller.abort()
-          throw new Error('CANCELLED_MID_STREAM')
-        }
+        read = await reader.read()
       } catch (err) {
-        if (err instanceof Error && err.message === 'CANCELLED_MID_STREAM') throw err
-        // DB blip — ignore, fall back to iteration-boundary check
+        // reader.read() can throw if the underlying stream is aborted.
+        if (signal.aborted) {
+          throw new Error(signal.reason
+            ? `callClaude aborted: ${String(signal.reason)}`
+            : 'callClaude aborted: idle-timeout')
+        }
+        throw err
+      }
+      if (read.done) break
+      // Reset idle watchdog on every successful read — this is the critical
+      // anti-hang guarantee. Even if the parsed SSE event yields no text,
+      // the bytes still landed.
+      resetIdle()
+
+      // Mid-stream cancellation poll — every 20 reads.
+      chunkCount++
+      if (isCancelled && chunkCount % 20 === 0) {
+        try {
+          if (await isCancelled()) {
+            try { controller.abort() } catch { /* ignore */ }
+            throw new Error('CANCELLED_MID_STREAM')
+          }
+        } catch (err) {
+          if (err instanceof Error && err.message === 'CANCELLED_MID_STREAM') throw err
+          // DB blip — ignore, iteration-boundary check is the safety net
+        }
+      }
+
+      buffer += decoder.decode(read.value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() ?? ''
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        const data = line.slice(6).trim()
+        if (data === '[DONE]') continue
+
+        let event: Record<string, unknown>
+        try { event = JSON.parse(data) } catch { continue }
+
+        const evType = event.type as string
+
+        if (evType === 'content_block_start') {
+          const block = event.content_block as Record<string, unknown>
+          if (block.type === 'tool_use') {
+            toolUses.push({
+              id:    block.id as string,
+              name:  block.name as string,
+              input: {},
+            })
+          }
+        } else if (evType === 'content_block_delta') {
+          const delta = event.delta as Record<string, unknown>
+          if (delta.type === 'text_delta') {
+            const chunk = delta.text as string
+            fullText += chunk
+            onChunk(chunk)
+          } else if (delta.type === 'input_json_delta' && toolUses.length > 0) {
+            const last = toolUses[toolUses.length - 1]
+            const existing = (last.input as Record<string, unknown>).__raw ?? ''
+            last.input = { __raw: (existing as string) + (delta.partial_json as string ?? '') }
+          }
+        } else if (evType === 'message_delta') {
+          const usage = event.usage as Record<string, number> | undefined
+          if (usage) outputTokens = usage.output_tokens ?? 0
+        } else if (evType === 'message_start') {
+          const msg = event.message as Record<string, unknown>
+          const usage = msg?.usage as Record<string, number> | undefined
+          if (usage) inputTokens = usage.input_tokens ?? 0
+        }
       }
     }
-
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = line.slice(6).trim()
-      if (data === '[DONE]') continue
-
-      let event: Record<string, unknown>
-      try { event = JSON.parse(data) } catch { continue }
-
-      const evType = event.type as string
-
-      if (evType === 'content_block_start') {
-        const block = event.content_block as Record<string, unknown>
-        if (block.type === 'tool_use') {
-          toolUses.push({
-            id:    block.id as string,
-            name:  block.name as string,
-            input: {},
-          })
-        }
-      } else if (evType === 'content_block_delta') {
-        const delta = event.delta as Record<string, unknown>
-        if (delta.type === 'text_delta') {
-          const chunk = delta.text as string
-          fullText += chunk
-          onChunk(chunk)
-        } else if (delta.type === 'input_json_delta' && toolUses.length > 0) {
-          // Accumulate tool input JSON fragments — will be parsed after stream ends
-          const last = toolUses[toolUses.length - 1]
-          const existing = (last.input as Record<string, unknown>).__raw ?? ''
-          last.input = { __raw: (existing as string) + (delta.partial_json as string ?? '') }
-        }
-      } else if (evType === 'message_delta') {
-        const usage = event.usage as Record<string, number> | undefined
-        if (usage) outputTokens = usage.output_tokens ?? 0
-      } else if (evType === 'message_start') {
-        const msg = event.message as Record<string, unknown>
-        const usage = msg?.usage as Record<string, number> | undefined
-        if (usage) inputTokens = usage.input_tokens ?? 0
-      }
-    }
-  } } finally {
-    clearTimeout(idleTimer)
+  } finally {
+    clearTimers()
+    try { reader.releaseLock() } catch { /* already released */ }
   }
 
   // Parse accumulated tool inputs
@@ -1563,109 +1619,69 @@ export async function executeAgentRun(
       for (const t of filtered) toolDefs.push(t)
     }
 
-    // ─ Tool awareness in system prompt ─────────────────────────────────────
-    // Lists the tools the agent actually has available this run so it knows
-    // what it can do without asking the user. Excludes ask_user (it is a
-    // clarification mechanism, not a task-completion tool).
-    const toolsForPrompt = toolDefs.filter(t => (t as { name?: string }).name !== 'ask_user')
-    if (toolsForPrompt.length > 0) {
-      const toolList = toolsForPrompt
-        .map(t => {
-          const tool = t as { name: string; description: string }
-          return `- **${tool.name}**: ${tool.description}`
-        })
-        .join('\n')
-      systemPrompt += `
+    // ─ System-prompt addenda — kept compact ─────────────────────────────────
+    // Earlier revisions added six prose blocks totalling ~3k tokens of overhead
+    // on every run. The full tool definitions are already passed via the API
+    // `tools` arg, so the model knows each tool's signature without us
+    // re-listing them here. We only add CONDITIONAL blocks that aren't
+    // already implicit in the tool schemas.
+    const toolNameSet = new Set(
+      toolDefs
+        .map(t => (t as { name?: string }).name)
+        .filter((n): n is string => !!n),
+    )
+    const hasDocTools     = toolNameSet.has('create_document') || toolNameSet.has('update_document')
+    const hasReportTools  = toolNameSet.has('render_report')   || toolNameSet.has('list_report_templates')
+    const hasAttachTool   = toolNameSet.has('read_attachment')
+    const hasAttachments  = !!attachments && attachments.length > 0
 
-## Available Tools
-You have the following tools available this run. Use them directly to complete tasks — do not ask the user how to perform actions these tools can handle:
-
-${toolList}
-
-Important:
-- Call tools directly whenever the task requires one of them — do not describe what you would do, just do it.
-- Use create_document / update_document to save written outputs.
-- Use render_report to generate reports from templates (after list_report_templates + read_report_template).
-- Use read_financials to access P&L / Balance Sheet data.
-- Only use ask_user when you genuinely need information only the user can provide — never to confirm tool choice or method.
-
-Long / multi-section documents:
-- create_document accepts the full markdown body in content_markdown — there is no soft cap, do not truncate to fit.
-- For documents longer than 2 pages, prefer the create-then-update pattern:
-  STEP 1: Call create_document with the COMPLETE content if it fits in a single tool call, OR with the title + a brief intro otherwise.
-  STEP 2: Read the document_id from the TOP LEVEL of the create_document response (it is also under "data.document_id" for backwards compat — either works).
-  STEP 3: Call update_document using that exact document_id string to add or replace the full content.
-- The create_document response shape is: {"success":true,"document_id":"<uuid>","title":"...","view_url":"...","data":{...}}. Use the top-level document_id verbatim — never pass "undefined", an empty string, or a guess.
-- Never call update_document without first verifying you have the document_id from a successful create_document call earlier in this same run.
-
-When tools fail:
-- Retry ONCE with corrected parameters when create_document, update_document, render_report, or read_attachment returns an error.
-- If the second attempt also fails, do NOT silently give up. Call ask_user with the question: "I'm having trouble saving the document. Would you like me to output the full text here so you can copy it into a document manually?"
-- If the user says yes, output the complete document content as formatted markdown directly in the response.
-- If read_attachment fails, ask_user to re-upload the file or paste the content as text.
-- Never retry any individual tool more than twice consecutively — surface the problem to the user instead.
-
-Task estimation:
-- At the very start of every run, before doing any work or calling any tool, output ONE line in this exact format:
-  ⏱ Estimated time: [X minutes] — [brief description of what you'll do]
-- Examples:
-  ⏱ Estimated time: 2 minutes — Reading 2 documents and updating the operating document
-  ⏱ Estimated time: 5 minutes — Analysing financials for 3 companies and generating a board report
-  ⏱ Estimated time: 1 minute — Creating a summary document from the attached brief
-- Then immediately begin the task without waiting for confirmation.`
+    // Task-complexity tier — single line each (was 4 lines × 4 tiers).
+    const tierMessage: Record<TaskComplexity, string> = {
+      standard: `Stay frugal — small task, no heroics needed.`,
+      medium:   `Sizeable task — roll your sleeves up but avoid unnecessary tool calls.`,
+      large:    `Heavy lift — work methodically; summarise progress every 5 tool calls.`,
+      massive:  `Open the throttle — work in phases, summarise progress every 5 tool calls, use full token budget for long outputs.`,
     }
-
-    // Task-complexity preamble — different message per tier so the agent calibrates effort.
-    if (taskComplexity === 'standard') {
-      systemPrompt += `
-
-## Effort level: medium job
-You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
-Solid work, no heroics needed — stay frugal with tool calls and tokens.`
-    } else if (taskComplexity === 'medium') {
-      systemPrompt += `
-
-## Effort level: big job
-You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
-Roll your sleeves up — the work is sizeable, but conserve effort where you can. Avoid unnecessary tool calls.`
-    } else if (taskComplexity === 'large') {
-      systemPrompt += `
-
-## Effort level: you've got your work cut out
-You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
-This one needs serious effort. Work methodically. After every 5 tool calls, briefly summarise progress so far.
-If you are cataloguing or transforming many items, process them systematically — list all first, then work in batches.`
-    } else if (taskComplexity === 'massive') {
-      systemPrompt += `
-
-## Effort level: open the throttle
-You have up to ${complexityCfg.maxIterations} iterations and a ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
-This is a massive job. Let's get it done. Work in clear phases, summarise progress every 5 tool calls,
-and use the full token budget when generating long structured outputs. Don't hold back, but stay organised.`
-    }
-
-    // Document title freedom — explicit allow-list on characters so the agent
-    // doesn't second-guess punctuation in document titles.
     systemPrompt += `
 
-## Document titles and special characters
-- Use natural human-readable titles. ALL punctuation is supported: brackets [], parentheses (),
-  em dashes —, colons :, semicolons ;, apostrophes ', ampersands &, accented letters and emoji.
-- The DB stores titles verbatim. There is no length limit — pick a title that reads well.
-- The only characters that cause downstream filename issues when documents are exported (DOCX, PPTX,
-  SharePoint sync) are: < > : " / \\ | ? *. If create_document fails because of a title, retry the
-  same title with only those nine characters replaced with a hyphen.
-- Never silently skip saving. If create_document fails twice with title-related errors, call ask_user
-  to surface the issue rather than hiding it.
+## Effort level (${taskComplexity})
+${tierMessage[taskComplexity]} Up to ${complexityCfg.maxIterations} iterations · ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
 
-## Reading documents you created
-- create_document returns a document_id. To read that document back later in the same run, call
-  read_document with that document_id — NEVER read_attachment.
-- read_attachment is ONLY for files attached to the run by the user (PDFs, DOCXs, images uploaded
-  in the run launcher) and for documents linked via linked_document_ids.
-- Documents you create live in the NavHub document library; access them via read_document.
-- When calling read_attachment, pass the EXACT file_name string from the "Attached files for this
-  run" section. Do not append the MIME type, do not wrap in quotes, do not paraphrase the name.`
+Before any work, output one line in the format: ⏱ Estimated time: [X min] — [what you'll do]. Then begin immediately without confirmation.`
+
+    // Document creation guidance — only when create/update tools are enabled.
+    if (hasDocTools) {
+      systemPrompt += `
+
+## Documents
+- create_document accepts the full markdown body in content_markdown — no soft cap, do not truncate.
+- create_document returns {"success":true,"document_id":"<uuid>",...}. Use the top-level document_id verbatim with update_document. Never pass "undefined", an empty string, or a guess.
+- For documents created in this run, read them back with read_document(document_id) — not read_attachment.
+- Titles support all punctuation; only < > : " / \\ | ? * cause downstream filename issues. On a title-related failure, retry with only those nine replaced by a hyphen, then surface via ask_user if it fails again.`
+    }
+
+    // Report-generation flow — only when those tools are enabled.
+    if (hasReportTools) {
+      systemPrompt += `
+
+## Reports
+- list_report_templates → read_report_template(template_id) → render_report(template_id, slot_data). Never skip steps or guess a template_id.`
+    }
+
+    // Attachment guidance — only when read_attachment is enabled AND there
+    // are actually attached files.
+    if (hasAttachTool && hasAttachments) {
+      systemPrompt += `
+
+## Attachments
+- Call read_attachment with the EXACT file_name shown in quotes in the "Attached files for this run" list. Do not append the MIME type. Do not paraphrase.`
+    }
+
+    // Failure-handling — universal but compact.
+    systemPrompt += `
+
+## When tools fail
+Retry once with corrected params. If a second attempt also fails, call ask_user rather than silently giving up. Never retry any single tool more than twice consecutively.`
 
     // Initial messages
     const messages: AnthropicMessage[] = [
@@ -1760,7 +1776,11 @@ and use the full token budget when generating long structured outputs. Don't hol
       }
       // ────────────────────────────────────────────────────────────────────
 
-      let result: ModelResponse
+      // Initialised inside the provider branch below (or via the rate-limit
+      // retry loop). The non-null assertion below the branch is safe because
+      // the only way to leave the branch without `result` is via the cancel
+      // break or a thrown error.
+      let result: ModelResponse = { text: '', tool_calls: [], tokens: 0 }
 
       // Provider routing: prefer model config provider; fall back to legacy
       // gpt-4o sniff against agent.model.
@@ -1809,31 +1829,61 @@ and use the full token budget when generating long structured outputs. Don't hol
             .single()
           return !!(data as { cancellation_requested?: boolean } | null)?.cancellation_requested
         }
-        try {
-          result = await withTimeout(
-            callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
-              onChunk({ type: 'text', content: chunk })
-              onTextChunk(chunk)
-              resetActivityTimer()
-            }, claudeCreds, MAX_TOKENS_PER_CALL, isCancelledFn),
-            'callClaude',
-          )
-        } catch (err) {
-          if (err instanceof Error && err.message === 'CANCELLED_MID_STREAM') {
-            await admin.from('agent_runs').update({
-              status:       'cancelled',
-              cancelled_at: new Date().toISOString(),
-              completed_at: new Date().toISOString(),
-              output:       fullOutput || null,
-              tool_calls:   toolCallLogs,
-              tokens_used:  totalTokens,
-            }).eq('id', runId)
-            onChunk({ type: 'cancelled' })
-            continueLoop = false
+
+        // Retry loop for transient rate limits. callClaude throws
+        // RATE_LIMITED:N on a 429; we sleep N seconds and retry up to
+        // MAX_RATE_LIMIT_RETRIES before giving up.
+        const MAX_RATE_LIMIT_RETRIES = 3
+        let rateLimitRetries = 0
+        let cancelledBreak = false
+
+        while (true) {
+          try {
+            result = await withTimeout(
+              callClaude(modelToUse as AgentModel, messages, toolDefs, systemPrompt, (chunk) => {
+                onChunk({ type: 'text', content: chunk })
+                onTextChunk(chunk)
+                resetActivityTimer()
+              }, claudeCreds, MAX_TOKENS_PER_CALL, isCancelledFn),
+              'callClaude',
+            )
             break
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+
+            // Mid-stream cancellation — preserve partial output and bail
+            if (msg === 'CANCELLED_MID_STREAM') {
+              await admin.from('agent_runs').update({
+                status:       'cancelled',
+                cancelled_at: new Date().toISOString(),
+                completed_at: new Date().toISOString(),
+                output:       fullOutput || null,
+                tool_calls:   toolCallLogs,
+                tokens_used:  totalTokens,
+              }).eq('id', runId)
+              onChunk({ type: 'cancelled' })
+              continueLoop  = false
+              cancelledBreak = true
+              break
+            }
+
+            // 429 — sleep and retry
+            if (msg.startsWith('RATE_LIMITED:') && rateLimitRetries < MAX_RATE_LIMIT_RETRIES) {
+              rateLimitRetries++
+              const waitSeconds = Math.max(1, parseInt(msg.split(':')[1] ?? '10', 10))
+              const note = `\n\n⏳ Rate limit reached — waiting ${waitSeconds}s before continuing (attempt ${rateLimitRetries}/${MAX_RATE_LIMIT_RETRIES})…\n\n`
+              onChunk({ type: 'text', content: note })
+              onTextChunk(note)
+              resetActivityTimer()
+              await new Promise(r => setTimeout(r, waitSeconds * 1000))
+              continue
+            }
+
+            throw err
           }
-          throw err
         }
+
+        if (cancelledBreak) break
       }
 
       totalTokens += result.tokens

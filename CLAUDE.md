@@ -4501,3 +4501,70 @@ Replaced the single-line output preview with `<OutputPills>` driven by
 
 `createDocument` itself was already correct (passes title verbatim to the
 `documents` table). No tool-side change was needed beyond the prompt update.
+
+---
+
+## Hung Run Mitigation + 429 Retry + System Prompt Trim
+
+### Bulletproof timers in `callClaude` (`lib/agent-runner.ts`)
+The previous implementation had multiple exit paths leaking the connect or
+idle timer — production runs were ending up stuck in `running` / `cancelling`
+for hours because aborts never fired. Rewritten with:
+- Single closure-scoped `AbortController` + destructured `signal` passed to
+  `fetch`
+- 45-second connect timer cleared the moment headers arrive
+- 60-second idle timer reset on EVERY `reader.read()` (not just on parsed
+  SSE events) — that's the critical anti-hang guarantee
+- `clearTimers()` helper called from every exit branch (success, error,
+  cancellation, rate-limit, abort) inside one big `try { … } finally`
+- `reader.releaseLock()` in finally
+
+### 429 rate-limit retry
+`callClaude` now propagates a 429 as a distinguishable
+`RATE_LIMITED:<retry-after-seconds>` error rather than a generic
+"Anthropic API error 429". `executeAgentRun` wraps the call site in a
+retry loop:
+- Up to **3** retries per model call
+- Sleeps `parseInt(retry-after)` seconds (defaulting to 10) before each
+  retry; emits a visible `⏳ Rate limit reached — waiting Ns…` chunk so
+  the user sees the wait
+- Resets the activity watchdog so the idle timer doesn't fire mid-wait
+- Non-rate-limit errors propagate normally
+
+### Cleanup-stuck-runs cron
+New `app/api/cron/cleanup-stuck-runs/route.ts` runs every 30 minutes via
+`vercel.json`. Marks any `agent_runs` row in `queued | running | cancelling`
+older than 30 minutes as `error` with message
+`"Run timed out — server process was interrupted. Please try again."`.
+Authorised via `Authorization: Bearer ${CRON_SECRET}` (same secret as the
+existing crons).
+
+To clean up runs already stuck in production, run this SQL in Supabase
+once:
+```sql
+UPDATE agent_runs
+SET status        = 'error',
+    error_message = 'Run timed out — server process was interrupted. Please try again.',
+    completed_at  = now()
+WHERE status IN ('running', 'cancelling', 'queued')
+  AND coalesce(started_at, created_at) < now() - interval '30 minutes';
+```
+
+### System prompt size optimisation
+The runner was appending six prose blocks (~3k tokens of overhead) on
+every run. Trimmed to a compact set of conditional blocks:
+- Tier message — one line per tier (was 4 lines × 4 tiers, with redundant
+  intros)
+- Task estimation — single line at the end of the tier block
+- "Documents" — only added when `create_document` / `update_document` are
+  enabled
+- "Reports" — only added when `render_report` / `list_report_templates`
+  are enabled
+- "Attachments" — only added when `read_attachment` is enabled AND there
+  are actually attached files
+- "When tools fail" — universal but compressed to one paragraph
+
+Removed the duplicate full-tool-listing block — the tool definitions are
+already passed via the API `tools` parameter, so the model knows each
+tool's signature without us listing them again. Net saving on a typical
+massive run with attachments: ~2,500 tokens of system prompt.

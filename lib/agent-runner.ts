@@ -609,7 +609,7 @@ async function buildSystemPrompt(
     ...knowledgeParts,
     context.extra_instructions ? `\nAdditional instructions: ${context.extra_instructions}` : '',
     attachments && attachments.length > 0
-      ? `\nAttached files for this run:\n${attachments.map(a => `• ${a.file_name} (${a.file_type})`).join('\n')}\nUse the read_attachment tool to read the content of any attached file before referencing it.`
+      ? `\nAttached files for this run (call read_attachment with the EXACT file_name shown in quotes — do NOT append the type):\n${attachments.map(a => `• "${a.file_name}"  [type: ${a.file_type}]`).join('\n')}`
       : '',
     '\nCRITICAL TOOL SEQUENCING RULES:',
     '* NEVER call read_report_template without first calling list_report_templates to obtain the template_id',
@@ -1656,7 +1656,16 @@ and use the full token budget when generating long structured outputs. Don't hol
   SharePoint sync) are: < > : " / \\ | ? *. If create_document fails because of a title, retry the
   same title with only those nine characters replaced with a hyphen.
 - Never silently skip saving. If create_document fails twice with title-related errors, call ask_user
-  to surface the issue rather than hiding it.`
+  to surface the issue rather than hiding it.
+
+## Reading documents you created
+- create_document returns a document_id. To read that document back later in the same run, call
+  read_document with that document_id — NEVER read_attachment.
+- read_attachment is ONLY for files attached to the run by the user (PDFs, DOCXs, images uploaded
+  in the run launcher) and for documents linked via linked_document_ids.
+- Documents you create live in the NavHub document library; access them via read_document.
+- When calling read_attachment, pass the EXACT file_name string from the "Attached files for this
+  run" section. Do not append the MIME type, do not wrap in quotes, do not paraphrase the name.`
 
     // Initial messages
     const messages: AnthropicMessage[] = [

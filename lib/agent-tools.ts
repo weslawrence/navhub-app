@@ -1815,17 +1815,56 @@ export async function readAttachment(
 ): Promise<string> {
   const admin = createAdminClient()
 
-  const { data: attachment } = await admin
+  // ── 1. Exact filename match ────────────────────────────────────────────
+  let { data: attachment } = await admin
     .from('agent_run_attachments')
     .select('*')
     .eq('run_id', context.runId)
     .eq('file_name', params.file_name)
-    .single()
+    .maybeSingle()
+
+  // ── 2. Fuzzy match — agents sometimes append " (text/markdown)" to the
+  //    filename when assembling it from the system-prompt listing. Strip a
+  //    trailing "(mime/type)" or "(type: …)" suffix and try again with a
+  //    prefix ilike.
+  if (!attachment) {
+    const cleaned = params.file_name
+      .replace(/\s*\([^)]*\/[^)]*\)\s*$/, '')   // " (text/markdown)"
+      .replace(/\s*\[[^\]]*\]\s*$/, '')         // " [type: …]"
+      .trim()
+    if (cleaned && cleaned !== params.file_name) {
+      const { data: byCleaned } = await admin
+        .from('agent_run_attachments')
+        .select('*')
+        .eq('run_id', context.runId)
+        .eq('file_name', cleaned)
+        .maybeSingle()
+      attachment = byCleaned
+    }
+    // Final fallback: prefix ilike — covers minor whitespace / casing drift.
+    if (!attachment && cleaned) {
+      const { data: byPrefix } = await admin
+        .from('agent_run_attachments')
+        .select('*')
+        .eq('run_id', context.runId)
+        .ilike('file_name', `${cleaned}%`)
+        .limit(1)
+        .maybeSingle()
+      attachment = byPrefix
+    }
+  }
 
   if (!attachment) {
+    // List the actual filenames so the agent can recover on the next call
+    // instead of guessing again.
+    const { data: available } = await admin
+      .from('agent_run_attachments')
+      .select('file_name')
+      .eq('run_id', context.runId)
+    const names = (available ?? []).map(a => (a as { file_name: string }).file_name).join(', ')
     return JSON.stringify({
       success: false,
-      error:   `Attachment "${params.file_name}" not found for this run`,
+      error:   `Attachment "${params.file_name}" not found for this run. Available attachments: ${names || 'none'}. Use the EXACT file_name string — do not append the MIME type.`,
     })
   }
 

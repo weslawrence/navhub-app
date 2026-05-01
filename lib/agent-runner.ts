@@ -218,11 +218,12 @@ const ALL_TOOL_DEFS: Record<string, object> = {
   },
   read_document: {
     name:        'read_document',
-    description: 'Read the full content of a document by ID.',
+    description: 'Read a document from the NavHub library by ID. Large documents are returned in 20,000-character chunks. ALWAYS check has_more in the response — when true, call again with chunk: 2, 3, etc. until has_more is false. Never count entries or report completeness from a partial read.',
     input_schema: {
       type: 'object',
       properties: {
         document_id: { type: 'string', description: 'UUID of the document.' },
+        chunk:       { type: 'number', description: 'Chunk number to read (1-based). Default 1. Use when a previous response had has_more: true.' },
       },
       required: ['document_id'],
     },
@@ -1633,6 +1634,7 @@ export async function executeAgentRun(
     const hasDocTools     = toolNameSet.has('create_document') || toolNameSet.has('update_document')
     const hasReportTools  = toolNameSet.has('render_report')   || toolNameSet.has('list_report_templates')
     const hasAttachTool   = toolNameSet.has('read_attachment')
+    const hasReadDocTool  = toolNameSet.has('read_document')
     const hasAttachments  = !!attachments && attachments.length > 0
 
     // Task-complexity tier — single line each (was 4 lines × 4 tiers).
@@ -1677,11 +1679,29 @@ Before any work, output one line in the format: ⏱ Estimated time: [X min] — 
 - Call read_attachment with the EXACT file_name shown in quotes in the "Attached files for this run" list. Do not append the MIME type. Do not paraphrase.`
     }
 
+    // Reading large documents — only when read_document is available. The
+    // tool returns 20k-char chunks; the agent must page through them before
+    // counting entries or reporting completeness.
+    if (hasReadDocTool) {
+      systemPrompt += `
+
+## Reading large documents
+- read_document returns content in 20,000-character chunks. ALWAYS check has_more in the response.
+- If has_more is true, call read_document again with chunk: 2, then 3, etc. until has_more is false.
+- For verification tasks (counting entries, checking completeness, listing all items), read EVERY chunk before reporting. Never report a count or assessment from a partial read.`
+    }
+
     // Failure-handling — universal but compact.
     systemPrompt += `
 
 ## When tools fail
-Retry once with corrected params. If a second attempt also fails, call ask_user rather than silently giving up. Never retry any single tool more than twice consecutively.`
+Retry once with corrected params. If a second attempt also fails, call ask_user rather than silently giving up. Never retry any single tool more than twice consecutively.
+
+## Completing tasks fully
+- Before starting, estimate how many tool calls this task will require. If it will exceed your iteration limit (${complexityCfg.maxIterations}), call ask_user immediately: "This looks like roughly N tool calls but I have ${complexityCfg.maxIterations} available. Should I proceed with what fits, or restart at a larger size (Open the throttle / massive)?"
+- When you cross 80% of your iteration budget without finishing, output a one-line progress note: "📊 Progress: X done, Y remaining — on track / may need a follow-up run."
+- Never present partial output as if it is complete. If you run out of iterations or token budget mid-task, your FINAL message MUST start with: "⚠️ PARTIAL OUTPUT — completed X of Y items. To continue, start a follow-up run with brief: <specific continuation instructions>".
+- For long outputs, split across multiple update_document calls rather than truncating silently.`
 
     // Initial messages
     const messages: AnthropicMessage[] = [
@@ -1742,7 +1762,7 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
       iterationCount++
 
       if (iterationCount > MAX_ITERATIONS) {
-        const msg = '\n\n⚠️ Agent stopped: maximum iterations reached.'
+        const msg = `\n\n⚠️ **Partial output** — reached the ${MAX_ITERATIONS}-iteration limit before completing all work.\n\nTo continue: start a follow-up run with "Continue from where you left off" as your brief.\n\nIf this task consistently requires more iterations, choose a larger task size (Open the throttle / massive) on the run launcher.\n`
         fullOutput += msg
         onChunk({ type: 'text', content: msg })
         continueLoop = false

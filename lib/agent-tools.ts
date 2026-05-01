@@ -973,6 +973,7 @@ export interface ListDocumentsParams {
 
 export interface ReadDocumentParams {
   document_id: string
+  chunk?:      number
 }
 
 export interface CreateDocumentParams {
@@ -1066,7 +1067,46 @@ export async function readDocument(
 
   if (error || !data) return `Error: Document ${params.document_id} not found or not accessible.`
 
-  return JSON.stringify({ success: true, data })
+  // Chunked reading — large documents (registers, long memos, board packs)
+  // can be 100k+ chars. Returning the lot in one tool response blows the
+  // model's working window for that turn and the agent silently truncates.
+  // Slice into 20k-char windows (~5k tokens) so the agent can iterate.
+  const row = data as {
+    id:               string
+    title:            string
+    document_type:    string
+    audience:         string
+    content_markdown: string | null
+    status:           string
+    company_id:       string | null
+    updated_at:       string
+  }
+  const content     = row.content_markdown ?? ''
+  const CHUNK_SIZE  = 20_000
+  const totalChunks = Math.max(1, Math.ceil(content.length / CHUNK_SIZE))
+  const chunkNum    = Math.min(Math.max(params.chunk ?? 1, 1), totalChunks)
+  const start       = (chunkNum - 1) * CHUNK_SIZE
+  const end         = start + CHUNK_SIZE
+  const chunkText   = content.slice(start, end)
+
+  return JSON.stringify({
+    success:       true,
+    document_id:   row.id,
+    title:         row.title,
+    document_type: row.document_type,
+    audience:      row.audience,
+    status:        row.status,
+    company_id:    row.company_id,
+    updated_at:    row.updated_at,
+    total_chars:   content.length,
+    total_chunks:  totalChunks,
+    current_chunk: chunkNum,
+    has_more:      chunkNum < totalChunks,
+    content:       chunkText,
+    message:       totalChunks > 1
+      ? `Showing chunk ${chunkNum} of ${totalChunks} (${chunkText.length} of ${content.length} chars). Call read_document again with chunk: ${chunkNum + 1} to read the next section. Read ALL chunks before counting entries or assessing completeness.`
+      : 'Complete document returned.',
+  })
 }
 
 // ────────────────────────────────────────────────────────────────────────────

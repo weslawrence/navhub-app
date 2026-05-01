@@ -8,19 +8,29 @@ interface AgentBucket    { agent_id: string; agent_name: string; tokens: number;
 interface TierBucket     { tier: string; tokens: number; cost_usd: number; run_count: number }
 interface PeriodBucket   { tokens: number; cost_usd: number; run_count: number }
 
+interface ProfessionalSavings {
+  runs_in_professional:        number
+  actual_cost_usd:             number
+  traditional_estimate_usd:    number
+  traditional_hourly_rate_usd: number
+  savings_usd:                 number
+}
+
 interface UsageData {
-  totals:        PeriodBucket
-  last_30_days:  PeriodBucket
-  this_month:    PeriodBucket
-  by_agent:      AgentBucket[]
-  by_complexity: TierBucket[]
+  totals:                PeriodBucket
+  last_30_days:          PeriodBucket
+  this_month:            PeriodBucket
+  by_agent:              AgentBucket[]
+  by_complexity:         TierBucket[]
+  professional_savings?: ProfessionalSavings
 }
 
 const TIER_LABELS: Record<string, { emoji: string; label: string }> = {
-  standard: { emoji: '☕',  label: 'Medium job — stay frugal' },
-  medium:   { emoji: '💪',  label: 'Big job — conserve where you can' },
-  large:    { emoji: '🏋️', label: "You've got your work cut out" },
-  massive:  { emoji: '🔥',  label: 'Open the throttle' },
+  standard:     { emoji: '☕',  label: 'Medium job — stay frugal' },
+  medium:       { emoji: '💪',  label: 'Big job — conserve where you can' },
+  large:        { emoji: '🏋️', label: "You've got your work cut out" },
+  massive:      { emoji: '🔥',  label: 'Open the throttle' },
+  professional: { emoji: '⚡',  label: 'Professional — full capability' },
 }
 
 function fmtTokens(n: number): string {
@@ -93,6 +103,41 @@ export default function UsageTab() {
         <SummaryCard label="Last 30 days"  bucket={data.last_30_days} />
         <SummaryCard label="All time"      bucket={data.totals} />
       </div>
+
+      {/* Professional savings */}
+      {data.professional_savings && data.professional_savings.runs_in_professional > 0 && (
+        <Card className="border-blue-300 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30">
+          <CardContent className="pt-5 space-y-2">
+            <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+              <span>⚡</span> Professional savings estimate
+            </h3>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div>
+                <p className="text-xs text-muted-foreground">Professional runs</p>
+                <p className="text-xl font-semibold text-foreground tabular-nums">{data.professional_savings.runs_in_professional}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">NavHub cost</p>
+                <p className="text-xl font-semibold text-foreground tabular-nums">{fmtCost(data.professional_savings.actual_cost_usd)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Traditional cost (est.)</p>
+                <p className="text-xl font-semibold text-foreground tabular-nums">{fmtCost(data.professional_savings.traditional_estimate_usd)}</p>
+              </div>
+            </div>
+            <div className="pt-2 border-t border-blue-200 dark:border-blue-900">
+              <p className="text-xs text-muted-foreground">Estimated savings</p>
+              <p className="text-2xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">
+                {fmtCost(data.professional_savings.savings_usd)}
+              </p>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Comparison uses a notional ${data.professional_savings.traditional_hourly_rate_usd}/hr professional-firm rate as a stand-in for one billable hour per run.
+              Actual savings vary depending on the complexity of the work being replaced.
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {/* By complexity tier */}
       <Card>

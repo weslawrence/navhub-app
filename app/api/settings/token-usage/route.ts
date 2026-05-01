@@ -104,10 +104,11 @@ export async function GET() {
 
   const byAgent: Record<string, { agent_id: string; agent_name: string; tokens: number; cost_usd: number; run_count: number }> = {}
   const byTier:  Record<string, { tier: string; tokens: number; cost_usd: number; run_count: number }> = {
-    standard: { tier: 'standard', tokens: 0, cost_usd: 0, run_count: 0 },
-    medium:   { tier: 'medium',   tokens: 0, cost_usd: 0, run_count: 0 },
-    large:    { tier: 'large',    tokens: 0, cost_usd: 0, run_count: 0 },
-    massive:  { tier: 'massive',  tokens: 0, cost_usd: 0, run_count: 0 },
+    standard:     { tier: 'standard',     tokens: 0, cost_usd: 0, run_count: 0 },
+    medium:       { tier: 'medium',       tokens: 0, cost_usd: 0, run_count: 0 },
+    large:        { tier: 'large',        tokens: 0, cost_usd: 0, run_count: 0 },
+    massive:      { tier: 'massive',      tokens: 0, cost_usd: 0, run_count: 0 },
+    professional: { tier: 'professional', tokens: 0, cost_usd: 0, run_count: 0 },
   }
 
   for (const r of rows) {
@@ -142,13 +143,32 @@ export async function GET() {
     .sort((a, b) => b.tokens - a.tokens)
     .slice(0, 25)
 
+  // Professional savings — compares actual NavHub cost to a notional
+  // professional-firm hourly rate. $150/hr is a conservative midpoint for
+  // the kind of work professional-tier runs replace (deep document review,
+  // long structured outputs, multi-document analysis). Billing always shows
+  // the actual NavHub cost; this number is the "what you'd pay otherwise"
+  // estimate that headlines the savings card.
+  const PROFESSIONAL_HOURLY_RATE_USD = 150
+  const proRuns = byTier.professional.run_count
+  const proCost = byTier.professional.cost_usd
+  const traditionalEstimate = proRuns * PROFESSIONAL_HOURLY_RATE_USD
+  const savings             = Math.max(0, traditionalEstimate - proCost)
+
   return NextResponse.json({
     data: {
       totals:       { tokens: totalTokens,  cost_usd: totalCost,  run_count: totalRuns  },
       last_30_days: { tokens: last30Tokens, cost_usd: last30Cost, run_count: last30Runs },
       this_month:   { tokens: monthTokens,  cost_usd: monthCost,  run_count: monthRuns  },
       by_agent:      byAgentSorted,
-      by_complexity: ['standard','medium','large','massive'].map(t => byTier[t]),
+      by_complexity: ['standard','medium','large','massive','professional'].map(t => byTier[t]),
+      professional_savings: {
+        runs_in_professional:        proRuns,
+        actual_cost_usd:             proCost,
+        traditional_estimate_usd:    traditionalEstimate,
+        traditional_hourly_rate_usd: PROFESSIONAL_HOURLY_RATE_USD,
+        savings_usd:                 savings,
+      },
     },
   })
 }

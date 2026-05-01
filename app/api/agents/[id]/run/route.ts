@@ -102,9 +102,13 @@ export async function POST(
     insertData.linked_document_ids = ids
   }
   if (typeof body.task_complexity === 'string'
-      && ['standard', 'medium', 'large', 'massive'].includes(body.task_complexity)) {
+      && ['standard', 'medium', 'large', 'massive', 'professional'].includes(body.task_complexity)) {
     insertData.task_complexity = body.task_complexity
+    // Professional tier always pre-loads. Other tiers can opt in via the
+    // explicit body flag below.
+    if (body.task_complexity === 'professional') insertData.preload_context = true
   }
+  if (body.preload_context === true) insertData.preload_context = true
 
   const { data: run, error } = await admin
     .from('agent_runs')

@@ -1444,7 +1444,7 @@ export async function executeAgentRun(
     // Pulled in once per run from the run.linked_document_ids column.
     const { data: runRow } = await admin
       .from('agent_runs')
-      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type, task_complexity')
+      .select('linked_document_ids, output_folder_id, output_status, output_name_override, output_type, task_complexity, preload_context')
       .eq('id', runId)
       .single()
     const linkedIds    = (runRow?.linked_document_ids ?? []) as string[]
@@ -1639,17 +1639,27 @@ export async function executeAgentRun(
 
     // Task-complexity tier — single line each (was 4 lines × 4 tiers).
     const tierMessage: Record<TaskComplexity, string> = {
-      standard: `Stay frugal — small task, no heroics needed.`,
-      medium:   `Sizeable task — roll your sleeves up but avoid unnecessary tool calls.`,
-      large:    `Heavy lift — work methodically; summarise progress every 5 tool calls.`,
-      massive:  `Open the throttle — work in phases, summarise progress every 5 tool calls, use full token budget for long outputs.`,
+      standard:     `Stay frugal — small task, no heroics needed.`,
+      medium:       `Sizeable task — roll your sleeves up but avoid unnecessary tool calls.`,
+      large:        `Heavy lift — work methodically; summarise progress every 5 tool calls.`,
+      massive:      `Open the throttle — work in phases, summarise progress every 5 tool calls, use full token budget for long outputs.`,
+      professional: `Professional capability. No meaningful iteration limit. All linked documents and attachments have been pre-loaded into this context — reference them directly without read_document / read_attachment unless you need a document not already shown. Complete the task to professional standard. Do not truncate, summarise prematurely, or stop before the work is done. This is the equivalent of what a professional firm would charge thousands of dollars for — deliver accordingly.`,
     }
-    systemPrompt += `
+    if (taskComplexity === 'professional') {
+      systemPrompt += `
+
+## Effort level: professional — full capability
+${tierMessage.professional}
+
+Begin immediately. No estimated-time line is required for professional runs.`
+    } else {
+      systemPrompt += `
 
 ## Effort level (${taskComplexity})
 ${tierMessage[taskComplexity]} Up to ${complexityCfg.maxIterations} iterations · ${complexityCfg.maxTokens.toLocaleString()}-token budget per response.
 
 Before any work, output one line in the format: ⏱ Estimated time: [X min] — [what you'll do]. Then begin immediately without confirmation.`
+    }
 
     // Document creation guidance — only when create/update tools are enabled.
     if (hasDocTools) {
@@ -1702,6 +1712,46 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
 - When you cross 80% of your iteration budget without finishing, output a one-line progress note: "📊 Progress: X done, Y remaining — on track / may need a follow-up run."
 - Never present partial output as if it is complete. If you run out of iterations or token budget mid-task, your FINAL message MUST start with: "⚠️ PARTIAL OUTPUT — completed X of Y items. To continue, start a follow-up run with brief: <specific continuation instructions>".
 - For long outputs, split across multiple update_document calls rather than truncating silently.`
+
+    // ── Pre-loaded document context (professional tier) ─────────────────────
+    // When the run's tier (or explicit preload_context flag) opts in, inline
+    // every linked document + attachment's text content into the system
+    // prompt. The agent can then reference them by name without burning
+    // iterations on read_document / read_attachment for already-known files.
+    const preloadFlag = !!(runRow as { preload_context?: boolean } | null)?.preload_context
+    if (complexityCfg.preloadContext || preloadFlag) {
+      const preloadParts: string[] = []
+
+      // Linked documents — full content_markdown
+      if (linkedIds.length > 0) {
+        const { data: linkedDocs } = await admin
+          .from('documents')
+          .select('id, title, content_markdown')
+          .in('id', linkedIds)
+        for (const d of (linkedDocs ?? []) as Array<{ id: string; title: string; content_markdown: string | null }>) {
+          if (d.content_markdown && d.content_markdown.trim().length > 0) {
+            preloadParts.push(`### Document: ${d.title}\n\n${d.content_markdown}`)
+          }
+        }
+      }
+
+      // Run attachments — content_text already extracted at upload time
+      const { data: preloadAttachments } = await admin
+        .from('agent_run_attachments')
+        .select('file_name, content_text')
+        .eq('run_id', runId)
+      for (const att of (preloadAttachments ?? []) as Array<{ file_name: string; content_text: string | null }>) {
+        if (att.content_text && att.content_text.trim().length > 0) {
+          preloadParts.push(`### Attachment: ${att.file_name}\n\n${att.content_text}`)
+        }
+      }
+
+      if (preloadParts.length > 0) {
+        systemPrompt += `\n\n## Pre-loaded Documents and Attachments\nThe following materials are inlined directly in this context. Reference them by name; do not call read_document or read_attachment for any of these.\n\n${preloadParts.join('\n\n---\n\n')}`
+        const totalContextChars = systemPrompt.length
+        console.log(`[runner] Pre-loaded ${preloadParts.length} item(s). System prompt now ${totalContextChars} chars (~${Math.round(totalContextChars / 4)} tokens)`)
+      }
+    }
 
     // Initial messages
     const messages: AnthropicMessage[] = [

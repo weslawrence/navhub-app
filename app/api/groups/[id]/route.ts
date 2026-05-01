@@ -101,6 +101,20 @@ export async function PATCH(request: Request, { params }: Params) {
     updates.web_search_enabled = !!body.web_search_enabled
   }
 
+  // Max task complexity (migration 054) — caps the highest tier users can
+  // pick on the run launcher. Validated against the same enum as the
+  // CHECK constraint.
+  if ('max_task_complexity' in body) {
+    const v = typeof body.max_task_complexity === 'string' ? body.max_task_complexity : ''
+    if (!['standard', 'medium', 'large', 'massive', 'professional'].includes(v)) {
+      return NextResponse.json(
+        { error: 'max_task_complexity must be one of: standard, medium, large, massive, professional' },
+        { status: 400 },
+      )
+    }
+    updates.max_task_complexity = v
+  }
+
   if ('timezone' in body) {
     if (typeof body.timezone === 'string' && body.timezone.trim()) {
       updates.timezone = body.timezone.trim()

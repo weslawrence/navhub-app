@@ -60,6 +60,9 @@ export interface Group {
   brand_name?:   string | null
   brand_color?:  string | null
   logo_url?:     string | null
+  // Maximum task complexity tier the group's users can pick on the run
+  // launcher. Defaults to 'massive' (migration 054).
+  max_task_complexity?: TaskComplexity
   created_at:    string
 }
 
@@ -443,20 +446,29 @@ export interface AgentRun {
   created_at:              string
 }
 
-export type TaskComplexity = 'standard' | 'medium' | 'large' | 'massive'
+export type TaskComplexity = 'standard' | 'medium' | 'large' | 'massive' | 'professional'
 
 export interface TaskComplexitySettings {
   maxIterations:   number
   maxTokens:       number
   maxToolFailures: number
+  /** When true, all linked documents + run attachments are inlined into
+   *  the system prompt before the agentic loop starts. The agent can
+   *  reference them by name without calling read_document / read_attachment. */
+  preloadContext:  boolean
 }
 
 export const TASK_COMPLEXITY_SETTINGS: Record<TaskComplexity, TaskComplexitySettings> = {
-  standard: { maxIterations: 15, maxTokens: 16_000, maxToolFailures: 3 },
-  medium:   { maxIterations: 25, maxTokens: 32_000, maxToolFailures: 4 },
-  large:    { maxIterations: 40, maxTokens: 48_000, maxToolFailures: 5 },
-  massive:  { maxIterations: 60, maxTokens: 64_000, maxToolFailures: 6 },
+  standard:     { maxIterations: 15,  maxTokens: 16_000, maxToolFailures: 3,  preloadContext: false },
+  medium:       { maxIterations: 25,  maxTokens: 32_000, maxToolFailures: 4,  preloadContext: false },
+  large:        { maxIterations: 40,  maxTokens: 48_000, maxToolFailures: 5,  preloadContext: false },
+  massive:      { maxIterations: 60,  maxTokens: 64_000, maxToolFailures: 6,  preloadContext: false },
+  professional: { maxIterations: 999, maxTokens: 64_000, maxToolFailures: 10, preloadContext: true  },
 }
+
+/** Tier ordering for "is X allowed under cap Y?" checks on the run launcher. */
+export const TASK_COMPLEXITY_ORDER: TaskComplexity[] =
+  ['standard', 'medium', 'large', 'massive', 'professional']
 
 export interface AgentRunMessage {
   id:         string

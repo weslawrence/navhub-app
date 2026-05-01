@@ -130,6 +130,11 @@ export default function DisplayTab({
   const [brandToast,   setBrandToast]   = useState<string | null>(null)
   const [logoUploading, setLogoUploading] = useState(false)
 
+  // ── Max task complexity (migration 054) ──────────────────────────────────
+  const [maxTaskComplexity, setMaxTaskComplexity] = useState<'standard'|'medium'|'large'|'massive'|'professional'>('massive')
+  const [maxTaskSaving,     setMaxTaskSaving]     = useState(false)
+  const [maxTaskToast,      setMaxTaskToast]      = useState<string | null>(null)
+
   // Keep edit group name in sync with parent
   useEffect(() => { setEditGroupName(groupName) }, [groupName])
   useEffect(() => { setEditSlug(groupSlug) }, [groupSlug])
@@ -153,12 +158,16 @@ export default function DisplayTab({
         brand_name?: string | null
         brand_color?: string | null
         logo_url?: string | null
+        max_task_complexity?: string
       } | undefined
       if (grp?.timezone)    setTimezone(grp.timezone)
       if (grp?.location)    setLocation(grp.location)
       if (grp?.brand_name)  setBrandName(grp.brand_name)
       if (grp?.brand_color) setBrandColor(grp.brand_color)
       if (grp?.logo_url)    setLogoUrl(grp.logo_url)
+      if (grp?.max_task_complexity && ['standard','medium','large','massive','professional'].includes(grp.max_task_complexity)) {
+        setMaxTaskComplexity(grp.max_task_complexity as 'standard'|'medium'|'large'|'massive'|'professional')
+      }
     }).catch(() => {})
   }, [])
 
@@ -180,6 +189,30 @@ export default function DisplayTab({
     const t = setTimeout(() => setPaletteToast(null), 3000)
     return () => clearTimeout(t)
   }, [paletteToast])
+
+  useEffect(() => {
+    if (!maxTaskToast) return
+    const t = setTimeout(() => setMaxTaskToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [maxTaskToast])
+
+  async function saveMaxTaskComplexity() {
+    if (!groupId) return
+    setMaxTaskSaving(true)
+    try {
+      const res = await fetch(`/api/groups/${groupId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ max_task_complexity: maxTaskComplexity }),
+      })
+      if (res.ok) setMaxTaskToast('Saved')
+      else        setMaxTaskToast('Failed to save')
+    } catch {
+      setMaxTaskToast('Failed to save')
+    } finally {
+      setMaxTaskSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (prefsStatus !== 'saved') return
@@ -588,6 +621,50 @@ export default function DisplayTab({
                 {brandSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Check className="h-3.5 w-3.5 mr-1.5" />}
                 Save Branding
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Max task complexity (admin only) — migration 054 ──────────────── */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Maximum task size</CardTitle>
+            <CardDescription>
+              Caps the highest complexity tier users in this group can pick on the run launcher.
+              Professional tier pre-loads all linked documents directly into the agent&apos;s context.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <select
+              value={maxTaskComplexity}
+              onChange={e => setMaxTaskComplexity(e.target.value as typeof maxTaskComplexity)}
+              className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            >
+              <option value="standard">     ☕ Medium job — stay frugal (cap)</option>
+              <option value="medium">       💪 Big job (cap)</option>
+              <option value="large">        🏋️ You&apos;ve got your work cut out (cap)</option>
+              <option value="massive">      🔥 Open the throttle (cap)</option>
+              <option value="professional"> ⚡ Professional — full capability (cap)</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Professional runs use ~$0.15–$0.50 per run depending on document volume —
+              far cheaper than the equivalent professional firm engagement, but materially more
+              than other tiers. Set this to <strong>massive</strong> to keep professional runs
+              gated.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={() => void saveMaxTaskComplexity()} disabled={maxTaskSaving || !groupId}>
+                {maxTaskSaving && <Loader2 className="h-3 w-3 animate-spin mr-1.5" />}
+                Save Maximum
+              </Button>
+              {maxTaskToast && (
+                <span className={cn('text-xs', maxTaskToast === 'Saved' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                  {maxTaskToast === 'Saved' && <Check className="h-3 w-3 inline mr-0.5" />}
+                  {maxTaskToast}
+                </span>
+              )}
             </div>
           </CardContent>
         </Card>

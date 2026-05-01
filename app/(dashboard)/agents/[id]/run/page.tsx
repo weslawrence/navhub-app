@@ -16,11 +16,14 @@ import type { ScheduleConfig } from '@/lib/scheduling'
 import { AVATAR_PRESET_MAP } from '@/lib/agent-presets'
 
 const COMPLEXITY_TIERS: { value: TaskComplexity; emoji: string; label: string; description: string; specs: string }[] = [
-  { value: 'standard', emoji: '☕',  label: 'Medium job — stay frugal',         description: 'Solid work, no heroics needed',     specs: '15 iterations · 16k tokens' },
-  { value: 'medium',   emoji: '💪',  label: 'Big job — conserve where you can', description: 'Roll your sleeves up',              specs: '25 iterations · 32k tokens' },
-  { value: 'large',    emoji: '🏋️', label: "You've got your work cut out",     description: 'This one needs serious effort',     specs: '40 iterations · 48k tokens' },
-  { value: 'massive',  emoji: '🔥',  label: 'Open the throttle',                description: "Massive job. Let's get it done.",   specs: '60 iterations · 64k tokens' },
+  { value: 'standard',     emoji: '☕',  label: 'Medium job — stay frugal',         description: 'Solid work, no heroics needed',     specs: '15 iterations · 16k tokens' },
+  { value: 'medium',       emoji: '💪',  label: 'Big job — conserve where you can', description: 'Roll your sleeves up',              specs: '25 iterations · 32k tokens' },
+  { value: 'large',        emoji: '🏋️', label: "You've got your work cut out",     description: 'This one needs serious effort',     specs: '40 iterations · 48k tokens' },
+  { value: 'massive',      emoji: '🔥',  label: 'Open the throttle',                description: "Massive job. Let's get it done.",   specs: '60 iterations · 64k tokens' },
+  { value: 'professional', emoji: '⚡',  label: 'Professional — full capability',   description: 'Pre-loads all docs. No meaningful limits.', specs: 'No iteration cap · 64k tokens · Full context' },
 ]
+
+const TIER_ORDER: TaskComplexity[] = ['standard', 'medium', 'large', 'massive', 'professional']
 
 function getLastNMonths(n: number): string[] {
   const months: string[] = []
@@ -88,8 +91,10 @@ export default function AgentRunPage() {
   const [outputStatus, setOutputStatus] = useState<'draft' | 'published'>(initialStatus)
   const initialComplexity = (searchParams.get('task_complexity') as TaskComplexity | null) ?? 'standard'
   const [taskComplexity, setTaskComplexity] = useState<TaskComplexity>(
-    ['standard', 'medium', 'large', 'massive'].includes(initialComplexity) ? initialComplexity : 'standard'
+    TIER_ORDER.includes(initialComplexity) ? initialComplexity : 'standard'
   )
+  // Group's max allowed tier — capped by group admin in Settings → Display.
+  const [maxComplexity, setMaxComplexity] = useState<TaskComplexity>('massive')
 
   // Notifications (pre-populated from query params for "Run Again")
   const initialNotifyEmail = searchParams.get('notify_email') ?? ''
@@ -158,6 +163,27 @@ export default function AgentRunPage() {
       .then((j: { channels?: { id: string; name: string }[] }) => setSlackChannels(j.channels ?? []))
       .catch(() => {})
   }, [])
+
+  // Load group's max-allowed complexity tier — caps the tier picker below.
+  useEffect(() => {
+    fetch('/api/groups/active')
+      .then(r => r.json())
+      .then((j: { data?: { group?: { max_task_complexity?: string } } }) => {
+        const max = j.data?.group?.max_task_complexity
+        if (max && TIER_ORDER.includes(max as TaskComplexity)) {
+          setMaxComplexity(max as TaskComplexity)
+        }
+      })
+      .catch(() => {})
+  }, [])
+
+  // If the loaded cap is lower than the currently-selected tier (Run Again
+  // URL or stale state), snap selection back to the cap.
+  useEffect(() => {
+    if (TIER_ORDER.indexOf(taskComplexity) > TIER_ORDER.indexOf(maxComplexity)) {
+      setTaskComplexity(maxComplexity)
+    }
+  }, [maxComplexity, taskComplexity])
 
   // Load folders for output picker (fetch depending on type)
   useEffect(() => {
@@ -511,31 +537,43 @@ export default function AgentRunPage() {
             </p>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {COMPLEXITY_TIERS.map(tier => {
-              const active = taskComplexity === tier.value
-              return (
-                <button
-                  key={tier.value}
-                  type="button"
-                  onClick={() => setTaskComplexity(tier.value)}
-                  className={cn(
-                    'text-left rounded-md border px-3 py-2.5 transition',
-                    active
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary'
-                      : 'border-input bg-background hover:border-primary/40 hover:bg-muted/40'
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-base leading-none">{tier.emoji}</span>
-                    <span className="text-sm font-semibold text-foreground">{tier.label}</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">{tier.description}</p>
-                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1.5">{tier.specs}</p>
-                </button>
-              )
-            })}
+            {COMPLEXITY_TIERS
+              .filter(tier => TIER_ORDER.indexOf(tier.value) <= TIER_ORDER.indexOf(maxComplexity))
+              .map(tier => {
+                const active = taskComplexity === tier.value
+                const isPro  = tier.value === 'professional'
+                return (
+                  <button
+                    key={tier.value}
+                    type="button"
+                    onClick={() => setTaskComplexity(tier.value)}
+                    className={cn(
+                      'text-left rounded-md border px-3 py-2.5 transition',
+                      active
+                        ? (isPro
+                            ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40 ring-1 ring-blue-500'
+                            : 'border-primary bg-primary/5 ring-1 ring-primary')
+                        : 'border-input bg-background hover:border-primary/40 hover:bg-muted/40'
+                    )}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-base leading-none">{tier.emoji}</span>
+                      <span className="text-sm font-semibold text-foreground">{tier.label}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1">{tier.description}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground mt-1.5">{tier.specs}</p>
+                  </button>
+                )
+              })}
           </div>
-          {taskComplexity !== 'standard' && (
+          {taskComplexity === 'professional' ? (
+            <div className="flex items-start gap-2 rounded-md bg-blue-50 dark:bg-blue-950 border border-blue-200 dark:border-blue-800 px-3 py-2">
+              <Zap className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+              <p className="text-xs text-blue-700 dark:text-blue-300">
+                <strong>Professional mode:</strong> all linked documents and attachments are pre-loaded into the agent&apos;s context — no tool calls needed to read them. Equivalent to uploading directly to Claude. Estimated cost: <strong>~$0.15–0.50 per run</strong> depending on document volume.
+              </p>
+            </div>
+          ) : taskComplexity !== 'standard' && (
             <div className="flex items-start gap-2 rounded-md bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 px-3 py-2">
               <AlertTriangle className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
               <p className="text-xs text-amber-700 dark:text-amber-300">

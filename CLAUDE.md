@@ -4568,3 +4568,105 @@ Removed the duplicate full-tool-listing block — the tool definitions are
 already passed via the API `tools` parameter, so the model knows each
 tool's signature without us listing them again. Net saving on a typical
 massive run with attachments: ~2,500 tokens of system prompt.
+
+---
+
+## Professional Tier + Pre-loaded Document Context
+
+### Migration 054
+```sql
+ALTER TABLE groups
+  ADD COLUMN IF NOT EXISTS max_task_complexity text NOT NULL DEFAULT 'massive'
+    CHECK (max_task_complexity IN ('standard','medium','large','massive','professional'));
+
+ALTER TABLE agent_runs
+  DROP CONSTRAINT IF EXISTS agent_runs_task_complexity_check,
+  ADD CONSTRAINT agent_runs_task_complexity_check
+    CHECK (task_complexity IN ('standard','medium','large','massive','professional'));
+
+ALTER TABLE agent_runs
+  ADD COLUMN IF NOT EXISTS preload_context boolean NOT NULL DEFAULT false;
+```
+
+### Tier table
+| Tier         | Iterations | Max tokens | Preload context |
+|--------------|------------|------------|-----------------|
+| standard     | 15         | 16,000     | no              |
+| medium       | 25         | 32,000     | no              |
+| large        | 40         | 48,000     | no              |
+| massive      | 60         | 64,000     | no              |
+| professional | 999        | 64,000     | **yes**         |
+
+`TASK_COMPLEXITY_SETTINGS` in `lib/types.ts` now carries a `preloadContext`
+boolean per tier. `TASK_COMPLEXITY_ORDER` is the canonical tier ordering
+used for "is X allowed under cap Y?" checks.
+
+### Pre-loaded context (`lib/agent-runner.ts`)
+When `complexityCfg.preloadContext` (always true for professional) OR the
+explicit `preload_context` column on the run row is true, the runner:
+1. Fetches every linked document's `content_markdown`
+2. Fetches every `agent_run_attachments` row's `content_text`
+3. Inlines them under a `## Pre-loaded Documents and Attachments` block
+   in the system prompt, separated by `---`
+4. Logs the resulting prompt length so we can monitor context size
+
+The system prompt for professional runs uses a different tier message —
+"All linked documents and attachments have been pre-loaded into this
+context — reference them directly without read_document / read_attachment
+unless you need a document not already shown." — and skips the
+"Estimated time" preamble (professional runs don't need iteration
+budgeting).
+
+### Per-group cap (`groups.max_task_complexity`)
+Group admins set the highest tier their users can pick on the run launcher
+via Settings → Display → "Maximum task size". Default is `massive`, so
+existing groups behave exactly as before. To enable professional runs an
+admin must explicitly raise the cap to `professional`.
+
+API surface:
+- `PATCH /api/groups/[id]` accepts `{ max_task_complexity }` (validated
+  against the same enum as the CHECK constraint).
+- `GET /api/groups/active` returns `max_task_complexity` on the group
+  payload alongside `palette_id`, `brand_*`, etc.
+
+The run launcher (`app/(dashboard)/agents/[id]/run/page.tsx`):
+- Loads `max_task_complexity` from `/api/groups/active` on mount
+- Filters `COMPLEXITY_TIERS` to those at or below the cap when rendering
+  the tier picker
+- Has a clamp `useEffect` — if the cap loaded is lower than the
+  currently-selected tier (Run Again URL or stale state), the selection
+  snaps back to the cap
+- Shows a blue informational note when professional is picked: "all
+  linked documents and attachments are pre-loaded into the agent's
+  context — no tool calls needed to read them. Estimated cost: ~$0.15–
+  0.50 per run depending on document volume"
+
+`POST /api/agents/[id]/run` accepts `task_complexity: 'professional'` and
+sets `preload_context: true` automatically. Other tiers can opt in by
+passing `preload_context: true` in the body.
+
+### Token usage savings card (`components/settings/UsageTab.tsx`)
+The token-usage API now returns a `professional_savings` block alongside
+the existing buckets:
+```json
+{
+  "runs_in_professional":        12,
+  "actual_cost_usd":             1.24,
+  "traditional_estimate_usd":    1800,
+  "traditional_hourly_rate_usd": 150,
+  "savings_usd":                 1798.76
+}
+```
+Comparison uses a notional $150/hr professional-firm rate as a stand-in
+for one billable hour per run. The Usage tab renders this as a blue
+"Professional savings estimate" card above the per-tier breakdown,
+shown only when `runs_in_professional > 0`.
+
+The "By job size" bar now includes a fifth row (`professional`) so
+professional consumption sits alongside the other tiers in the
+proportional chart.
+
+### Manual setup required
+Run migration `054_professional_tier.sql` in Supabase. Existing groups
+default to `massive`, so professional remains gated until an admin
+raises the cap in Settings → Display.

@@ -436,34 +436,47 @@ export async function sendSlack(
 ): Promise<string> {
   const admin = createAdminClient()
 
-  const { data: group } = await admin
-    .from('groups')
-    .select('slack_webhook_url, slack_default_channel')
-    .eq('id', context.groupId)
+  // Use bot token from slack_connections (not legacy webhook URL)
+  const { data: conn } = await admin
+    .from('slack_connections')
+    .select('bot_token_encrypted, default_channel')
+    .eq('group_id', context.groupId)
+    .eq('is_active', true)
     .single()
 
-  if (!group?.slack_webhook_url) {
-    return 'Error: Slack not configured for this group. Add a Slack webhook URL in group settings.'
+  if (!conn?.bot_token_encrypted) {
+    return 'Error: Slack not connected for this group. Connect Slack in Integrations → Workspace.'
   }
 
-  const channel  = params.channel ?? context.agent.slack_channel ?? group.slack_default_channel ?? undefined
-  const payload: Record<string, unknown> = {
-    text: `*${context.agent.name}*\n${params.message}`,
-  }
-  if (channel) payload.channel = channel
+  const { decrypt } = await import('@/lib/crypto')
+  const token   = decrypt(conn.bot_token_encrypted as string)
+  const channel = params.channel
+    ?? (context.agent as { default_slack_channel?: string }).default_slack_channel
+    ?? conn.default_channel
+    ?? '#general'
 
-  const res = await fetch(group.slack_webhook_url, {
+  const res = await fetch('https://slack.com/api/chat.postMessage', {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(payload),
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      channel,
+      text: `*${context.agent.name}*\n${params.message}`,
+    }),
   })
 
-  if (!res.ok) {
-    const text = await res.text()
-    return `Error sending Slack message: ${res.status} ${text}`
+  const json = await res.json() as { ok: boolean; error?: string }
+
+  if (!json.ok) {
+    if (json.error === 'not_in_channel') {
+      return `Error: NavHub bot is not in channel ${channel}. In Slack, open the channel and type: /invite @NavHub`
+    }
+    return `Error sending Slack message: ${json.error ?? 'Unknown error'}`
   }
 
-  return 'sent'
+  return JSON.stringify({ success: true, channel, message: 'Message sent successfully' })
 }
 
 // ────────────────────────────────────────────────────────────────────────────

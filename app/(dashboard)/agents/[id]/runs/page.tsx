@@ -5,7 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Play, CheckCircle2, XCircle, Clock, Loader2,
-  AlertCircle, ChevronLeft, ChevronRight, MessageSquare,
+  AlertCircle, ChevronLeft, ChevronRight, MessageSquare, RotateCcw,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -260,7 +260,39 @@ export default function AgentRunsPage() {
                       <td className="px-4 py-3">
                         <OutputPills run={run} />
                       </td>
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs px-2 mr-1"
+                          title="Re-run with the same brief on this agent"
+                          onClick={() => {
+                            const r2 = run as AgentRun & {
+                              run_name?: string | null
+                              output_folder_id?: string | null
+                              output_status?: string | null
+                              output_type?: string | null
+                              output_name_override?: string | null
+                              notify_email?: string | null
+                              notify_slack_channel?: string | null
+                              task_complexity?: string | null
+                            }
+                            const qp = new URLSearchParams()
+                            if (r2.input_context?.extra_instructions) qp.set('brief', r2.input_context.extra_instructions)
+                            if (r2.run_name)                          qp.set('name',  r2.run_name)
+                            if (r2.output_folder_id)                  qp.set('folder_id',     r2.output_folder_id)
+                            if (r2.output_status)                     qp.set('status',        r2.output_status)
+                            if (r2.output_type)                       qp.set('output_type',   r2.output_type)
+                            if (r2.output_name_override)              qp.set('output_name',   r2.output_name_override)
+                            if (r2.notify_email)                      qp.set('notify_email',  r2.notify_email)
+                            if (r2.notify_slack_channel)              qp.set('notify_slack',  r2.notify_slack_channel)
+                            if (r2.task_complexity && r2.task_complexity !== 'standard') qp.set('task_complexity', r2.task_complexity)
+                            const qs = qp.toString()
+                            router.push(`/agents/${run.agent_id}/run${qs ? `?${qs}` : ''}`)
+                          }}
+                        >
+                          <RotateCcw className="h-3 w-3 mr-1" /> Run Again
+                        </Button>
                         <Button size="sm" variant="ghost" className="h-7 text-xs px-2" asChild>
                           <Link href={`/agents/runs/${run.id}`}>View</Link>
                         </Button>

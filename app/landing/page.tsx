@@ -31,6 +31,14 @@ export default function LandingPage() {
       if (!session) { router.push('/login'); return }
       setEmail(session.user.email ?? '')
 
+      // Best-effort: claim any pending group invites tied to this email
+      // BEFORE we read memberships, so a freshly-invited user lands inside
+      // their group(s) on first visit instead of seeing an empty list.
+      // Idempotent — safe to call on every load.
+      try {
+        await fetch('/api/auth/claim-invites', { method: 'POST' })
+      } catch { /* non-fatal */ }
+
       // Fetch all group memberships with group names and company counts
       const { data } = await supabase
         .from('user_groups')

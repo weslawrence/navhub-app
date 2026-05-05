@@ -39,12 +39,19 @@ export async function GET() {
   const adminRoles = ['super_admin', 'group_admin']
   const isAdmin    = !!membership && adminRoles.includes(membership.role)
 
+  // Pull a display name for the dashboard greeting from user_metadata
+  // (set during invite acceptance) — falls back to the email's local part.
+  const meta     = (session.user.user_metadata ?? {}) as { full_name?: string; name?: string }
+  const fullName = (meta.full_name ?? meta.name ?? '').trim()
+  const userName = fullName || (session.user.email?.split('@')[0] ?? '')
+
   return NextResponse.json({
     data: {
       group,
       role:       membership?.role ?? null,
       is_admin:   isAdmin,
       user_email: session.user.email,
+      user_name:  userName,
     },
   })
 }

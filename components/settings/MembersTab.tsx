@@ -43,7 +43,12 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
   const [cancelConfirm,  setCancelConfirm]  = useState<string | null>(null)
   const [roleSaving,     setRoleSaving]     = useState<string | null>(null)
   const [inviteEmail,    setInviteEmail]    = useState('')
+  const [inviteName,     setInviteName]     = useState('')
   const [inviteRole,     setInviteRole]     = useState('viewer')
+  // Caller's role on this group — drives super_admin protection in the UI
+  // (group_admins should never see super_admin as an option, and never be
+  // able to demote / remove an existing super_admin).
+  const [callerRole,     setCallerRole]     = useState<string>('')
   const [permTarget,     setPermTarget]     = useState<{ id: string; email: string; role: AppRole } | null>(null)
   const [companies,      setCompanies]      = useState<{ id: string; name: string }[]>([])
   const [inviteSaving,   setInviteSaving]   = useState(false)
@@ -53,19 +58,26 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
     if (!groupId) return
     setLoading(true)
     try {
-      const [mRes, iRes, cRes] = await Promise.all([
+      const [mRes, iRes, cRes, aRes] = await Promise.all([
         fetch(`/api/groups/${groupId}/members`),
         fetch(`/api/groups/${groupId}/invites`),
         fetch('/api/companies'),
+        fetch('/api/groups/active'),
       ])
       const mJson = await mRes.json()
       const iJson = await iRes.json()
       const cJson = await cRes.json()
+      const aJson = await aRes.json().catch(() => ({}))
+      const callerRoleFromApi = (aJson.data as { role?: string } | undefined)?.role ?? ''
+      setCallerRole(callerRoleFromApi)
       if (mJson.data) setMembers(mJson.data)
       // Defence-in-depth: API already filters by accepted_at IS NULL, but
       // strip any accepted rows here too in case of cache or RLS surprises.
+      // Also strip any invites whose email matches an existing member —
+      // catches stale rows where accepted_at was never written.
+      const memberEmails = new Set(((mJson.data ?? []) as GroupMember[]).map(m => m.email.toLowerCase()))
       if (iJson.data) setInvites(
-        (iJson.data as GroupInvite[]).filter(i => !i.accepted_at),
+        (iJson.data as GroupInvite[]).filter(i => !i.accepted_at && !memberEmails.has(i.email.toLowerCase())),
       )
       if (cJson.data) setCompanies((cJson.data as Array<{ id: string; name: string; is_active: boolean }>).filter(c => c.is_active).map(c => ({ id: c.id, name: c.name })))
     } catch (err) { console.error('Members load error:', err) } finally {
@@ -158,7 +170,11 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
       const res  = await fetch(`/api/groups/${groupId}/invites`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ email, role: inviteRole }),
+        body:    JSON.stringify({
+          email,
+          role: inviteRole,
+          full_name: inviteName.trim() || undefined,
+        }),
       })
       const json = await res.json()
       if (!res.ok) throw new Error(json.error ?? 'Failed to send invite')
@@ -168,6 +184,7 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
         return [...is, json.data]
       })
       setInviteEmail('')
+      setInviteName('')
       setInviteToast(`Invite recorded for ${email}`)
     } catch (err) {
       setInviteToast(err instanceof Error ? err.message : 'Failed to invite')
@@ -210,13 +227,18 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-[1fr,1fr,auto,auto] gap-2">
+            <Input
+              value={inviteName}
+              onChange={e => setInviteName(e.target.value)}
+              placeholder="Full name (optional)"
+              onKeyDown={e => { if (e.key === 'Enter') void handleSendInvite() }}
+            />
             <Input
               type="email"
               value={inviteEmail}
               onChange={e => setInviteEmail(e.target.value)}
               placeholder="name@example.com"
-              className="flex-1"
               onKeyDown={e => { if (e.key === 'Enter') void handleSendInvite() }}
             />
             <div className="relative">
@@ -280,8 +302,17 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
                       </p>
                     </div>
 
-                    {/* Role selector — disabled for self */}
-                    {!isYou && (
+                    {/* Read-only Super Admin badge — never editable from this UI */}
+                    {member.role === 'super_admin' && (
+                      <Badge className="text-xs bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 border-0">
+                        <Shield className="h-3 w-3 mr-1" /> Super Admin
+                      </Badge>
+                    )}
+
+                    {/* Role selector — disabled for self, hidden for super_admin
+                         members. Group admins never see super_admin as an option;
+                         only super_admin callers can set/keep that role. */}
+                    {!isYou && member.role !== 'super_admin' && (
                       <div className="relative">
                         <select
                           value={member.role}
@@ -289,9 +320,11 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
                           onChange={e => void handleRoleChange(member.user_id, e.target.value)}
                           className="appearance-none h-8 rounded-md border border-input bg-background pl-2 pr-7 text-xs text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
                         >
-                          {ROLE_OPTIONS.map(opt => (
-                            <option key={opt.value} value={opt.value}>{opt.label}</option>
-                          ))}
+                          {ROLE_OPTIONS
+                            .filter(opt => opt.value !== 'super_admin' || callerRole === 'super_admin')
+                            .map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
                         </select>
                         <ChevronDown className="pointer-events-none absolute right-1.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
                       </div>
@@ -309,8 +342,9 @@ export default function MembersTab({ groupId, isAdmin, userId, userEmail }: Memb
                       </Button>
                     )}
 
-                    {/* Remove — disabled for self */}
-                    {!isYou && (
+                    {/* Remove — disabled for self, and for super_admins unless
+                         the caller is also a super_admin. */}
+                    {!isYou && (member.role !== 'super_admin' || callerRole === 'super_admin') && (
                       deleteConfirm === member.user_id ? (
                         <span className="flex items-center gap-1 text-xs">
                           <Button

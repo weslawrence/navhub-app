@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import {
   Plug, Upload, FileText, Loader2, Check, ExternalLink, Trash2, Lock,
-  Briefcase, Mail, Hash,
+  Briefcase, Mail, Hash, AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input }  from '@/components/ui/input'
@@ -829,6 +829,25 @@ export default function IntegrationsPage() {
                       )}
                       <p className="text-[11px] text-muted-foreground">
                         Agents fall back to this channel when their own override is empty.
+                      </p>
+                    </div>
+
+                    {/* Bot setup instructions — must be invited to each channel */}
+                    <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950 dark:border-amber-800 px-3 py-3 space-y-2">
+                      <div className="flex items-center gap-2 text-sm font-medium text-amber-800 dark:text-amber-200">
+                        <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+                        NavHub bot must be added to each channel
+                      </div>
+                      <p className="text-xs text-amber-700 dark:text-amber-300">
+                        Before NavHub can post to a channel, you must invite the bot. In Slack, open the channel and type:
+                      </p>
+                      <div className="rounded bg-amber-100 dark:bg-amber-900 px-3 py-2 font-mono text-xs text-amber-900 dark:text-amber-100 select-all">
+                        /invite @NavHub
+                      </div>
+                      <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                        Do this for every channel you want to use for agent notifications. Channels marked
+                        &quot;(bot not in channel)&quot; in the picker above won&apos;t receive messages until the
+                        bot is added.
                       </p>
                     </div>
                   </div>

@@ -50,6 +50,8 @@ export async function middleware(request: NextRequest) {
     pathname === '/access-denied'               ||
     pathname.startsWith('/api/groups/switch')   ||
     pathname.startsWith('/accept-invite')       ||
+    // PKCE / magic-link callback — exchanges code for session, claims invites
+    pathname.startsWith('/auth/')               ||
     pathname.startsWith('/api/cron/')           ||
     pathname.startsWith('/api/auth')            ||
     pathname.startsWith('/_next')              ||

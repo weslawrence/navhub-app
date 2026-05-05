@@ -23,6 +23,7 @@ import {
   Megaphone,
   Bot,
   Plug,
+  Home,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -407,6 +408,15 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
               <DropdownMenuLabel className="font-normal">
                 <p className="text-xs text-muted-foreground truncate">{user.email}</p>
               </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+
+              {/* Home — landing page (group picker for users with multiple groups) */}
+              <DropdownMenuItem asChild className="cursor-pointer text-foreground">
+                <Link href="/landing">
+                  <Home className="mr-2 h-4 w-4" />
+                  Home
+                </Link>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
 
               {/* Create Group — super_admin and group_admin */}

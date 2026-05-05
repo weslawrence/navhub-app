@@ -51,7 +51,26 @@ export async function GET(
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json({ data: (invites ?? []) as GroupInvite[] })
+  // Defence-in-depth: also filter out invites whose email is already a
+  // member of this group. Catches stale rows where accepted_at was never
+  // written (e.g. early invites that bypassed the join route).
+  const { data: memberships } = await admin
+    .from('user_groups')
+    .select('user_id')
+    .eq('group_id', params.id)
+  const memberIds = ((memberships ?? []) as Array<{ user_id: string }>).map(m => m.user_id)
+  const memberEmails = new Set<string>()
+  if (memberIds.length > 0) {
+    const { data: userList } = await admin.auth.admin.listUsers({ perPage: 1000 })
+    for (const u of userList?.users ?? []) {
+      if (memberIds.includes(u.id) && u.email) memberEmails.add(u.email.toLowerCase())
+    }
+  }
+
+  const filtered = ((invites ?? []) as GroupInvite[])
+    .filter(i => !memberEmails.has(i.email.toLowerCase()))
+
+  return NextResponse.json({ data: filtered })
 }
 
 export async function POST(
@@ -81,8 +100,9 @@ export async function POST(
   try { body = await request.json() }
   catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
 
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
-  const role  = typeof body.role  === 'string' ? body.role  : ''
+  const email     = typeof body.email     === 'string' ? body.email.trim().toLowerCase() : ''
+  const role      = typeof body.role      === 'string' ? body.role : ''
+  const fullName  = typeof body.full_name === 'string' ? body.full_name.trim() : ''
 
   if (!email || !email.includes('@')) {
     return NextResponse.json({ error: 'Valid email is required' }, { status: 400 })
@@ -147,7 +167,7 @@ export async function POST(
   const { data: invite, error: inviteErr } = await admin
     .from('group_invites')
     .upsert(
-      { group_id: params.id, email, role, invited_by: session.user.id },
+      { group_id: params.id, email, role, full_name: fullName || null, invited_by: session.user.id },
       { onConflict: 'group_id,email', ignoreDuplicates: false }
     )
     .select()
@@ -239,13 +259,15 @@ export async function POST(
       .eq('id', invite.id)
 
     // Existing user — generate a magic link so they can sign in straight from
-    // the email; fall back to the plain login page if the call fails.
-    let loginLink = `${appUrl}/dashboard`
+    // the email; fall back to the plain login page if the call fails. The
+    // redirectTo points at /auth/callback (PKCE code-exchange) which also
+    // claims any pending invites server-side before redirecting to /landing.
+    let loginLink = `${appUrl}/landing`
     try {
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
         type:    'magiclink',
         email,
-        options: { redirectTo: `${appUrl}/dashboard` },
+        options: { redirectTo: `${appUrl}/auth/callback?next=/landing` },
       })
       if (linkErr) console.error('[invite] generateLink (magiclink) error:', linkErr.message)
       const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link

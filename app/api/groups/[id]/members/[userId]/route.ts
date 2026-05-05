@@ -18,7 +18,7 @@ const ALLOWED_ROLES = ['super_admin', 'group_admin', 'manager', 'viewer']
 type Params = { params: { id: string; userId: string } }
 
 async function verifyAdminAccess(groupId: string, callerUserId: string, activeGroupId: string | undefined) {
-  if (groupId !== activeGroupId) return 'not_found'
+  if (groupId !== activeGroupId) return { status: 'not_found' as const }
   const supabase = createClient()
   const { data: membership } = await supabase
     .from('user_groups')
@@ -26,8 +26,21 @@ async function verifyAdminAccess(groupId: string, callerUserId: string, activeGr
     .eq('user_id', callerUserId)
     .eq('group_id', groupId)
     .single()
-  if (!membership || !ADMIN_ROLES.includes(membership.role)) return 'forbidden'
-  return 'ok'
+  if (!membership || !ADMIN_ROLES.includes(membership.role)) return { status: 'forbidden' as const }
+  return { status: 'ok' as const, role: membership.role as string }
+}
+
+// Look up the target member's current role so we can guard against group_admins
+// modifying super_admins.
+async function getTargetRole(groupId: string, userId: string): Promise<string | null> {
+  const admin = createAdminClient()
+  const { data } = await admin
+    .from('user_groups')
+    .select('role')
+    .eq('group_id', groupId)
+    .eq('user_id', userId)
+    .maybeSingle()
+  return (data as { role?: string } | null)?.role ?? null
 }
 
 async function checkLastSuperAdmin(groupId: string, targetUserId: string): Promise<boolean> {
@@ -50,8 +63,9 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
   const access = await verifyAdminAccess(params.id, session.user.id, activeGroupId)
-  if (access === 'not_found') return NextResponse.json({ error: 'Group not found' }, { status: 404 })
-  if (access === 'forbidden') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  if (access.status === 'not_found') return NextResponse.json({ error: 'Group not found' },     { status: 404 })
+  if (access.status === 'forbidden') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  const callerIsSuper = access.role === 'super_admin'
 
   let body: Record<string, unknown>
   try { body = await request.json() }
@@ -60,6 +74,17 @@ export async function PATCH(request: Request, { params }: Params) {
   const newRole = typeof body.role === 'string' ? body.role : null
   if (!newRole || !ALLOWED_ROLES.includes(newRole)) {
     return NextResponse.json({ error: `role must be one of: ${ALLOWED_ROLES.join(', ')}` }, { status: 422 })
+  }
+
+  // Super-admin protection: only super_admins can mint or modify super_admins.
+  // Group admins must never be able to assign super_admin or change a
+  // super_admin's role even with a forged request.
+  const targetRole = await getTargetRole(params.id, params.userId)
+  if (!callerIsSuper && (newRole === 'super_admin' || targetRole === 'super_admin')) {
+    return NextResponse.json(
+      { error: 'Only super admins can assign or modify the super admin role.' },
+      { status: 403 },
+    )
   }
 
   // Protect last super_admin from demotion
@@ -94,8 +119,18 @@ export async function DELETE(_request: Request, { params }: Params) {
   if (!session) return NextResponse.json({ error: 'Unauthorised' }, { status: 401 })
 
   const access = await verifyAdminAccess(params.id, session.user.id, activeGroupId)
-  if (access === 'not_found') return NextResponse.json({ error: 'Group not found' }, { status: 404 })
-  if (access === 'forbidden') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  if (access.status === 'not_found') return NextResponse.json({ error: 'Group not found' },     { status: 404 })
+  if (access.status === 'forbidden') return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
+  const callerIsSuper = access.role === 'super_admin'
+
+  // Group admins can't remove super_admins.
+  const targetRole = await getTargetRole(params.id, params.userId)
+  if (!callerIsSuper && targetRole === 'super_admin') {
+    return NextResponse.json(
+      { error: 'Only super admins can remove a super admin.' },
+      { status: 403 },
+    )
+  }
 
   // Protect last super_admin from removal
   const isLast = await checkLastSuperAdmin(params.id, params.userId)

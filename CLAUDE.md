@@ -4670,3 +4670,107 @@ proportional chart.
 Run migration `054_professional_tier.sql` in Supabase. Existing groups
 default to `massive`, so professional remains gated until an admin
 raises the cap in Settings → Display.
+
+---
+
+## Invite Reliability + Super Admin Protection + Members UX
+
+### Migration 055 — `group_invites.full_name`
+```sql
+ALTER TABLE group_invites
+  ADD COLUMN IF NOT EXISTS full_name text;
+```
+Captured on the invite form, copied into `auth.users.user_metadata.full_name`
+when the invite is claimed. Drives the personalised dashboard greeting.
+
+### `/auth/callback` route (new)
+`app/auth/callback/route.ts` is the server-side PKCE callback that
+Supabase magic links now redirect to. It:
+1. Calls `supabase.auth.exchangeCodeForSession(code)`
+2. Looks up every `group_invites` row matching the user's email with
+   `accepted_at IS NULL`
+3. Upserts a `user_groups` membership for each (using the invite's
+   recorded role; sets `is_default=true` only on the first claim when
+   the user has no existing default)
+4. Copies the first non-empty invite `full_name` into `user_metadata`
+5. Marks each invite `accepted_at = now()`
+6. Sets the `active_group_id` cookie to the first-claimed group
+7. Redirects to `?next=/landing`
+
+Existing-user invite emails now use
+`redirectTo: ${APP_URL}/auth/callback?next=/landing` so the magic link
+exchanges code-for-session server-side and lands the user inside their
+new group(s). New-user invites keep redirecting to `/accept-invite`
+where the password setup form runs.
+
+`middleware.ts` adds `/auth/` to the public-paths list.
+
+### `/api/auth/claim-invites` (new)
+Fallback endpoint called from:
+- The `/accept-invite` page (after the password is set)
+- The `/landing` page (on every load)
+
+Same logic as the auth/callback claim block. Idempotent — already-joined
+groups are no-ops. Catches the case where the URL `group_id` was lost or
+where additional pending invites exist for the same email.
+
+### Members tab — super admin protection + name field
+`components/settings/MembersTab.tsx`:
+- Invite form has a new optional "Full name" field
+- Loads caller's role from `/api/groups/active` and stores it in
+  `callerRole` state
+- Per-member role dropdown:
+  - Hidden entirely when the row is `super_admin` (replaced by a
+    purple "Super Admin" read-only badge)
+  - Filters out the `super_admin` option unless the caller is also a
+    super admin (group admins never see super admin in the picker)
+- Per-member Remove button hidden when the row is `super_admin` and
+  the caller is NOT a super admin
+- Pending-invites list also filters out invites whose email is already
+  a member (defence-in-depth on top of the API-side filter)
+
+### Members API — server-side super admin guard
+`app/api/groups/[id]/members/[userId]/route.ts`:
+- `verifyAdminAccess` now returns the caller's role (not just ok/forbidden)
+- New `getTargetRole()` helper looks up the target member's current role
+- PATCH: if caller is NOT a super admin, refuse `role='super_admin'`
+  AND refuse modifying any super_admin target → 403
+- DELETE: if caller is NOT a super admin, refuse removing a super_admin
+  target → 403
+- Last-super-admin demotion / removal protection unchanged
+
+### Pending-invites server-side filter
+`GET /api/groups/[id]/invites` now joins `user_groups` → `auth.admin.listUsers`
+and strips invites whose email matches any current member's email. Catches
+stale rows where `accepted_at` was never written.
+
+### Dashboard greeting (`user_name`)
+`/api/groups/active` now returns `user_name` derived from
+`user_metadata.full_name` (falling back to the email's local part). The
+dashboard already reads this field — the greeting is now personalised
+out of the box once the invite carries a name.
+
+### Run Again on per-agent run history
+`/agents/[id]/runs/page.tsx` now has a `RotateCcw` "Run Again" button
+on each row. Builds the same query-string the run-detail page does
+(brief, run_name, output_folder_id, output_status, output_type,
+output_name_override, notify_email, notify_slack_channel,
+task_complexity) and routes to `/agents/[id]/run`.
+
+### Slack bot channel instructions
+The Workspace integrations page now shows an amber instructions panel
+under the default-channel picker explaining that the NavHub bot must be
+`/invite @NavHub`'d into each Slack channel before notifications will
+post. Channels marked "(bot not in channel)" in the picker are
+highlighted as needing the invite step.
+
+### AppShell — Home link
+The user dropdown gains a "Home" entry pointing to `/landing` (the
+group picker / member account page) above the existing "Create new
+group" / "Change password" / "Sign out" rows.
+
+### Manual setup required
+- Run migration `055_invite_full_name.sql` in Supabase
+- Supabase Auth → URL Configuration: ensure `https://app.navhub.co/auth/callback`
+  is in the Redirect URLs list (in addition to the existing
+  `/accept-invite` and `/reset-password` entries).

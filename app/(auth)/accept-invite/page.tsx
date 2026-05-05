@@ -59,18 +59,28 @@ function AcceptInviteForm() {
       const { error: updateErr } = await supabase.auth.updateUser({ password })
       if (updateErr) { setError(updateErr.message); return }
 
-      // Join the group
+      // Preferred path: when a group_id is on the URL, hit the per-group
+      // join route — it validates that the invite was actually issued to
+      // this email and sets the active_group_id cookie.
       if (groupId) {
         const res = await fetch(`/api/groups/${groupId}/join`, {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body:    JSON.stringify({ role }),
         })
-        const json = await res.json() as { error?: string }
         if (!res.ok) {
+          const json = await res.json().catch(() => ({})) as { error?: string }
           console.warn('[accept-invite] join error:', json.error)
-          // Non-fatal — user account created; they can still log in
         }
+      }
+
+      // Always run the claim-all fallback — covers the case where the URL
+      // group_id is missing/stale, AND any additional pending invites the
+      // same email has been sent. Idempotent for already-joined groups.
+      try {
+        await fetch('/api/auth/claim-invites', { method: 'POST' })
+      } catch (err) {
+        console.warn('[accept-invite] claim-invites failed:', err)
       }
 
       router.replace('/dashboard')

@@ -448,7 +448,7 @@ export async function sendSlack(
     return 'Error: Slack not connected for this group. Connect Slack in Integrations → Workspace.'
   }
 
-  const { decrypt } = await import('@/lib/crypto')
+  const { decrypt } = await import('@/lib/encryption')
   const token   = decrypt(conn.bot_token_encrypted as string)
   const channel = params.channel
     ?? (context.agent as { default_slack_channel?: string }).default_slack_channel

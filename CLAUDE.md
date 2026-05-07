@@ -4774,3 +4774,122 @@ group" / "Change password" / "Sign out" rows.
 - Supabase Auth → URL Configuration: ensure `https://app.navhub.co/auth/callback`
   is in the Redirect URLs list (in addition to the existing
   `/accept-invite` and `/reset-password` entries).
+
+---
+
+## Skills System (migration 056)
+
+A skill is a self-contained block of expertise — instructions + optional
+knowledge text + reference documents + tool grants — that the runner
+injects into the agent's system prompt automatically. Users never have
+to remember to invoke a skill; agents simply have all their applicable
+skills active at all times.
+
+### Tiers + assignment model
+| Tier      | Owner            | Applies to                                | Managed at                |
+|-----------|------------------|-------------------------------------------|---------------------------|
+| platform  | super_admin      | every agent across every group when published, by default | `/admin/skills` |
+| group     | group admin      | every agent in the group via `group_skills` | Settings → Agents → Group Skills |
+| agent     | group admin      | a single agent via `agent_skills`         | Agent edit → Skills tab |
+
+Group / agent rows can also re-use a published platform skill — the
+`group_skills` and `agent_skills` join tables hold the per-scope
+selection.
+
+### Database (migration 056)
+- `skills` — id, tier, group_id, name, slug, category, description,
+  instructions, knowledge_text, examples, tool_grants[], is_active,
+  is_published, version, created_by, timestamps. Slug uniqueness scoped
+  per `(tier, COALESCE(group_id, '0…0'::uuid), slug)`.
+- `skill_knowledge_documents` — pinned reference docs per skill.
+  Optional `document_id` link to the documents library; the runner inlines
+  the `content_markdown` in the prompt.
+- `agent_skills` — `(agent_id, skill_id, sort_order)`.
+- `group_skills` — `(group_id, skill_id, sort_order)`.
+- RLS — platform readable by all when published; group/agent readable by
+  group members; admins can manage their tier.
+
+### Runner integration (`lib/agent-runner.ts`)
+New `loadSkillsForRun(agentId, groupId, admin)` returns:
+- a `promptBlock` that concatenates platform → group → agent skill blocks
+  under a `## Your Skills and Expertise` heading
+- a deduped `toolGrants: string[]`
+
+The block is appended to the system prompt right after the disabled-
+tools filter. Granted tool names are pushed into `toolDefs` (deduped
+via `toolNameAlreadyPresent`, skipping any tool the agent has explicitly
+disabled). The whole thing happens before the agentic loop, so the
+model sees skills + tools as part of its core context.
+
+Reference document content is clamped to 2,000 chars per doc to keep
+prompts sane. Group / agent skills with `is_active=false` are filtered
+out before injection.
+
+### Tier-aware model timeout
+`MODEL_TIMEOUT_MS` now scales with `task_complexity`:
+- professional → 15 min
+- massive      → 8 min
+- everything else → 4 min (unchanged)
+
+Catches the case where a professional run pre-loads a heavy context
+and the first chunk takes longer than the previous flat 4-min cap.
+
+### Incremental tool-call persistence
+`toolCallLogs` is now flushed to `agent_runs.tool_calls` twice per tool:
+once with an empty `output` placeholder when the tool starts, once with
+the real output when it finishes (in-place via the captured
+`placeholderIdx`). This unblocks the SSE stream route — observers that
+connect mid-run can see the live "running tool X" timeline instead of
+waiting until the run ends.
+
+### Stream route — 500ms polling + per-index tool events
+`app/api/agents/runs/[runId]/stream/route.ts` now polls every 500ms
+(was 2s) so output and tool events stream visibly rather than in
+2-second chunks. Tool emissions are tracked per-index via two Sets
+(`startedIdx`, `endedIdx`) — `tool_start` fires the first time we see
+an index, `tool_end` fires the first time that index has a non-empty
+output. Replays on reconnect emit the same events from the saved
+`tool_calls` array.
+
+### API surface
+```
+GET    /api/admin/skills              → list all platform skills
+POST   /api/admin/skills              → create platform skill
+GET    /api/admin/skills/[id]         → fetch one
+PATCH  /api/admin/skills/[id]         → update + bump version
+DELETE /api/admin/skills/[id]         → hard delete
+POST   /api/admin/skills/[id]/publish → toggle is_published + bump version
+GET    /api/admin/skills/[id]/export  → JSON dump (schema 'navhub-skill-v1')
+POST   /api/admin/skills/import       → re-import (always as draft)
+
+GET    /api/settings/skills           → assignments + own group skills + assignable platform skills
+POST   /api/settings/skills           → action='assign' (skill_id) | 'create_group' (full payload)
+PATCH  /api/settings/skills/[id]      → reorder OR edit underlying group-tier skill (only if owned)
+DELETE /api/settings/skills/[id]      → remove assignment; ?purge_skill=true also deletes the group skill
+
+GET    /api/agents/[id]/skills        → assigned + own + inherited (platform + group)
+POST   /api/agents/[id]/skills        → action='assign' | 'create_agent'
+DELETE /api/agents/[id]/skills?assignment_id=... → remove agent_skills row
+```
+
+### UI surfaces
+- **`/admin/skills`** — platform library. Card grid, search, filter
+  (all/published/draft). Create / Edit modal with Name, Description,
+  Instructions, Knowledge, Examples, Tool Grants checkboxes. Save Draft
+  vs Save & Publish. Per-card actions: Edit · Publish/Unpublish ·
+  Export (JSON download) · Delete.
+- **Settings → Agents → Group Skills** — `<GroupSkillsSection>`
+  (admin-only). Add Platform Skill picker + Create Group Skill modal.
+  Tier badges (Platform = sky, Group = violet). Group-tier rows can be
+  edited via the inline modal; platform rows can only be removed from
+  the group.
+- **Agents → edit → Skills tab** — `<AgentSkillsPanel>`. Read-only
+  "Auto-applied skills" panel listing every inherited platform + group
+  skill. Below: agent-specific skills with Add Skill picker
+  (platform + own agent skills) and Create Skill (creates a new
+  tier='agent' skill scoped to the group, then auto-assigns).
+- Admin sidebar nav extended with a `Skills` entry between Agent Runs
+  and Audit.
+
+### Manual setup required
+- Run migration `056_skills.sql` in Supabase

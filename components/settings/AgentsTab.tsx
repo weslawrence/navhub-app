@@ -19,6 +19,7 @@ import type {
 } from '@/lib/types'
 import DocumentPickerModal from '@/components/agents/DocumentPickerModal'
 import BulkLinkAdder, { type BulkAddedLink } from '@/components/shared/BulkLinkAdder'
+import GroupSkillsSection from '@/components/settings/GroupSkillsSection'
 
 // ─── Default tools info (display-only) ───────────────────────────────────────
 
@@ -1343,6 +1344,9 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
 
       {/* ── Section 0: Provider API Keys (replaces Model Configurations) ── */}
       <ProviderKeysPanel isAdmin={isAdmin} />
+
+      {/* ── Group Skills (migration 056) ── */}
+      <GroupSkillsSection isAdmin={isAdmin} />
 
       {/* ── Legacy: group_model_configs (hidden when no rows exist) ─────── */}
       {modelConfigs.length > 0 && (

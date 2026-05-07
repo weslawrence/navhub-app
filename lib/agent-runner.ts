@@ -647,6 +647,126 @@ async function loadCredentials(agentId: string): Promise<Record<string, string>>
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Skills loader — pulls platform / group / agent skills into a single
+// system-prompt block plus a flat list of granted tool names.
+// ────────────────────────────────────────────────────────────────────────────
+
+interface LoadedSkill {
+  name:           string
+  instructions:   string
+  knowledge_text: string | null
+  examples:       string | null
+  tool_grants:    string[]
+  skill_knowledge_documents?: Array<{
+    file_name: string
+    documents?: { content_markdown?: string | null } | null
+  }>
+}
+
+interface SkillsBundle {
+  promptBlock: string
+  toolGrants:  string[]
+}
+
+function buildSkillBlock(skill: LoadedSkill): string {
+  const lines: string[] = [`### Skill: ${skill.name}`, skill.instructions.trim()]
+  if (skill.knowledge_text && skill.knowledge_text.trim()) {
+    lines.push(`\n**Knowledge:**\n${skill.knowledge_text.trim()}`)
+  }
+  for (const doc of skill.skill_knowledge_documents ?? []) {
+    const content = doc.documents?.content_markdown
+    if (content && content.trim()) {
+      // Clamp each reference doc to ~2000 chars to keep prompts manageable.
+      lines.push(`\n**Reference — ${doc.file_name}:**\n${content.slice(0, 2000)}`)
+    }
+  }
+  if (skill.examples && skill.examples.trim()) {
+    lines.push(`\n**Examples:**\n${skill.examples.trim()}`)
+  }
+  return lines.join('\n')
+}
+
+function toolNameAlreadyPresent(defs: Array<Record<string, unknown>>, name: string): boolean {
+  return defs.some(d => (d as { name?: string }).name === name)
+}
+
+async function loadSkillsForRun(
+  agentId: string,
+  groupId: string,
+  admin:   ReturnType<typeof createAdminClient>,
+): Promise<SkillsBundle> {
+  const SKILL_SELECT = `
+    id, name, instructions, knowledge_text, examples, tool_grants,
+    skill_knowledge_documents(file_name, document_id, documents(content_markdown))
+  `
+
+  // Platform — every published, active platform skill.
+  const platformQ = admin
+    .from('skills')
+    .select(SKILL_SELECT)
+    .eq('tier', 'platform')
+    .eq('is_published', true)
+    .eq('is_active',    true)
+    .order('created_at', { ascending: true })
+
+  // Group — assigned to this group via group_skills.
+  const groupQ = admin
+    .from('group_skills')
+    .select(`sort_order, skills(${SKILL_SELECT})`)
+    .eq('group_id', groupId)
+    .order('sort_order', { ascending: true })
+
+  // Agent — assigned to this agent via agent_skills.
+  const agentQ = admin
+    .from('agent_skills')
+    .select(`sort_order, skills(${SKILL_SELECT})`)
+    .eq('agent_id', agentId)
+    .order('sort_order', { ascending: true })
+
+  const [{ data: platformSkills }, { data: groupRows }, { data: agentRows }] =
+    await Promise.all([platformQ, groupQ, agentQ])
+
+  const groupSkills = ((groupRows ?? []) as Array<{ skills: LoadedSkill | LoadedSkill[] | null }>)
+    .flatMap(r => Array.isArray(r.skills) ? r.skills : (r.skills ? [r.skills] : []))
+  const agentSkills = ((agentRows ?? []) as Array<{ skills: LoadedSkill | LoadedSkill[] | null }>)
+    .flatMap(r => Array.isArray(r.skills) ? r.skills : (r.skills ? [r.skills] : []))
+
+  // Filter out inactive group/agent skills (RLS allows reading all tiers,
+  // but we only want active ones in the prompt).
+  const activeGroupSkills = groupSkills.filter(s => (s as LoadedSkill & { is_active?: boolean }).is_active !== false)
+  const activeAgentSkills = agentSkills.filter(s => (s as LoadedSkill & { is_active?: boolean }).is_active !== false)
+
+  const all: LoadedSkill[] = [
+    ...((platformSkills ?? []) as LoadedSkill[]),
+    ...activeGroupSkills,
+    ...activeAgentSkills,
+  ]
+
+  if (all.length === 0) return { promptBlock: '', toolGrants: [] }
+
+  const blocks = all.map(buildSkillBlock)
+  const promptBlock = [
+    '## Your Skills and Expertise',
+    'The following skills define your expertise and how you approach tasks. Apply them automatically — users do not need to instruct you to use them.',
+    '',
+    blocks.join('\n\n'),
+  ].join('\n')
+
+  // Dedupe tool grants across all skill tiers.
+  const toolGrantSet = new Set<string>()
+  for (const skill of all) {
+    for (const t of (skill.tool_grants ?? [])) {
+      if (typeof t === 'string' && t.length > 0) toolGrantSet.add(t)
+    }
+  }
+
+  return {
+    promptBlock,
+    toolGrants: Array.from(toolGrantSet),
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // ask_user handler — pauses run and waits for user reply (up to 10 minutes)
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -1620,6 +1740,25 @@ export async function executeAgentRun(
       for (const t of filtered) toolDefs.push(t)
     }
 
+    // ── Skills (migration 056) ──────────────────────────────────────────────
+    // Auto-injects platform → group → agent skills. Each skill contributes:
+    //   • a system-prompt block (instructions + knowledge_text + reference
+    //     documents content + examples)
+    //   • optional tool_grants — tools that get unlocked even if not
+    //     enabled on the agent directly
+    // Skills are transparent to users; they never need to instruct an
+    // agent to use them.
+    const skillsBundle = await loadSkillsForRun(agent.id, groupId, admin)
+    if (skillsBundle.promptBlock) {
+      systemPrompt += '\n\n' + skillsBundle.promptBlock
+    }
+    for (const grantedName of skillsBundle.toolGrants) {
+      if (toolNameAlreadyPresent(toolDefs, grantedName)) continue
+      if (disabledToolNames.has(grantedName)) continue
+      const def = ALL_TOOL_DEFS[grantedName]
+      if (def) toolDefs.push(def as Record<string, unknown>)
+    }
+
     // ─ System-prompt addenda — kept compact ─────────────────────────────────
     // Earlier revisions added six prose blocks totalling ~3k tokens of overhead
     // on every run. The full tool definitions are already passed via the API
@@ -1863,11 +2002,17 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
       const openAICreds: Record<string, string> = { ...credentials }
       if (cfgApiKey && cfgProvider === 'openai')    openAICreds['OPENAI_API_KEY']    = cfgApiKey
 
-      // Belt-and-braces: race the model call against an explicit 2-minute
-      // budget. callClaude/callGPT4o already have AbortController + idle
-      // timers, but if the underlying socket is held open without progress
-      // those abort paths can stall too.
-      const MODEL_TIMEOUT_MS = 4 * 60 * 1000   // 4 minutes — long tool replies + thinking are OK
+      // Belt-and-braces: race the model call against an explicit budget.
+      // callClaude/callGPT4o already have AbortController + idle timers,
+      // but if the underlying socket is held open without progress those
+      // abort paths can stall too.
+      //
+      // Budget scales with tier — professional pre-loads a lot of context
+      // so the first chunk takes longer; massive runs are heavier all round.
+      const MODEL_TIMEOUT_MS =
+        taskComplexity === 'professional' ? 15 * 60 * 1000 :  // 15 min
+        taskComplexity === 'massive'      ?  8 * 60 * 1000 :  //  8 min
+                                             4 * 60 * 1000    //  4 min default
       const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> =>
         Promise.race([
           p,
@@ -1999,6 +2144,22 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
 
         onChunk({ type: 'tool_start', tool: toolName, input: tc.input })
 
+        // Persist a "started" placeholder so the stream-route poller can
+        // emit tool_start to clients that connect mid-run before the tool
+        // finishes. Updated to its real output below.
+        toolCallLogs.push({
+          tool:        toolName,
+          input:       tc.input,
+          output:      '',
+          timestamp:   new Date().toISOString(),
+          duration_ms: 0,
+        })
+        const placeholderIdx = toolCallLogs.length - 1
+        void admin
+          .from('agent_runs')
+          .update({ tool_calls: toolCallLogs })
+          .eq('id', runId)
+
         let output: string
 
         // ask_user is handled specially — it pauses the run and waits for user input
@@ -2050,13 +2211,22 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
           toolFailureCounts[toolName] = 0
         }
 
-        toolCallLogs.push({
+        // Update the placeholder added before executeTool — keeps the array
+        // length stable so a client that polled mid-execution sees the SAME
+        // tool transition from "running" to "done" rather than a duplicate row.
+        toolCallLogs[placeholderIdx] = {
           tool:        toolName,
           input:       tc.input,
           output:      output.slice(0, 2000), // truncate for storage
           timestamp:   new Date().toISOString(),
           duration_ms: durationMs,
-        })
+        }
+
+        // Incremental persist — the stream-route polling reads from here.
+        void admin
+          .from('agent_runs')
+          .update({ tool_calls: toolCallLogs, tokens_used: totalTokens })
+          .eq('id', runId)
 
         toolResults.push({
           type:        'tool_result',

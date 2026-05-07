@@ -9,6 +9,7 @@ const NAV_LINKS = [
   { label: 'Users',      href: '/admin/users' },
   { label: 'Agents',     href: '/admin/agents' },
   { label: 'Agent Runs', href: '/admin/agent-runs' },
+  { label: 'Skills',     href: '/admin/skills' },
   { label: 'Audit',      href: '/admin/audit' },
   { label: 'Assistant',  href: '/admin/assistant' },
   { label: 'System',     href: '/admin/system' },

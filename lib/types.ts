@@ -1065,6 +1065,59 @@ export interface MarketingDatabaseSnapshot {
 }
 
 // ============================================================
+// Skills (migration 056)
+// ============================================================
+
+export type SkillTier = 'platform' | 'group' | 'agent'
+
+export interface Skill {
+  id:              string
+  tier:            SkillTier
+  group_id:        string | null
+  name:            string
+  slug:            string
+  category:        string | null
+  description:     string
+  instructions:    string
+  knowledge_text:  string | null
+  examples:        string | null
+  tool_grants:     string[]
+  is_active:       boolean
+  is_published:    boolean
+  version:         number
+  created_by:      string | null
+  created_at:      string
+  updated_at:      string
+}
+
+export interface SkillKnowledgeDocument {
+  id:          string
+  skill_id:    string
+  document_id: string | null
+  file_name:   string
+  file_type:   string | null
+  created_at:  string
+}
+
+export interface AgentSkill {
+  id:         string
+  agent_id:   string
+  skill_id:   string
+  sort_order: number
+  created_at: string
+  skill?:     Skill
+}
+
+export interface GroupSkill {
+  id:         string
+  group_id:   string
+  skill_id:   string
+  sort_order: number
+  created_at: string
+  skill?:     Skill
+}
+
+// ============================================================
 // API response types
 // ============================================================
 

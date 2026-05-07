@@ -23,6 +23,7 @@ import {
 import { AVATAR_PRESETS } from '@/lib/agent-presets'
 import DocumentPickerModal, { type PickableDocument } from '@/components/agents/DocumentPickerModal'
 import BulkLinkAdder, { type BulkAddedLink } from '@/components/shared/BulkLinkAdder'
+import AgentSkillsPanel from '@/components/agents/AgentSkillsPanel'
 
 // ─── Tool display config ──────────────────────────────────────────────────────
 
@@ -33,7 +34,7 @@ const PERSONA_OPTIONS: { value: PersonaPreset; label: string; description: strin
   { value: 'custom',               label: 'Custom',               description: 'Write your own persona instructions' },
 ]
 
-type Tab = 'Identity' | 'Behaviour' | 'Access' | 'Knowledge' | 'Credentials' | 'Notifications'
+type Tab = 'Identity' | 'Behaviour' | 'Access' | 'Knowledge' | 'Skills' | 'Credentials' | 'Notifications'
 type CompanyAccessLevel = 'none' | 'read' | 'write'
 type AccessFeature = 'financials' | 'reports' | 'documents' | 'marketing' | 'agents'
 
@@ -622,7 +623,7 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
       {/* Tab bar */}
       <div className="flex items-center gap-1 border-b">
-        {(['Identity', 'Behaviour', 'Access', 'Knowledge', 'Credentials', 'Notifications'] as Tab[]).map(t => (
+        {(['Identity', 'Behaviour', 'Access', 'Knowledge', 'Skills', 'Credentials', 'Notifications'] as Tab[]).map(t => (
           <button
             key={t}
             onClick={() => void handleTabChange(t)}
@@ -1294,6 +1295,11 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
             }
           </div>
         </div>
+      )}
+
+      {/* ═════ TAB: Skills ═════ */}
+      {tab === 'Skills' && (
+        <AgentSkillsPanel agentId={agentId ?? null} mode={mode} />
       )}
 
       {/* ═════ TAB: Credentials ═════ */}

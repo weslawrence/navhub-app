@@ -78,18 +78,23 @@ export async function GET(
       }
       let last = initial as RunRow
 
-      // Replay completed tool calls so the timeline isn't empty on reconnect.
-      const replayedToolKeys = new Set<string>()
+      // Replay tool calls already on disk. The runner pushes a placeholder
+      // row (output: '') the moment a tool starts and rewrites it with the
+      // real output when the tool finishes — so we track tool_start and
+      // tool_end emissions per-index separately.
+      const startedIdx = new Set<number>()
+      const endedIdx   = new Set<number>()
       const initialTools = Array.isArray(last.tool_calls) ? last.tool_calls : []
       for (let i = 0; i < initialTools.length; i++) {
-        const tc  = initialTools[i]
-        const key = `${i}:${tc.tool}`
-        replayedToolKeys.add(key)
+        const tc = initialTools[i]
         send({ type: 'tool_start', tool: tc.tool as never, input: tc.input as never })
-        send({ type: 'tool_end',   tool: tc.tool as never, output: tc.output ?? '' })
+        startedIdx.add(i)
+        if (tc.output && tc.output.length > 0) {
+          send({ type: 'tool_end', tool: tc.tool as never, output: tc.output })
+          endedIdx.add(i)
+        }
       }
-      let lastToolCount = initialTools.length
-      let lastOutput    = last.output ?? ''
+      let lastOutput = last.output ?? ''
       if (lastOutput) send({ type: 'text', content: lastOutput })
 
       // If already terminal — emit the final event and close.
@@ -104,8 +109,10 @@ export async function GET(
         send({ type: 'awaiting_input', question: last.awaiting_input_question, interaction_id: '' })
       }
 
-      // ── 2. Poll for changes every 2 seconds ──────────────────────────────
-      const POLL_MS = 2000
+      // ── 2. Poll for changes every 500ms — smooth enough that tool calls
+      //    feel live and text output streams continuously instead of in
+      //    2-second chunks. ──────────────────────────────────────────────────
+      const POLL_MS = 500
       const poll = async () => {
         if (closed) return
         const { data: row } = await admin
@@ -123,23 +130,24 @@ export async function GET(
           send({ type: 'text', content: newOutput.slice(lastOutput.length) })
           lastOutput = newOutput
         } else if (newOutput.length > lastOutput.length) {
-          // Output replaced wholesale (rare) — emit the whole thing
           send({ type: 'text', content: newOutput.slice(lastOutput.length) })
           lastOutput = newOutput
         }
 
-        // Tool call delta — emit start+end for any newly-appended entries
+        // Tool call deltas — emit tool_start when a new index appears, and
+        // tool_end the first time we see a non-empty output for that index
+        // (the runner persists '' as a placeholder when the tool starts).
         const tools = Array.isArray(r.tool_calls) ? r.tool_calls : []
-        if (tools.length > lastToolCount) {
-          for (let i = lastToolCount; i < tools.length; i++) {
-            const tc  = tools[i]
-            const key = `${i}:${tc.tool}`
-            if (replayedToolKeys.has(key)) continue
-            replayedToolKeys.add(key)
+        for (let i = 0; i < tools.length; i++) {
+          const tc = tools[i]
+          if (!startedIdx.has(i)) {
             send({ type: 'tool_start', tool: tc.tool as never, input: tc.input as never })
-            send({ type: 'tool_end',   tool: tc.tool as never, output: tc.output ?? '' })
+            startedIdx.add(i)
           }
-          lastToolCount = tools.length
+          if (!endedIdx.has(i) && tc.output && tc.output.length > 0) {
+            send({ type: 'tool_end', tool: tc.tool as never, output: tc.output })
+            endedIdx.add(i)
+          }
         }
 
         // Awaiting input — only emit on transition

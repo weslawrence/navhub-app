@@ -971,15 +971,14 @@ export default function RunStreamPage() {
                   const tier = ((run as { task_complexity?: string } | null)?.task_complexity ?? 'standard') as
                     'standard' | 'medium' | 'large' | 'massive'
                   // Per-tier warn / hard-warn thresholds.
-                  const thresholds = ({
+                  const tierThresholds: Record<string, { warn: number; hard: number; suggest: string | null }> = {
                     standard:     { warn:  20_000, hard:   60_000, suggest: 'medium'       },
                     medium:       { warn:  60_000, hard:  150_000, suggest: 'large'        },
                     large:        { warn: 120_000, hard:  250_000, suggest: 'massive'      },
                     massive:      { warn: 200_000, hard:  400_000, suggest: 'professional' },
                     professional: { warn: 400_000, hard: 1_000_000, suggest: null          },
-                  } as Record<string, { warn: number; hard: number; suggest: string | null }>)[tier] ?? {
-                    warn: 20_000, hard: 60_000, suggest: null
                   }
+                  const thresholds = tierThresholds[tier] ?? tierThresholds.standard
                   if (tokens > thresholds.hard) {
                     return (
                       <div className="text-amber-400 text-xs">

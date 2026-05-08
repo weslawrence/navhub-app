@@ -969,14 +969,14 @@ export default function RunStreamPage() {
                 </div>
                 {(() => {
                   const tier = ((run as { task_complexity?: string } | null)?.task_complexity ?? 'standard') as
-                    'standard' | 'medium' | 'large' | 'massive'
+                    'standard' | 'medium' | 'large' | 'massive' | 'professional'
                   // Per-tier warn / hard-warn thresholds.
                   const tierThresholds: Record<string, { warn: number; hard: number; suggest: string | null }> = {
-                    standard:     { warn:  20_000, hard:   60_000, suggest: 'medium'       },
-                    medium:       { warn:  60_000, hard:  150_000, suggest: 'large'        },
-                    large:        { warn: 120_000, hard:  250_000, suggest: 'massive'      },
-                    massive:      { warn: 200_000, hard:  400_000, suggest: 'professional' },
-                    professional: { warn: 400_000, hard: 1_000_000, suggest: null          },
+                    standard:     { warn:  20_000, hard:    60_000, suggest: 'medium'       },
+                    medium:       { warn:  60_000, hard:   150_000, suggest: 'large'        },
+                    large:        { warn: 120_000, hard:   250_000, suggest: 'massive'      },
+                    massive:      { warn: 200_000, hard:   400_000, suggest: 'professional' },
+                    professional: { warn: 400_000, hard: 1_000_000, suggest: null           },
                   }
                   const thresholds = tierThresholds[tier] ?? tierThresholds.standard
                   if (tokens > thresholds.hard) {
@@ -987,6 +987,16 @@ export default function RunStreamPage() {
                       </div>
                     )
                   }
+                  if (tokens > thresholds.warn) {
+                    return (
+                      <div className="text-amber-400 text-xs">
+                        ⚠️ High token usage for this tier — consider simplifying the brief or reducing enabled tools
+                      </div>
+                    )
+                  }
+                  return null
+                })()}
+              </div>
             )}
 
             {/* Error block */}

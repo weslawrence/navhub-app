@@ -348,6 +348,21 @@ function renderReportCards(toolEvents: ToolEventEntry[]) {
     })
 }
 
+// ─── Helpers ───────────────────────────────────────────────────────────────────
+
+function formatElapsed(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  if (s < 3600) {
+    const m = Math.floor(s / 60).toString().padStart(2, '0')
+    const r = (s % 60).toString().padStart(2, '0')
+    return `${m}:${r}`
+  }
+  const h = Math.floor(s / 3600).toString().padStart(2, '0')
+  const m = Math.floor((s % 3600) / 60).toString().padStart(2, '0')
+  const r = (s % 60).toString().padStart(2, '0')
+  return `${h}:${m}:${r}`
+}
+
 // ─── Run stream page ───────────────────────────────────────────────────────────
 
 export default function RunStreamPage() {
@@ -367,6 +382,12 @@ export default function RunStreamPage() {
   const [errorMsg,      setErrorMsg]      = useState<string | null>(null)
   const [loading,       setLoading]       = useState(true)
   const [durationSecs,  setDurationSecs]  = useState(0)
+  // Live elapsed-time clock — ticks every second while the run is active
+  // and freezes once the run hits a terminal status. estimatedSeconds is
+  // parsed from the agent's "⏱ Estimated time: X minutes" preamble, when
+  // present, so we can render a "~Nmin remaining" countdown.
+  const [elapsedSeconds,   setElapsedSeconds]   = useState(0)
+  const [estimatedSeconds, setEstimatedSeconds] = useState<number | null>(null)
   const [cancelConfirm,  setCancelConfirm]  = useState(false)
   const [cancelling,     setCancelling]     = useState(false)
   const [copied,         setCopied]         = useState(false)
@@ -698,6 +719,32 @@ export default function RunStreamPage() {
   const isActive  = status === 'running' || status === 'awaiting_input' || status === 'cancelling'
   const isRunning = status === 'queued' || status === 'running'
 
+  // ── Live elapsed-time clock ──────────────────────────────────────────────
+  // Ticks every second while the run is active. When the run finishes we
+  // stop the interval and pin elapsedSeconds to the recorded duration.
+  useEffect(() => {
+    if (!run?.started_at) return
+    const startMs = new Date(run.started_at).getTime()
+    const tick = () => {
+      const end = run?.completed_at ? new Date(run.completed_at).getTime() : Date.now()
+      setElapsedSeconds(Math.max(0, Math.floor((end - startMs) / 1000)))
+    }
+    tick()
+    if (!isActive) return
+    const handle = setInterval(tick, 1000)
+    return () => clearInterval(handle)
+  }, [run?.started_at, run?.completed_at, isActive])
+
+  // ── Parse "⏱ Estimated time: N minutes" from the agent's preamble ───────
+  // Anchors the countdown indicator. Re-runs on textOutput change but only
+  // sets the estimate once (so subsequent agent text doesn't reset it).
+  useEffect(() => {
+    if (estimatedSeconds !== null) return
+    if (!textOutput) return
+    const match = textOutput.match(/⏱\s*Estimated time:\s*(\d+)\s*minute/i)
+    if (match) setEstimatedSeconds(parseInt(match[1], 10) * 60)
+  }, [textOutput, estimatedSeconds])
+
   // ── Derived values for section badges ──
   const completedToolCount = toolEvents.filter(te => !te.inProgress).length
 
@@ -777,10 +824,34 @@ export default function RunStreamPage() {
             </Badge>
           )}
           {run?.started_at && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {new Date(run.started_at).toLocaleTimeString()}
-            </span>
+            <>
+              {/* Started-at clock (static) */}
+              <span className="text-xs text-muted-foreground flex items-center gap-1" title={new Date(run.started_at).toLocaleString()}>
+                <Clock className="h-3 w-3" />
+                {new Date(run.started_at).toLocaleTimeString()}
+              </span>
+              {/* Live elapsed timer — pulses while active, freezes on terminal */}
+              <span className={cn(
+                'text-xs font-mono flex items-center gap-1.5',
+                isActive ? 'text-primary' : 'text-muted-foreground',
+              )}>
+                {formatElapsed(elapsedSeconds)}
+                {isActive && (
+                  <span className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                )}
+              </span>
+              {/* Countdown from the agent's own estimate, if it gave one */}
+              {estimatedSeconds !== null && isActive && (
+                <span className="text-[11px] text-muted-foreground">
+                  {(() => {
+                    const remaining = estimatedSeconds - elapsedSeconds
+                    if (remaining > 0)  return `~${Math.ceil(remaining / 60)}min remaining`
+                    const over = Math.ceil(-remaining / 60)
+                    return `${over}min over estimate`
+                  })()}
+                </span>
+              )}
+            </>
           )}
 
           {/* Cancel button — while running or awaiting input */}

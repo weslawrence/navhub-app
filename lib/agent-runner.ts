@@ -2144,9 +2144,11 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
 
         onChunk({ type: 'tool_start', tool: toolName, input: tc.input })
 
-        // Persist a "started" placeholder so the stream-route poller can
-        // emit tool_start to clients that connect mid-run before the tool
-        // finishes. Updated to its real output below.
+        // Persist a "started" placeholder + the current_tool pointer so
+        // the stream-route poller can emit tool_start to clients that
+        // connect mid-run BEFORE the tool finishes. The placeholder is
+        // overwritten with the real output below; current_tool is cleared
+        // once the tool returns.
         toolCallLogs.push({
           tool:        toolName,
           input:       tc.input,
@@ -2155,9 +2157,12 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
           duration_ms: 0,
         })
         const placeholderIdx = toolCallLogs.length - 1
-        void admin
+        // Awaited so the poller (500 ms cadence) sees the new current_tool
+        // before the next tick — gives clients an immediate "Reading X…"
+        // indicator instead of waiting for the tool to complete.
+        await admin
           .from('agent_runs')
-          .update({ tool_calls: toolCallLogs })
+          .update({ tool_calls: toolCallLogs, current_tool: toolName })
           .eq('id', runId)
 
         let output: string
@@ -2222,10 +2227,12 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
           duration_ms: durationMs,
         }
 
-        // Incremental persist — the stream-route polling reads from here.
-        void admin
+        // Incremental persist + clear the current_tool pointer. Awaited
+        // so the next-iteration call to admin sees the cleared value and
+        // the stream poller emits tool_end before the next tool_start.
+        await admin
           .from('agent_runs')
-          .update({ tool_calls: toolCallLogs, tokens_used: totalTokens })
+          .update({ tool_calls: toolCallLogs, tokens_used: totalTokens, current_tool: null })
           .eq('id', runId)
 
         toolResults.push({

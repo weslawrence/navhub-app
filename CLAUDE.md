@@ -4893,3 +4893,86 @@ DELETE /api/agents/[id]/skills?assignment_id=... → remove agent_skills row
 
 ### Manual setup required
 - Run migration `056_skills.sql` in Supabase
+
+---
+
+## Live Run Timer + current_tool Streaming + Group-Skills Read-Only Platform List
+
+### Migration 057 — `agent_runs.current_tool`
+```sql
+ALTER TABLE agent_runs
+  ADD COLUMN IF NOT EXISTS current_tool text;
+```
+Live "what tool is running right now" pointer. The runner sets it
+immediately before invoking `executeTool()` and clears it once the tool
+returns. The stream-route poller reads it on every tick and emits
+`tool_start` the moment it changes — so the UI shows "Reading documents…"
+the second the tool starts, instead of waiting for the tool's persisted
+output to land.
+
+### Runner — `current_tool` updates around tool execution (`lib/agent-runner.ts`)
+The placeholder `tool_calls.push({ ..., output: '' })` write is now
+followed by an **awaited** update that also sets `current_tool: toolName`.
+Awaiting (rather than `void`-firing) ensures the next 500 ms stream poll
+sees the new pointer before the model spends time inside the tool.
+
+After the tool returns, the placeholder is rewritten in-place with the
+real output and the same awaited update clears `current_tool: null`.
+This guarantees `current_tool` is always either `null` or the name of the
+tool currently executing — no stale pointers across iterations.
+
+### Stream route — `current_tool` transition emit
+`/api/agents/runs/[runId]/stream/route.ts`:
+- `current_tool` added to the SELECT and the local `RunRow` type
+- New `lastCurrentTool: string | null` tracker initialised from the
+  snapshot row and replayed on connect (covers the case where a client
+  joins mid-tool before the placeholder write has even hit `tool_calls`)
+- Inside the poll body, when `r.current_tool !== lastCurrentTool` and is
+  non-null, emit `tool_start`. The expected `tool_calls` index for that
+  in-flight tool is added to `startedIdx` so the subsequent `tool_calls`
+  delta loop doesn't emit a duplicate `tool_start` when the placeholder
+  row finally lands.
+
+The combined effect: tool emissions are now driven by **two** sources —
+`current_tool` for the instant-on indicator, `tool_calls[i]` for the
+real-input + completion + replay path. Both update the same `startedIdx`
+/ `endedIdx` Sets so each tool emits exactly one `tool_start` and one
+`tool_end`.
+
+### Run detail page — live elapsed timer + estimate countdown
+`app/(dashboard)/agents/runs/[runId]/page.tsx`:
+- New `elapsedSeconds` state, ticked every 1 s by an effect anchored on
+  `run.started_at`. Stops when `isActive` flips false; when the run hits
+  a terminal state with a `completed_at` timestamp, the formula uses
+  `completed_at - started_at` so replays show the real run length.
+- New `estimatedSeconds` state, parsed once from the agent's preamble
+  via the regex `⏱\s*Estimated time:\s*(\d+)\s*minute`. Won't be reset
+  by subsequent text — captured on the first match only.
+- Top-bar timer rendered next to the started-at clock:
+  - `MM:SS` for runs under an hour, `HH:MM:SS` above
+  - Pulsing dot while active, frozen styling when terminal
+  - "~Nmin remaining" countdown shown when an estimate is available
+    and the run is still active; flips to "Nmin over estimate" once
+    elapsed > estimate
+
+### Group Skills section — admin scope clarification
+`components/settings/GroupSkillsSection.tsx`:
+- "Add Platform Skill" button removed
+- The picker modal that opened from group settings is gone
+- Only "Create Group Skill" is offered to group admins
+- Description updated: "Create skills specific to this group. Platform
+  skills are managed by NavHub administrators and applied automatically
+  to every agent."
+- Existing assigned-skills list filtered to `tier === 'group'` only
+- New read-only "Platform Skills (auto-applied)" panel at the bottom
+  shows every published platform skill with a green dot + name +
+  category, plus a one-line note that platform skills are managed by
+  NavHub administrators
+
+Platform skills continue to auto-apply to every group via the runner's
+`tier='platform' AND is_published=true` query — they never needed to
+be assigned via `group_skills`. The redundant picker simply no longer
+appears.
+
+### Manual setup required
+- Run migration `057_current_tool.sql` in Supabase

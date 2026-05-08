@@ -38,7 +38,6 @@ interface Draft {
   examples:       string
   category:       string
   tool_grants:    string[]
-  // For editing an existing group skill via a group_skills row
   assignment_id?: string
 }
 
@@ -51,7 +50,6 @@ const emptyDraft = (): Draft => ({
 export default function GroupSkillsSection({ isAdmin }: { isAdmin: boolean }) {
   const [data,    setData]    = useState<SkillsResponse['data'] | null>(null)
   const [loading, setLoading] = useState(true)
-  const [picking, setPicking] = useState(false)
   const [editing, setEditing] = useState<Draft | null>(null)
   const [busy,    setBusy]    = useState(false)
   const [toast,   setToast]   = useState<string | null>(null)
@@ -71,36 +69,17 @@ export default function GroupSkillsSection({ isAdmin }: { isAdmin: boolean }) {
     return () => clearTimeout(t)
   }, [toast])
 
-  const assigned = data?.assigned ?? []
-  const availablePlatform = data?.available_platform ?? []
+  // Group-tier skills assigned to this group — these are the ones the admin
+  // created. Platform skills are managed by NavHub super admins and apply
+  // automatically; we list them read-only at the bottom for transparency.
+  const groupAssignments = useMemo(() => {
+    return (data?.assigned ?? []).filter(a => a.skills?.tier === 'group')
+  }, [data])
 
-  const assignedById = useMemo(() => {
-    const m: Record<string, Assignment> = {}
-    for (const a of assigned) m[a.skill_id] = a
-    return m
-  }, [assigned])
-
-  async function assignPlatform(skillId: string) {
-    setBusy(true)
-    try {
-      const res = await fetch('/api/settings/skills', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ action: 'assign', skill_id: skillId }),
-      })
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}))
-        throw new Error(j.error ?? 'Assign failed')
-      }
-      setToast('Skill added')
-      setPicking(false)
-      loadAll()
-    } catch (err) {
-      setToast(err instanceof Error ? err.message : 'Assign failed')
-    } finally {
-      setBusy(false)
-    }
-  }
+  // Platform skills auto-apply to every group when published — they don't
+  // need to be assigned via group_skills. The admin API still returns the
+  // full list under available_platform so the user can see what's active.
+  const autoAppliedPlatform = data?.available_platform ?? []
 
   async function saveGroupSkill(d: Draft) {
     setBusy(true)
@@ -130,10 +109,9 @@ export default function GroupSkillsSection({ isAdmin }: { isAdmin: boolean }) {
     }
   }
 
-  async function removeAssignment(a: Assignment, purge: boolean) {
-    if (!confirm(purge ? `Delete skill "${a.skills?.name}"? This cannot be undone.` : `Remove "${a.skills?.name}" from this group?`)) return
-    const qs = purge ? '?purge_skill=true' : ''
-    await fetch(`/api/settings/skills/${a.id}${qs}`, { method: 'DELETE' })
+  async function deleteGroupSkill(a: Assignment) {
+    if (!confirm(`Delete skill "${a.skills?.name}"? This cannot be undone.`)) return
+    await fetch(`/api/settings/skills/${a.id}?purge_skill=true`, { method: 'DELETE' })
     loadAll()
   }
 
@@ -161,15 +139,12 @@ export default function GroupSkillsSection({ isAdmin }: { isAdmin: boolean }) {
           Group Skills
         </CardTitle>
         <CardDescription>
-          Skills automatically applied to every agent in this group. Add platform skills
-          or create group-specific ones.
+          Create skills specific to this group. Platform skills are managed by NavHub
+          administrators and applied automatically to every agent.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setPicking(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" /> Add Platform Skill
-          </Button>
+      <CardContent className="space-y-4">
+        <div>
           <Button size="sm" onClick={() => setEditing(emptyDraft())}>
             <Plus className="h-3.5 w-3.5 mr-1" /> Create Group Skill
           </Button>
@@ -177,69 +152,78 @@ export default function GroupSkillsSection({ isAdmin }: { isAdmin: boolean }) {
 
         {loading ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : assigned.length === 0 ? (
+        ) : groupAssignments.length === 0 ? (
           <p className="text-xs text-muted-foreground italic">
-            No skills assigned yet. Add a platform skill or create a group-specific one above.
+            No group-specific skills yet. Click <strong>Create Group Skill</strong> to add one.
           </p>
         ) : (
           <ul className="divide-y border rounded-md">
-            {assigned.map(a => {
-              const tier = a.skills?.tier ?? 'platform'
-              const tierLabel = tier === 'platform' ? 'Platform' : 'Group'
-              return (
-                <li key={a.id} className="flex items-center gap-3 px-3 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate flex items-center gap-2">
-                      {a.skills?.name ?? '(missing)'}
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${tier === 'platform' ? 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300' : 'bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300'}`}>
-                        {tierLabel}
-                      </span>
-                    </p>
-                    {a.skills?.description && (
-                      <p className="text-xs text-muted-foreground truncate">{a.skills.description}</p>
-                    )}
-                  </div>
-                  {tier === 'group' && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7 text-xs px-2"
-                      onClick={() => startEditAssignment(a)}
-                    >
-                      <Pencil className="h-3 w-3 mr-1" /> Edit
-                    </Button>
+            {groupAssignments.map(a => (
+              <li key={a.id} className="flex items-center gap-3 px-3 py-2.5">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-foreground truncate flex items-center gap-2">
+                    {a.skills?.name ?? '(missing)'}
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
+                      Group
+                    </span>
+                  </p>
+                  {a.skills?.description && (
+                    <p className="text-xs text-muted-foreground truncate">{a.skills.description}</p>
                   )}
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 text-xs px-2 text-muted-foreground hover:text-destructive"
-                    onClick={() => removeAssignment(a, tier === 'group')}
-                  >
-                    <Trash2 className="h-3 w-3 mr-1" /> Remove
-                  </Button>
-                </li>
-              )
-            })}
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs px-2"
+                  onClick={() => startEditAssignment(a)}
+                >
+                  <Pencil className="h-3 w-3 mr-1" /> Edit
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs px-2 text-muted-foreground hover:text-destructive"
+                  onClick={() => deleteGroupSkill(a)}
+                >
+                  <Trash2 className="h-3 w-3 mr-1" /> Delete
+                </Button>
+              </li>
+            ))}
           </ul>
         )}
 
-        {toast && (
-          <p className="text-xs text-muted-foreground">{toast}</p>
+        {/* Platform skills — read-only, transparency for the admin. */}
+        {autoAppliedPlatform.length > 0 && (
+          <div className="mt-4 pt-4 border-t space-y-2">
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              Platform Skills (auto-applied)
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              These platform-level skills apply to every agent in your group. They are managed
+              by NavHub administrators — contact support if you need changes.
+            </p>
+            <ul className="space-y-1">
+              {autoAppliedPlatform.map(skill => (
+                <li
+                  key={skill.id}
+                  className="flex items-center gap-2 text-xs text-muted-foreground px-2 py-1.5 rounded bg-muted/30"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-green-500 flex-shrink-0" />
+                  <span className="font-medium text-foreground">{skill.name}</span>
+                  {skill.category && (
+                    <span className="ml-auto text-[10px] uppercase tracking-wide">
+                      {skill.category}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
+
+        {toast && <p className="text-xs text-muted-foreground">{toast}</p>}
       </CardContent>
 
-      {/* Platform skill picker */}
-      {picking && (
-        <SkillPicker
-          options={availablePlatform}
-          assignedIds={Object.keys(assignedById)}
-          busy={busy}
-          onPick={assignPlatform}
-          onClose={() => setPicking(false)}
-        />
-      )}
-
-      {/* Editor */}
       {editing && (
         <SkillDraftEditor
           draft={editing}
@@ -250,65 +234,6 @@ export default function GroupSkillsSection({ isAdmin }: { isAdmin: boolean }) {
         />
       )}
     </Card>
-  )
-}
-
-function SkillPicker({
-  options, assignedIds, busy, onPick, onClose,
-}: {
-  options:     Skill[]
-  assignedIds: string[]
-  busy:        boolean
-  onPick:      (id: string) => void
-  onClose:     () => void
-}) {
-  const [search, setSearch] = useState('')
-  const list = options.filter(s => {
-    if (assignedIds.includes(s.id)) return false
-    if (!search.trim()) return true
-    const q = search.toLowerCase()
-    return s.name.toLowerCase().includes(q) || (s.category ?? '').toLowerCase().includes(q)
-  })
-
-  return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
-      <div
-        className="bg-background border rounded-lg w-full max-w-lg max-h-[80vh] overflow-y-auto"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="sticky top-0 bg-background border-b px-4 py-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold">Add Platform Skill</h3>
-          <button onClick={onClose} className="text-muted-foreground hover:text-foreground">
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="p-4 space-y-3">
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search skills…"
-            className="w-full h-9 px-3 rounded border border-input bg-background text-sm"
-          />
-          {list.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic">No platform skills available.</p>
-          ) : (
-            <ul className="divide-y border rounded">
-              {list.map(s => (
-                <li key={s.id} className="flex items-center gap-3 px-3 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">{s.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{s.description}</p>
-                  </div>
-                  <Button size="sm" disabled={busy} onClick={() => onPick(s.id)}>
-                    {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Add'}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      </div>
-    </div>
   )
 }
 

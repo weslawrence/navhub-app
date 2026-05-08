@@ -62,7 +62,7 @@ export async function GET(
       // ── 1. Initial snapshot — replay saved output + completed tool calls ──
       const { data: initial } = await admin
         .from('agent_runs')
-        .select('status, output, tool_calls, tokens_used, error_message, awaiting_input_question')
+        .select('status, output, tool_calls, tokens_used, error_message, awaiting_input_question, current_tool')
         .eq('id', params.runId)
         .single()
 
@@ -75,6 +75,7 @@ export async function GET(
         tokens_used:              number | null
         error_message:            string | null
         awaiting_input_question:  string | null
+        current_tool:             string | null
       }
       let last = initial as RunRow
 
@@ -97,6 +98,17 @@ export async function GET(
       let lastOutput = last.output ?? ''
       if (lastOutput) send({ type: 'text', content: lastOutput })
 
+      // current_tool transitions — the runner sets this immediately before
+      // executeTool() and clears it on completion. Tracking it here lets us
+      // emit a tool_start event the moment a tool begins, instead of waiting
+      // for the placeholder row to flush through tool_calls.
+      let lastCurrentTool: string | null = last.current_tool ?? null
+      if (lastCurrentTool && !startedIdx.has(initialTools.length)) {
+        // Replay an active tool that started AFTER the saved tool_calls
+        // (i.e. the placeholder row write hasn't yet been observed).
+        send({ type: 'tool_start', tool: lastCurrentTool as never, input: {} as never })
+      }
+
       // If already terminal — emit the final event and close.
       if (TERMINAL_STATUSES.has(last.status)) {
         if (last.status === 'cancelled')   send({ type: 'cancelled' })
@@ -117,7 +129,7 @@ export async function GET(
         if (closed) return
         const { data: row } = await admin
           .from('agent_runs')
-          .select('status, output, tool_calls, tokens_used, error_message, awaiting_input_question')
+          .select('status, output, tool_calls, tokens_used, error_message, awaiting_input_question, current_tool')
           .eq('id', params.runId)
           .single()
         if (closed) return
@@ -134,9 +146,26 @@ export async function GET(
           lastOutput = newOutput
         }
 
-        // Tool call deltas — emit tool_start when a new index appears, and
-        // tool_end the first time we see a non-empty output for that index
-        // (the runner persists '' as a placeholder when the tool starts).
+        // current_tool transition — emit tool_start the moment the runner
+        // writes a new tool name, even before the placeholder row lands in
+        // tool_calls. This is what kills the "Thinking…" silence at the
+        // start of long tool calls.
+        const newCurrentTool = r.current_tool ?? null
+        if (newCurrentTool && newCurrentTool !== lastCurrentTool) {
+          // Mark the index that this current_tool will land on as already
+          // started, so the tool_calls loop below doesn't emit a duplicate
+          // tool_start when the placeholder appears.
+          const expectedIdx = (Array.isArray(r.tool_calls) ? r.tool_calls.length : 0)
+          if (!startedIdx.has(expectedIdx)) {
+            send({ type: 'tool_start', tool: newCurrentTool as never, input: {} as never })
+            startedIdx.add(expectedIdx)
+          }
+        }
+        lastCurrentTool = newCurrentTool
+
+        // Tool call deltas — emit tool_start when a new index appears (only
+        // if current_tool didn't already cover it), and tool_end the first
+        // time we see a non-empty output for that index.
         const tools = Array.isArray(r.tool_calls) ? r.tool_calls : []
         for (let i = 0; i < tools.length; i++) {
           const tc = tools[i]

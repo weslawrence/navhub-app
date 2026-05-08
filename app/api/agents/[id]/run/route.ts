@@ -2,17 +2,15 @@ import { NextResponse }     from 'next/server'
 import { cookies }           from 'next/headers'
 import { createClient }      from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/admin'
-import { executeAgentRun }   from '@/lib/agent-runner'
-import type { Agent }        from '@/lib/types'
 
 export const runtime     = 'nodejs'
-export const maxDuration = 300    // 5 minutes — covers most non-massive runs
+export const maxDuration = 60
 
 // ── POST /api/agents/[id]/run ─────────────────────────────────────────────────
-// Creates an agent_run record, kicks off background execution, returns run_id.
-// The runner persists output / tool_calls / tokens incrementally to the DB.
-// The run-detail page connects to the SSE stream route which poll-replays
-// from the DB — closing the tab no longer aborts the run.
+// Creates an agent_run record in `queued` status and returns the run_id.
+// Execution is performed by /api/cron/process-queued-runs (every minute) so
+// the request lambda doesn't carry the long-running compute and risk being
+// killed mid-execution by Vercel's 300 s cap.
 
 export async function POST(
   request: Request,
@@ -113,57 +111,16 @@ export async function POST(
   const { data: run, error } = await admin
     .from('agent_runs')
     .insert(insertData)
-    .select('id, input_context')
+    .select('id')
     .single()
 
   if (error || !run) return NextResponse.json({ error: error?.message ?? 'Failed to create run' }, { status: 500 })
 
-  // ── Kick off background execution ───────────────────────────────────────
-  // Load full agent + group name so the runner has everything it needs, then
-  // fire executeAgentRun without awaiting. The runner writes incremental
-  // progress to the DB; the SSE stream route reads from there.
-  const { data: fullAgent } = await admin
-    .from('agents')
-    .select('*')
-    .eq('id', params.id)
-    .single()
-
-  const { data: group } = await admin
-    .from('groups')
-    .select('name')
-    .eq('id', activeGroupId)
-    .single()
-
-  const groupName = (group as { name: string } | null)?.name ?? 'Your Group'
-  const runId     = run.id as string
-
-  if (fullAgent) {
-    void (async () => {
-      try {
-        await executeAgentRun(
-          runId,
-          fullAgent as Agent,
-          run.input_context as Parameters<typeof executeAgentRun>[2],
-          groupName,
-          () => { /* no-op — output streamed to DB inside runner */ },
-        )
-      } catch (err) {
-        console.error(`[background-run] Run ${runId} failed:`, err)
-        await admin.from('agent_runs').update({
-          status:        'error',
-          error_message: err instanceof Error ? err.message : String(err),
-          completed_at:  new Date().toISOString(),
-        }).eq('id', runId)
-      }
-    })()
-  } else {
-    // Mark the run as failed if we couldn't reload the agent record.
-    await admin.from('agent_runs').update({
-      status:        'error',
-      error_message: 'Agent record could not be loaded for execution',
-      completed_at:  new Date().toISOString(),
-    }).eq('id', runId)
-  }
-
-  return NextResponse.json({ data: { run_id: runId } }, { status: 201 })
+  // Run stays in `status: 'queued'`. The /api/cron/process-queued-runs cron
+  // (every minute) claims it, flips it to `running` and drives execution
+  // inside the cron lambda. Vercel Pro caps lambda duration at 300 s, so
+  // doing the run inside this POST lambda risked the request being killed
+  // mid-execution and the run sitting in `running` forever (covered by the
+  // cleanup-stuck-runs cron, but with a 30-min UX delay).
+  return NextResponse.json({ data: { run_id: run.id as string } }, { status: 201 })
 }

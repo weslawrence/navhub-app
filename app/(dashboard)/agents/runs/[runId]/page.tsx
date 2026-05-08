@@ -823,6 +823,14 @@ export default function RunStreamPage() {
               Scheduled
             </Badge>
           )}
+          {/* Queued hint — runs are picked up by /api/cron/process-queued-runs
+              within a minute, so explain the wait rather than just showing a
+              silent "Queued" pill. */}
+          {status === 'queued' && (
+            <span className="text-xs text-muted-foreground italic">
+              Starting in a moment…
+            </span>
+          )}
           {run?.started_at && (
             <>
               {/* Started-at clock (static) */}

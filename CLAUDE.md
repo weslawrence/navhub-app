@@ -4976,3 +4976,60 @@ appears.
 
 ### Manual setup required
 - Run migration `057_current_tool.sql` in Supabase
+
+---
+
+## Cron-Driven Run Execution + Tier-Capped Per-Call Budget
+
+### The 300 s ceiling problem
+Vercel Pro caps every lambda at 300 s. The previous architecture fired
+`executeAgentRun` inside the POST `/api/agents/[id]/run` lambda via a
+`void` IIFE. Most runs completed in <300 s, but professional and large
+runs were getting reaped mid-execution and sitting in `running` until the
+30-min `/api/cron/cleanup-stuck-runs` job finally marked them `error`.
+
+### Tier-capped per-call budget (`MODEL_TIMEOUT_MS`)
+Updated to fit inside 300 s with margin for tool execution + DB commits:
+| Tier         | Per-call budget | Notes                                         |
+|--------------|-----------------|-----------------------------------------------|
+| professional | 240 s           | leaves ~60 s for tool execution + commit      |
+| massive      | 180 s           |                                               |
+| large        | 120 s           |                                               |
+| standard / medium | 90 s       | unchanged from prior fast-path                |
+
+Long runs that need more wall-clock complete across multiple cron
+invocations — the runner persists output / tool_calls / tokens
+incrementally so resuming doesn't lose work.
+
+### `/api/cron/process-queued-runs` (every minute)
+New cron picks the **two oldest** queued runs and drives them to
+completion inside the cron's lambda. Race condition is handled by a
+guarded UPDATE: `update({ status: 'running', started_at }).eq('status',
+'queued')` — a concurrent invocation that loses the race sees zero
+rows back and silently picks a different row next minute.
+
+The cron unifies both paths:
+- Manual runs from `POST /api/agents/[id]/run`
+- Scheduled runs created by `/api/cron/scheduled-agents`
+
+Both queue rows of the same shape (`status='queued'`); the new cron is
+the single executor. Stuck-run safety net (`/api/cron/cleanup-stuck-runs`,
+30-min cadence) still catches lambdas that get killed mid-execution.
+
+### `vercel.json`
+Added entry:
+```json
+{ "path": "/api/cron/process-queued-runs", "schedule": "* * * * *" }
+```
+
+### `POST /api/agents/[id]/run` simplified
+Just creates the row in `queued` and returns `run_id`. The void IIFE +
+agent fetch + group-name fetch are gone. `maxDuration` reduced to 60 s
+(only needs enough for the insert + immediate response).
+
+### Run-detail page — queued hint
+Runs sit in `queued` for up to ~60 s before the cron picks them up. The
+top toolbar now shows an italicised "Starting in a moment…" hint next to
+the Queued status pill so the user understands the wait. Once the cron
+flips `status` to `running` (and persists the first chunks), the live
+timer + tool timeline take over.

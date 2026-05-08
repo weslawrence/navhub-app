@@ -2007,12 +2007,18 @@ Retry once with corrected params. If a second attempt also fails, call ask_user 
       // but if the underlying socket is held open without progress those
       // abort paths can stall too.
       //
-      // Budget scales with tier — professional pre-loads a lot of context
-      // so the first chunk takes longer; massive runs are heavier all round.
+      // Vercel Pro caps function duration at 300 s. Per-call budgets must
+      // fit inside that cap with margin for tool execution + DB writes —
+      // otherwise the lambda gets killed and the run stalls in `running`
+      // until /api/cron/cleanup-stuck-runs marks it failed. Tiers scale
+      // the per-call budget; professional/massive runs that need more wall
+      // clock complete across multiple cron invocations of
+      // /api/cron/process-queued-runs (tracked separately).
       const MODEL_TIMEOUT_MS =
-        taskComplexity === 'professional' ? 15 * 60 * 1000 :  // 15 min
-        taskComplexity === 'massive'      ?  8 * 60 * 1000 :  //  8 min
-                                             4 * 60 * 1000    //  4 min default
+        taskComplexity === 'professional' ? 240_000 :  //  4 min — leaves ~60 s for tool + commit
+        taskComplexity === 'massive'      ? 180_000 :  //  3 min
+        taskComplexity === 'large'        ? 120_000 :  //  2 min
+                                             90_000    //  1.5 min default (standard / medium)
       const withTimeout = <T>(p: Promise<T>, label: string): Promise<T> =>
         Promise.race([
           p,

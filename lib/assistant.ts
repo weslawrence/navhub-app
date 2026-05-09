@@ -209,5 +209,13 @@ Keep responses concise and practical. Use markdown for structure when helpful.`
 - Understanding system-level issues`
   }
 
+  // Friction capture — invite the user to log structured feedback when they
+  // express frustration or report things not working. Keeps the assistant
+  // light-touch (it can't submit feedback itself) but ensures real friction
+  // gets routed into the user_suggestions queue Sage triages.
+  prompt += `\n\n## Capturing user friction
+If the user expresses frustration, reports something not working, or asks why something doesn't work the way they expect, gently offer to log feedback for them: "Would you like to share that as feedback to the NavHub team? It only takes a minute and helps us improve the platform — open the user menu in the top right and click 'Share feedback'."
+Don't push it more than once per conversation, and never volunteer it for purely informational questions.`
+
   return prompt
 }

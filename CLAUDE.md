@@ -5126,3 +5126,77 @@ queries `user_groups` for any row with `role='super_admin'`).
 - Run migration `058_sage.sql` in Supabase
 - The first scan can be triggered from `/admin/sage` → "Run scan now"
   or from the empty-state "Run first scan" button on the admin home
+
+---
+
+## User Suggestions & Feedback (built on `user_suggestions` from migration 058)
+
+### Capture (user-facing)
+- **`components/shared/FeedbackModal.tsx`** — three-question structured
+  modal (What were you trying to do? · What happened? · What would you
+  have wanted?). Inline modal pattern, success state, plain-textarea
+  inputs.
+- **AppShell user dropdown** — new "Share feedback" item using
+  `MessageSquarePlus` icon between Home and Change password. Mounts
+  `<FeedbackModal>` once at the bottom of AppShell so the modal is
+  available everywhere the shell is.
+- **`POST /api/feedback`** — auth required, accepts both camelCase and
+  snake_case body keys, inserts a `user_suggestions` row with
+  `status='submitted'` + the active group_id, sends a best-effort
+  acknowledgement email via Resend (failure is non-fatal — the row is
+  the source of truth).
+
+### Admin review surface
+- **`/admin/suggestions`** — full review page. Filter pills (Open /
+  Submitted / Triaged / Acknowledged / Declined / Shipped / All).
+  Per-card actions: Triage with Sage · Acknowledge · Acting · Shipped ·
+  Decline · Send response. Each card shows submitter email, group
+  name, the three feedback fields, the operator note (if any), and
+  Sage's triage block when present (disposition, reasoning, suggested
+  user response).
+- Send-response modal pre-fills the textarea with Sage's
+  `user_response` draft and lets the operator pick the resulting
+  status (acknowledged / declined / shipped) before sending.
+
+### Admin APIs
+```
+GET    /api/admin/suggestions                   → list + unread_count
+PATCH  /api/admin/suggestions/[id]              → status / operator_note
+POST   /api/admin/suggestions/[id]/triage       → Claude Haiku triage → sage_triage JSONB
+POST   /api/admin/suggestions/[id]/notify       → Resend email + bump status + record user_notified_at
+```
+All super_admin-gated via `verifySuperAdmin`. The list endpoint always
+returns a fresh `unread_count` (count of `submitted` rows, independent
+of the filter param) so the sidebar badge stays accurate.
+
+### Sage triage
+Uses **Claude Haiku 4.5** (fast + cheap — triage is a classification
+task, not analysis). Sends a structured prompt and asks for raw JSON
+back with keys: `category`, `routing`, `similar_count`,
+`existing_feature`, `related_findings`, `disposition`, `reasoning`,
+`user_response`. Strips optional `\`\`\`json` fences before parsing;
+falls back to storing the raw text under `{ raw }` if JSON is malformed.
+Validated `category` values are mirrored to the suggestion's column;
+status is bumped to `triaged`.
+
+### Sidebar nav badge
+**`components/admin/AdminFeedbackNavLink.tsx`** — client component
+inserted into the admin top-bar between Sage and Audit. Polls
+`/api/admin/suggestions?status=submitted` every 60 s for the
+`unread_count` and renders a small red pill next to the "Feedback"
+label when the count is > 0.
+
+### Assistant friction capture (`lib/assistant.ts`)
+A new "Capturing user friction" block in the assistant's system prompt
+asks the assistant to gently offer to log feedback when a user
+expresses frustration or reports something not working: "open the user
+menu in the top right and click 'Share feedback'". Light-touch — the
+assistant doesn't submit feedback itself; it points the user at the
+existing modal. Capped at one offer per conversation; never volunteered
+for purely informational questions.
+
+### Manual setup required
+- No new migration — `user_suggestions` was created in migration 058
+- `RESEND_API_KEY` + `RESEND_FROM_DOMAIN` already required for the
+  acknowledgement + response emails (feedback still saves without them
+  configured; just no email goes out)

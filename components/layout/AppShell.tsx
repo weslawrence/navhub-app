@@ -24,6 +24,7 @@ import {
   Bot,
   Plug,
   Home,
+  MessageSquarePlus,
 } from 'lucide-react'
 import { signOut } from '@/app/(auth)/actions'
 import GroupSwitcher from './GroupSwitcher'
@@ -48,6 +49,7 @@ import type { Group, UserGroup, FeatureKey, AppRole } from '@/lib/types'
 import { ADMIN_ROLES } from '@/lib/permissions'
 import CreateGroupModal from '@/components/groups/CreateGroupModal'
 import HelpMenu        from '@/components/layout/HelpMenu'
+import FeedbackModal   from '@/components/shared/FeedbackModal'
 import AssistantButton from '@/components/assistant/AssistantButton'
 
 // ============================================================
@@ -83,6 +85,7 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
   const [mobileOpen,    setMobileOpen]    = useState(false)
   const [mounted,       setMounted]       = useState(false)
   const [showCreateGrp, setShowCreateGrp] = useState(false)
+  const [showFeedback,  setShowFeedback]  = useState(false)
 
   // Derive admin status from active group membership
   const activeRole = userRole ?? (groups.find(g => g.group_id === activeGroup.id)?.role as AppRole | undefined)
@@ -433,6 +436,16 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
                 </>
               )}
 
+              {/* Share feedback — opens the structured 3-question modal */}
+              <DropdownMenuItem
+                onSelect={() => setShowFeedback(true)}
+                className="cursor-pointer text-foreground"
+              >
+                <MessageSquarePlus className="mr-2 h-4 w-4" />
+                Share feedback
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+
               <DropdownMenuItem asChild className="cursor-pointer text-foreground">
                 <Link href={`/forgot-password?email=${encodeURIComponent(user.email)}`}>
                   <KeyRound className="mr-2 h-4 w-4" />
@@ -462,6 +475,9 @@ export default function AppShell({ children, user, groups, activeGroup, visibleF
       {showCreateGrp && (
         <CreateGroupModal onClose={() => setShowCreateGrp(false)} />
       )}
+
+      {/* Feedback modal — three-question structured form */}
+      <FeedbackModal open={showFeedback} onClose={() => setShowFeedback(false)} />
 
       {/* ── Body ── */}
       <div className="flex flex-1" style={{ paddingTop: 56 + topOffset }}>

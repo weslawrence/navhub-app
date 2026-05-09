@@ -2,6 +2,7 @@ import Link     from 'next/link'
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import AssistantButton from '@/components/assistant/AssistantButton'
+import AdminFeedbackNavLink from '@/components/admin/AdminFeedbackNavLink'
 
 const NAV_LINKS = [
   { label: 'Dashboard',  href: '/admin' },
@@ -11,6 +12,7 @@ const NAV_LINKS = [
   { label: 'Agent Runs', href: '/admin/agent-runs' },
   { label: 'Skills',     href: '/admin/skills' },
   { label: 'Sage',       href: '/admin/sage' },
+  // Feedback rendered separately via AdminFeedbackNavLink for the badge
   { label: 'Audit',      href: '/admin/audit' },
   { label: 'Assistant',  href: '/admin/assistant' },
   { label: 'System',     href: '/admin/system' },
@@ -50,15 +52,22 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
         {/* Nav links */}
         <div className="flex items-center gap-0.5 text-sm flex-1 overflow-x-auto">
-          {NAV_LINKS.map(({ label, href }) => (
-            <Link
-              key={href}
-              href={href}
-              className="px-3 py-1.5 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors whitespace-nowrap"
-            >
-              {label}
-            </Link>
-          ))}
+          {NAV_LINKS.map(({ label, href }) => {
+            // Insert the live Feedback badge link between Sage and Audit so
+            // it appears in the same visual position as the other top-level
+            // entries while keeping the unread count reactive.
+            return (
+              <span key={href} className="contents">
+                {href === '/admin/audit' && <AdminFeedbackNavLink />}
+                <Link
+                  href={href}
+                  className="px-3 py-1.5 rounded text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors whitespace-nowrap"
+                >
+                  {label}
+                </Link>
+              </span>
+            )
+          })}
         </div>
 
         {/* Exit Admin */}

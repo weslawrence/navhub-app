@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { createAdminClient } from '@/lib/supabase/admin'
+import SageHomePanel from '@/components/admin/SageHomePanel'
 
 const STATUS_BADGE: Record<string, string> = {
   queued:    'bg-zinc-700 text-zinc-300',
@@ -114,6 +115,9 @@ export default async function AdminDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Sage summary panel — last completed scan + open finding counts */}
+      <SageHomePanel />
 
       {/* Platform Token Usage MTD */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">

@@ -1118,6 +1118,73 @@ export interface GroupSkill {
 }
 
 // ============================================================
+// Sage — platform intelligence agent (migration 058)
+// ============================================================
+
+export type SageScanType = 'weekly' | 'daily' | 'adhoc' | 'alert' | 'requested'
+export type SageSeverity = 'critical' | 'warning' | 'info' | 'positive'
+export type SageActionType = 'operator_can_act' | 'escalate_to_builder' | 'awareness'
+export type SageFindingStatus = 'new' | 'acknowledged' | 'acting' | 'resolved' | 'dismissed'
+export type SageFindingType =
+  'performance' | 'usage' | 'friction' | 'security' | 'feature' | 'health' | 'suggestion' | 'alert'
+
+export interface SageScan {
+  id:             string
+  scan_type:      SageScanType
+  triggered_by:   string | null
+  status:         'running' | 'complete' | 'failed'
+  findings_count: number
+  critical_count: number
+  summary:        string | null
+  focus_area:     string | null
+  period_days:    number | null
+  started_at:     string
+  completed_at:   string | null
+  error_message:  string | null
+}
+
+export interface SageFinding {
+  id:              string
+  scan_id:         string | null
+  run_id:          string | null
+  finding_type:    SageFindingType
+  severity:        SageSeverity
+  action_type:     SageActionType
+  title:           string
+  observation:     string
+  interpretation:  string
+  recommendation:  string | null
+  affected_groups: string[] | null
+  affected_count:  number | null
+  cluster_key:     string | null
+  status:          SageFindingStatus
+  dismissed_reason: string | null
+  acknowledged_by: string | null
+  acknowledged_at: string | null
+  scan_type:       SageScanType
+  period_start:    string | null
+  period_end:      string | null
+  raw_data:        Record<string, unknown> | null
+  created_at:      string
+}
+
+export interface UserSuggestion {
+  id:              string
+  group_id:        string | null
+  submitted_by:    string | null
+  what_trying:     string
+  what_happened:   string
+  what_wanted:     string
+  category:        'feature_request' | 'bug_report' | 'workflow_friction' | 'knowledge_gap' | 'other' | null
+  sage_triage:     Record<string, unknown> | null
+  status:          'submitted' | 'triaged' | 'acknowledged' | 'acting' | 'declined' | 'shipped'
+  operator_note:   string | null
+  user_notified_at: string | null
+  sage_finding_id: string | null
+  created_at:      string
+}
+
+// ============================================================
 // API response types
 // ============================================================
 

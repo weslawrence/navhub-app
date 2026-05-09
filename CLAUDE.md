@@ -5033,3 +5033,96 @@ top toolbar now shows an italicised "Starting in a moment…" hint next to
 the Queued status pill so the user understands the wait. Once the cron
 flips `status` to `running` (and persists the first chunks), the live
 timer + tool timeline take over.
+
+---
+
+## Sage — Platform Intelligence Agent (migration 058)
+
+### Purpose
+Sage is a super-admin-only analyst that reviews platform-wide patterns
+on a cadence (weekly digest, daily quick scan) and on demand (adhoc /
+focused). It emits structured findings split into three layers —
+**observation** (factual), **interpretation** (analytical),
+**recommendation** (actionable) — plus an `action_type` tag
+(`OPERATOR_CAN_ACT` / `ESCALATE_TO_BUILDER` / `AWARENESS`) so the
+operator knows whether they can act unilaterally or need to escalate.
+
+### Migration 058 — three tables
+- `sage_scans` — log of when Sage ran (`scan_type`, `status`,
+  `findings_count`, `critical_count`, `summary`, `focus_area`,
+  `period_days`, timestamps, `error_message`)
+- `sage_findings` — individual findings with the layered fields above,
+  plus `severity` (critical|warning|info|positive), `affected_count`,
+  `cluster_key`, `status` (new|acknowledged|acting|resolved|dismissed),
+  `scan_id`, `period_start/end`
+- `user_suggestions` — feedback ("what were you trying to do / what
+  happened / what would you have wanted?"). Sage triages these in the
+  `sage_triage` JSON column. Feedback UI not yet built.
+
+RLS:
+- `sage_scans` + `sage_findings` — `super_admin` only
+- `user_suggestions` — users see their own; super_admins see all
+
+### `lib/sage-runner.ts` — orchestration
+- `runSageScan(scanType, triggeredBy, periodDays, focusArea?)` —
+  inserts a `sage_scans` row in `running`, gathers data, calls Claude
+  Sonnet with a structured brief, parses `---FINDING--- … ---END_FINDING---`
+  blocks, persists findings, updates the scan row to `complete`, fires a
+  Slack alert when there are critical findings.
+- `gatherPlatformData(ctx)` — `Promise.allSettled` of 8 admin queries:
+  run stats, error runs, stuck runs (>30 min in running/queued/cancelling),
+  token usage, group activity, stale invites (>7 days unaccepted), agent
+  performance, unreviewed user suggestions.
+- `buildSageBrief(data, ctx)` — assembles the prompt with explicit format
+  rules: each finding emitted as a `---FINDING---` block with `type`,
+  `severity`, `action`, `title`, `observation`, `interpretation`,
+  `recommendation`, `affected_count`. Ends with `---SUMMARY---`.
+- `parseSageFindings()` — regex-driven parser; tolerates whitespace
+  variation, recovers from missing fields, normalises action_type.
+- `notifySageAlert()` — best-effort Slack post to the super_admin
+  group's default channel (looks up `slack_connections`). Silent on
+  failure.
+
+Sage uses `claude-sonnet-4-6`, max 8000 tokens, 240 s connect/read budget.
+
+### Cron schedules (`vercel.json`)
+| Path | Schedule | Lookback |
+|------|----------|----------|
+| `/api/cron/sage-weekly` | `0 23 * * 0` (Sun 23:00 UTC ≈ Mon 9 am AEST) | 7 days |
+| `/api/cron/sage-daily`  | `0 20 * * *` (daily 20:00 UTC ≈ 6 am AEST) | 1 day |
+
+Both routes auth via `Authorization: Bearer ${CRON_SECRET}` and just
+call `runSageScan(...)`.
+
+### API surface
+```
+POST   /api/admin/sage/scan             → adhoc / requested scan; body { scan_type, focus_area?, period_days? }
+GET    /api/admin/sage/findings         → filter by status, severity, type, action, scan_id
+PATCH  /api/admin/sage/findings/[id]    → update status; { status, dismissed_reason? }
+GET    /api/admin/sage/scans            → recent scans (default 25)
+GET    /api/admin/sage/scans/[id]       → scan + all its findings
+GET    /api/admin/sage/stats            → admin-home summary: last scan + open finding counts
+```
+
+All routes require `super_admin` role (verified via `verifySuperAdmin` —
+queries `user_groups` for any row with `role='super_admin'`).
+
+### Admin UI
+- **`/admin/sage`** — full findings page. Filter pills (Open / All /
+  Critical / Warnings / Positive / Dismissed). Each finding renders as
+  a card with severity dot + action tag + type, expandable to show
+  observation / interpretation / recommendation. Per-card actions:
+  Acknowledge · Acting · Resolve · Dismiss (with optional reason
+  prompt) · Copy. "Run scan now ▾" dropdown opens an inline form for
+  Full adhoc / Focused scan with a focus-area input + lookback days.
+- **Admin home** — new `<SageHomePanel>` between the stat cards and
+  Token Usage panel. Shows last-scan summary + finding counts (red /
+  amber / sky / emerald pills) when a scan exists, or a "Run first scan"
+  button when none does.
+- **Admin sidebar** — `Skills` · `Sage` · `Audit` (Sage inserted
+  between Skills and Audit).
+
+### Manual setup required
+- Run migration `058_sage.sql` in Supabase
+- The first scan can be triggered from `/admin/sage` → "Run scan now"
+  or from the empty-state "Run first scan" button on the admin home

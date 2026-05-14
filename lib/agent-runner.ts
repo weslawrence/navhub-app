@@ -1782,6 +1782,89 @@ export async function executeAgentRun(
       for (const t of filtered) toolDefs.push(t)
     }
 
+    // ── Agent template (migration 060) ──────────────────────────────────────
+    // When an agent was cloned from a platform template, the template's
+    // persona / instructions / platform knowledge / template-bound skills
+    // are injected here. All of it is hidden from end users — they only see
+    // the agent's own name/description on the run page, but the template's
+    // expertise drives the actual behaviour.
+    const templateId = (agent as Agent & { template_id?: string | null }).template_id ?? null
+    if (templateId) {
+      const { data: tpl } = await admin
+        .from('agent_templates')
+        .select(`
+          id, name, persona, instructions, communication_style, response_length,
+          agent_template_skills (
+            sort_order,
+            skills ( name, instructions, knowledge_text, examples, tool_grants )
+          ),
+          agent_template_knowledge (
+            sort_order,
+            platform_knowledge ( title, content )
+          )
+        `)
+        .eq('id', templateId)
+        .maybeSingle()
+
+      if (tpl) {
+        // Supabase types embedded relations widely — cast via unknown so the
+        // narrower shape we actually consume below typechecks regardless of
+        // whether the relation came back as an object or a single-row array.
+        const t = tpl as unknown as {
+          name:          string
+          persona:       string | null
+          instructions:  string | null
+          agent_template_skills?:    Array<{ sort_order: number; skills: { name: string; instructions: string; knowledge_text: string | null; examples: string | null; tool_grants: string[] | null } | null }>
+          agent_template_knowledge?: Array<{ sort_order: number; platform_knowledge: { title: string; content: string } | null }>
+        }
+
+        if (t.persona?.trim()) {
+          systemPrompt = `${t.persona.trim()}\n\n${systemPrompt}`
+        }
+        if (t.instructions?.trim()) {
+          systemPrompt += `\n\n## Core Expertise (template: ${t.name})\n${t.instructions.trim()}`
+        }
+
+        // Template-bound platform knowledge — inline content directly.
+        const knowledgeRows = (t.agent_template_knowledge ?? [])
+          .filter(k => !!k.platform_knowledge)
+          .sort((a, b) => a.sort_order - b.sort_order)
+        if (knowledgeRows.length > 0) {
+          systemPrompt += '\n\n## Platform Knowledge'
+          for (const k of knowledgeRows) {
+            const pk = k.platform_knowledge!
+            systemPrompt += `\n\n### ${pk.title}\n${pk.content}`
+          }
+        }
+
+        // Template-bound skills — same shape as loadSkillsForRun output.
+        // Tool grants are folded into the toolDefs pool below.
+        const templateSkillRows = (t.agent_template_skills ?? [])
+          .filter(s => !!s.skills)
+          .sort((a, b) => a.sort_order - b.sort_order)
+        if (templateSkillRows.length > 0) {
+          const blocks: string[] = ['## Template Skills (applied automatically)']
+          for (const s of templateSkillRows) {
+            const sk = s.skills!
+            const parts: string[] = [`### ${sk.name}`, sk.instructions]
+            if (sk.knowledge_text?.trim())  parts.push(`\n**Knowledge:**\n${sk.knowledge_text.trim()}`)
+            if (sk.examples?.trim())        parts.push(`\n**Examples:**\n${sk.examples.trim()}`)
+            blocks.push(parts.join('\n'))
+          }
+          systemPrompt += '\n\n' + blocks.join('\n\n')
+          // Pull in any tool grants the template's skills carry.
+          for (const s of templateSkillRows) {
+            for (const tg of s.skills!.tool_grants ?? []) {
+              if (toolNameAlreadyPresent(toolDefs, tg)) continue
+              if (disabledToolNames.has(tg))            continue
+              const def = ALL_TOOL_DEFS[tg]
+              if (def) toolDefs.push(def as Record<string, unknown>)
+            }
+          }
+        }
+      }
+    }
+
     // ── Skills (migration 056) ──────────────────────────────────────────────
     // Auto-injects platform → group → agent skills. Each skill contributes:
     //   • a system-prompt block (instructions + knowledge_text + reference

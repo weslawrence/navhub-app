@@ -10,7 +10,13 @@ const NAV_LINKS = [
   { label: 'Users',      href: '/admin/users' },
   { label: 'Agents',     href: '/admin/agents' },
   { label: 'Agent Runs', href: '/admin/agent-runs' },
+  // ── Intelligence cluster ────────────────────────────────────────────
+  // Templates, Skills, Knowledge and Builder are the operator's toolbox
+  // for shaping how all agents behave across the platform.
+  { label: 'Templates',  href: '/admin/templates' },
   { label: 'Skills',     href: '/admin/skills' },
+  { label: 'Knowledge',  href: '/admin/knowledge' },
+  { label: 'Builder',    href: '/admin/builder' },
   { label: 'Sage',       href: '/admin/sage' },
   // Feedback rendered separately via AdminFeedbackNavLink for the badge
   { label: 'Audit',      href: '/admin/audit' },

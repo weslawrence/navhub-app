@@ -384,8 +384,64 @@ export interface Agent {
   notify_on_output:      boolean
   notify_email:          string | null
   notify_slack_channel:  string | null
+  // FK → agent_templates.id (migration 060). Agents created from a
+  // template inherit its persona / instructions / skills / knowledge
+  // at run time. The template's content is hidden from end users.
+  template_id?:          string | null
   created_at:            string
   updated_at:            string
+}
+
+export interface AgentTemplate {
+  id:                   string
+  name:                 string
+  slug:                 string
+  category:             'legal' | 'financial' | 'marketing' | 'operations' | 'hr' | 'general' | 'technical' | 'compliance'
+  description:          string
+  summary_capabilities: string
+  avatar_preset?:       string | null
+  avatar_url?:          string | null
+  color?:               string | null
+  is_published:         boolean
+  is_featured:          boolean
+  sort_order:           number
+  use_count:            number
+  version:              number
+  created_at:           string
+  updated_at:           string
+  // Hidden from users — surface only to super_admin / runner injection
+  persona?:             string | null
+  instructions?:        string | null
+  communication_style?: string | null
+  response_length?:     string | null
+  default_tools?:       string[]
+  default_complexity?:  string
+}
+
+export interface PlatformKnowledge {
+  id:         string
+  title:      string
+  slug:       string
+  category?:  string | null
+  content:    string
+  source_url?: string | null
+  is_active:  boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentTemplateSkill {
+  id:          string
+  template_id: string
+  skill_id:    string
+  sort_order:  number
+}
+
+export interface AgentTemplateKnowledge {
+  id:            string
+  template_id:   string
+  knowledge_id:  string
+  sort_order:    number
 }
 
 export interface AgentCredential {

@@ -85,6 +85,10 @@ export async function POST(request: Request) {
       model_config_id:    typeof body.model_config_id    === 'string' ? body.model_config_id    : null,
       ai_provider:        typeof body.ai_provider        === 'string' ? body.ai_provider        : 'anthropic',
       ai_model:           typeof body.ai_model           === 'string' ? body.ai_model           : 'claude-haiku-4-5-20251001',
+      // Optional FK → agent_templates (migration 060). Set when this agent
+      // was created from a platform template; the runner injects the
+      // template's persona / instructions / skills / knowledge at run time.
+      template_id:        typeof body.template_id        === 'string' && body.template_id.trim() ? body.template_id : null,
       created_by:         session.user.id,
     })
     .select('*')

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   ArrowLeft, Check, Plus, Eye, EyeOff, Loader2, Trash2,
-  Link2, FileText, X, Upload, Pencil,
+  Link2, FileText, X, Upload, Pencil, Lock,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button }    from '@/components/ui/button'
@@ -125,6 +125,13 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
   const [notifySlack,        setNotifySlack]        = useState('')
   const [slackStatus,        setSlackStatus]        = useState<{ connected: boolean; team_name?: string }>({ connected: false })
   const [slackChannels,      setSlackChannels]      = useState<{ id: string; name: string }[]>([])
+
+  // Template inheritance (migration 060) — populated when the agent was
+  // created from an agent_templates row. The runner injects the template's
+  // persona / instructions / skills / knowledge at run time; here we just
+  // need the name so the Skills + Knowledge tabs can show a "template
+  // skills active (details hidden)" banner.
+  const [templateName, setTemplateName] = useState<string | null>(null)
 
   // Knowledge state
   const [knowledgeText,   setKnowledgeText]   = useState('')
@@ -257,6 +264,19 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
     setNotifyOnOutput(!!agJson.data?.notify_on_output)
     setNotifyEmail(agJson.data?.notify_email ?? '')
     setNotifySlack(agJson.data?.notify_slack_channel ?? '')
+
+    // Resolve template name for the inheritance banner — the template's
+    // skill + knowledge content stays hidden from users; we just surface
+    // that it's active so user-added knowledge isn't confusing.
+    const tplId = (agJson.data as { template_id?: string | null } | undefined)?.template_id
+    if (tplId) {
+      try {
+        const tplRes = await fetch('/api/agent-templates')
+        const tplJson = await tplRes.json() as { data?: Array<{ id: string; name: string }> }
+        const t = tplJson.data?.find(x => x.id === tplId)
+        if (t) setTemplateName(t.name)
+      } catch { /* non-fatal — banner just won't show */ }
+    }
     try {
       const kdRes = await fetch(`/api/agents/${agentId}/knowledge/documents`)
       if (kdRes.ok) {
@@ -915,6 +935,17 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
             </Card>
           )}
 
+          {mode === 'edit' && templateName && (
+            <div className="rounded-md border bg-muted/40 p-3 flex items-start gap-2">
+              <Lock className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">Template knowledge active</span>
+                <span> — platform knowledge attached to the &quot;{templateName}&quot; template
+                is applied automatically. Add your own knowledge below to extend it.</span>
+              </div>
+            </div>
+          )}
+
           {mode === 'edit' && (
             <>
               {/* Background Knowledge */}
@@ -1299,7 +1330,19 @@ export default function AgentForm({ mode, agentId }: AgentFormProps) {
 
       {/* ═════ TAB: Skills ═════ */}
       {tab === 'Skills' && (
-        <AgentSkillsPanel agentId={agentId ?? null} mode={mode} />
+        <div className="space-y-3">
+          {templateName && (
+            <div className="rounded-md border bg-muted/40 p-3 flex items-start gap-2">
+              <Lock className="h-3.5 w-3.5 mt-0.5 text-muted-foreground shrink-0" />
+              <div className="text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">Template skills active</span>
+                <span> — built-in expertise from the &quot;{templateName}&quot; template is
+                applied automatically. Details are hidden. Add your own skills below to extend it.</span>
+              </div>
+            </div>
+          )}
+          <AgentSkillsPanel agentId={agentId ?? null} mode={mode} />
+        </div>
       )}
 
       {/* ═════ TAB: Credentials ═════ */}

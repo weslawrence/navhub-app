@@ -5313,3 +5313,109 @@ The findings API (`/api/admin/sage/findings`) already supported
 ship — no server change needed. The refactor moves the orthogonal
 filters to the client so search + multi-filter combinations don't
 each trigger a round-trip.
+
+---
+
+## Agent Templates + Platform Knowledge + Builder Assistant
+
+### Migration 060
+Three new tables plus a join from `agents`:
+- **`agent_templates`** — pre-built configurations users clone when
+  creating their own agents. Carries both user-visible fields
+  (`name`, `description`, `summary_capabilities`, `avatar_preset`,
+  `color`, `category`) and **hidden** behaviour fields (`persona`,
+  `instructions`, `communication_style`, `response_length`,
+  `default_tools`, `default_complexity`). `is_published` /
+  `is_featured` / `sort_order` / `use_count` / `version` track
+  lifecycle.
+- **`platform_knowledge`** — shared knowledge entries (title +
+  markdown content) that templates and groups can opt into.
+- **`agent_template_skills`** / **`agent_template_knowledge`** —
+  join tables for assigning platform skills + platform knowledge
+  to templates.
+- **`agents.template_id`** — FK → `agent_templates.id`; null when
+  the agent was built from scratch.
+
+RLS: published templates + active knowledge readable by all
+authenticated users; super admins have full read/write. The
+migration seeds three featured templates (Legal Document Review
+Assistant, Financial Analyst, Report Writer).
+
+### Runner injection (`lib/agent-runner.ts`)
+A new block in `executeAgentRun` (immediately before the existing
+skills bundle) loads the template via Supabase embedded relations
+and:
+1. Prepends template `persona` to the system prompt.
+2. Appends `instructions` under `## Core Expertise (template: …)`.
+3. Inlines template-bound platform knowledge under
+   `## Platform Knowledge` (each entry as `### {title}\n{content}`).
+4. Appends template-bound skills under `## Template Skills (applied
+   automatically)` and folds their `tool_grants` into `toolDefs`
+   using the same dedupe + disabled-tool guards as the existing
+   skills loader.
+
+All of it is invisible to the end user — only the agent's own
+name / description / avatar are surfaced in the UI.
+
+### Admin Intelligence Hub
+- **`/admin/templates`** — gallery with featured strip, search,
+  category + published/draft filters. "Create Template" ships a
+  blank draft.
+- **`/admin/templates/[id]`** — full editor with Identity /
+  Behaviour (hidden from users) / Skills / Knowledge tabs.
+  Toolbar: Duplicate · Publish toggle · Save · Delete.
+- **`/admin/knowledge`** — list view with inline editor for
+  platform knowledge entries.
+- **`/admin/builder`** — Builder Assistant chat. Context tabs
+  (Templates / Skills / Knowledge) bias the system prompt; uses
+  Claude Sonnet 4.5 with the full platform catalogue inlined.
+
+### Admin APIs (super_admin gated)
+```
+GET    /api/admin/templates                          → list
+POST   /api/admin/templates                          → create blank
+GET    /api/admin/templates/[id]                     → + skill_ids + knowledge_ids
+PATCH  /api/admin/templates/[id]                     → update + replace joins
+DELETE /api/admin/templates/[id]                     → hard delete
+POST   /api/admin/templates/[id]/publish             → toggle publish
+POST   /api/admin/templates/[id]/duplicate           → clone (with joins)
+GET    /api/admin/knowledge                          → list
+POST   /api/admin/knowledge                          → create
+PATCH  /api/admin/knowledge/[id]                     → update
+DELETE /api/admin/knowledge/[id]                     → delete
+POST   /api/admin/builder                            → Claude Sonnet chat
+```
+
+Plus a public-ish route the agent-create gallery uses:
+```
+GET /api/agent-templates → published templates, user-safe fields only
+```
+The user route never returns `persona`, `instructions`,
+`communication_style` or `response_length`.
+
+### Agent create flow (`/agents/new`)
+Replaced the bare `<AgentForm mode="create" />` with a template
+gallery (featured strip + filterable grid). "Use template" POSTs to
+`/api/agents` with `template_id` + pre-filled name/description/
+avatar_color and routes to `/agents/[id]/edit?fromTemplate=1`.
+"Start from scratch" routes to `/agents/new?from=blank` which
+short-circuits the gallery and renders `<AgentForm mode="create" />`
+directly. `POST /api/agents` now persists the optional `template_id`.
+
+### Form inheritance display
+When an agent has `template_id` set, `AgentForm` resolves the name
+from `/api/agent-templates` and shows a muted lock banner at the
+top of both the **Skills** and **Knowledge** tabs:
+
+> 🔒 **Template skills active** — built-in expertise from the
+> "Financial Analyst" template is applied automatically. Details
+> are hidden. Add your own skills below to extend it.
+
+The user can still add agent-level skills + knowledge on top.
+
+### Admin sidebar
+Templates, Knowledge and Builder added to the admin top nav
+alongside Skills and Sage as a logical Intelligence cluster.
+
+### Manual setup required
+- Run migration `060_agent_templates.sql` in Supabase

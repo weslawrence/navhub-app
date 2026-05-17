@@ -84,14 +84,18 @@ export async function POST(
     // the invite_tokens table — Microsoft Safe Links / Outlook follow every
     // link in an email and would otherwise consume the OTP before the user
     // clicks. See app/api/invite/[token]/accept/route.ts.
-    const callbackUrl = `${appUrl}/auth/callback?next=/landing`
+    // Existing users go straight to /landing — they already have a
+    // password. New users (invite branch) land on /set-password?invite=true
+    // first so they can set one before entering the app.
+    const existingCallbackUrl = `${appUrl}/auth/callback?next=/landing`
+    const newUserCallbackUrl  = `${appUrl}/auth/callback?next=${encodeURIComponent('/set-password?invite=true')}`
     let rawActionLink: string | null = null
     if (existingUser) {
       isExisting = true
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
         type:    'magiclink',
         email:   invite.email as string,
-        options: { redirectTo: callbackUrl },
+        options: { redirectTo: existingCallbackUrl },
       })
       if (linkErr) console.error('[resend] generateLink (magiclink) error:', linkErr.message)
       rawActionLink = (linkData?.properties as { action_link?: string } | undefined)?.action_link ?? null
@@ -99,7 +103,7 @@ export async function POST(
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
         type:    'invite',
         email:   invite.email as string,
-        options: { redirectTo: callbackUrl, data: { group_id: params.id, role: invite.role, invited_by: session.user.id } },
+        options: { redirectTo: newUserCallbackUrl, data: { group_id: params.id, role: invite.role, invited_by: session.user.id } },
       })
       if (linkErr) console.error('[resend] generateLink (invite) error:', linkErr.message)
       rawActionLink = (linkData?.properties as { action_link?: string } | undefined)?.action_link ?? null

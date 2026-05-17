@@ -187,9 +187,14 @@ export async function POST(
     // Invite link bounces the user through /auth/callback (the PKCE
     // handler — see app/auth/callback/route.ts). That route exchanges the
     // code for a session AND claims every pending group_invites row keyed
-    // to the user's email, so we don't need to thread group_id / role
-    // through the redirect URL.
-    const redirectTo = `${appUrl}/auth/callback?next=/landing`
+    // to the user's email.
+    //
+    // For NEW users we send them to /set-password?invite=true after the
+    // callback so they can set their password before landing in the app
+    // (Supabase invite accounts have no password by default). The `next`
+    // query param's value is URL-encoded so its own `?invite=true` query
+    // string survives Supabase's redirect parsing.
+    const redirectTo = `${appUrl}/auth/callback?next=${encodeURIComponent('/set-password?invite=true')}`
 
     let signupLink = `${appUrl}/login`
     try {

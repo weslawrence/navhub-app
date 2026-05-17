@@ -50,6 +50,10 @@ export async function middleware(request: NextRequest) {
     pathname === '/access-denied'               ||
     pathname.startsWith('/api/groups/switch')   ||
     pathname.startsWith('/accept-invite')       ||
+    // New-user password-setup landing (and shared password-reset target).
+    // Reached after /auth/callback exchanges an invite OTP — at that point
+    // the user has a session but no password yet.
+    pathname.startsWith('/set-password')        ||
     // Two-step invite landing — bypasses Outlook Safe Links by serving a
     // static page; the real action_link is held server-side and only
     // returned via POST /api/invite/[token]/accept.

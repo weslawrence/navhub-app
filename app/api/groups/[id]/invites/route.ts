@@ -184,8 +184,12 @@ export async function POST(
   if (!existingUser) {
     // ── NEW user — generate signup link directly so the invite email itself
     //    contains a working "Accept invitation" button (no second email).
-    const redirectTo =
-      `${appUrl}/accept-invite?group_id=${params.id}&role=${encodeURIComponent(role)}`
+    // Invite link bounces the user through /auth/callback (the PKCE
+    // handler — see app/auth/callback/route.ts). That route exchanges the
+    // code for a session AND claims every pending group_invites row keyed
+    // to the user's email, so we don't need to thread group_id / role
+    // through the redirect URL.
+    const redirectTo = `${appUrl}/auth/callback?next=/landing`
 
     let signupLink = `${appUrl}/login`
     try {

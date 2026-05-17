@@ -75,22 +75,27 @@ export async function POST(
   let actionLink = `${appUrl}/login`
   let isExisting = false
   try {
+    // Both paths (magiclink for existing user, invite for new user) route
+    // through /auth/callback — see app/auth/callback/route.ts. That handler
+    // exchanges the PKCE code AND claims every pending group_invites row
+    // keyed to the user's email, so the URL doesn't need to carry the
+    // specific group_id / role any more.
+    const callbackUrl = `${appUrl}/auth/callback?next=/landing`
     if (existingUser) {
       isExisting = true
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
         type:    'magiclink',
         email:   invite.email as string,
-        options: { redirectTo: `${appUrl}/dashboard` },
+        options: { redirectTo: callbackUrl },
       })
       if (linkErr) console.error('[resend] generateLink (magiclink) error:', linkErr.message)
       const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
       if (action) actionLink = action
     } else {
-      const redirectTo = `${appUrl}/accept-invite?group_id=${params.id}&role=${encodeURIComponent(invite.role as string)}`
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
         type:    'invite',
         email:   invite.email as string,
-        options: { redirectTo, data: { group_id: params.id, role: invite.role, invited_by: session.user.id } },
+        options: { redirectTo: callbackUrl, data: { group_id: params.id, role: invite.role, invited_by: session.user.id } },
       })
       if (linkErr) console.error('[resend] generateLink (invite) error:', linkErr.message)
       const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link

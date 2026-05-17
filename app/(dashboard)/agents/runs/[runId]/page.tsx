@@ -567,7 +567,12 @@ export default function RunStreamPage() {
       task_complexity?:      string | null
     }
     if (r2.input_context?.extra_instructions) params.set('brief', r2.input_context.extra_instructions)
-    if (r2.run_name)                          params.set('name',  r2.run_name)
+    // Strip the "Follow-up: " prefix when re-running — the new run isn't a
+    // follow-up of itself, just another execution of the original brief.
+    if (r2.run_name) {
+      const cleanedName = r2.run_name.replace(/^Follow-up:\s*/i, '')
+      if (cleanedName) params.set('name', cleanedName)
+    }
     if (r2.output_folder_id)                  params.set('folder_id',     r2.output_folder_id)
     if (r2.output_status)                     params.set('status',        r2.output_status)
     if (r2.output_type)                       params.set('output_type',   r2.output_type)

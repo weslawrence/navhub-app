@@ -50,6 +50,11 @@ export async function middleware(request: NextRequest) {
     pathname === '/access-denied'               ||
     pathname.startsWith('/api/groups/switch')   ||
     pathname.startsWith('/accept-invite')       ||
+    // Two-step invite landing — bypasses Outlook Safe Links by serving a
+    // static page; the real action_link is held server-side and only
+    // returned via POST /api/invite/[token]/accept.
+    pathname.startsWith('/invite/')             ||
+    pathname.startsWith('/api/invite/')         ||
     // PKCE / magic-link callback — exchanges code for session, claims invites
     pathname.startsWith('/auth/')               ||
     pathname.startsWith('/api/cron/')           ||

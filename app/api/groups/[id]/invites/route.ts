@@ -202,7 +202,35 @@ export async function POST(
         console.error('[invite] generateLink (invite) error:', linkErr.message)
       }
       const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
-      if (action) signupLink = action
+      if (action) {
+        // ── Outlook / Microsoft Safe Links work-around ─────────────────────
+        // Email security scanners follow every link to check for malware,
+        // which consumes Supabase's one-time OTP before the user clicks.
+        // Store the action_link server-side and email a NavHub URL instead;
+        // the scanner gets a static page, the user clicks "Accept" which
+        // POSTs to /api/invite/[token]/accept and redirects to the real link.
+        const { data: tokenRow, error: tokenErr } = await admin
+          .from('invite_tokens')
+          .insert({
+            invite_id:   invite.id,
+            action_link: action,
+            email,
+            group_id:    params.id,
+            group_name:  groupName,
+            role,
+            full_name:   fullName || null,
+          })
+          .select('token')
+          .single()
+        if (tokenErr) {
+          console.error('[invite] invite_tokens insert error:', tokenErr.message)
+          // Fall back to the raw action_link if we can't persist (better
+          // than no link at all, but the email scanner will likely eat it).
+          signupLink = action
+        } else if (tokenRow) {
+          signupLink = `${appUrl}/invite/${(tokenRow as { token: string }).token}`
+        }
+      }
     } catch (err) {
       console.error('[invite] generateLink (invite) threw:', err instanceof Error ? err.message : String(err))
     }
@@ -275,7 +303,28 @@ export async function POST(
       })
       if (linkErr) console.error('[invite] generateLink (magiclink) error:', linkErr.message)
       const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
-      if (action) loginLink = action
+      if (action) {
+        // Same Outlook scanner workaround — see new-user branch for context.
+        const { data: tokenRow, error: tokenErr } = await admin
+          .from('invite_tokens')
+          .insert({
+            invite_id:   invite.id,
+            action_link: action,
+            email,
+            group_id:    params.id,
+            group_name:  groupName,
+            role,
+            full_name:   fullName || null,
+          })
+          .select('token')
+          .single()
+        if (tokenErr) {
+          console.error('[invite] invite_tokens insert error:', tokenErr.message)
+          loginLink = action
+        } else if (tokenRow) {
+          loginLink = `${appUrl}/invite/${(tokenRow as { token: string }).token}`
+        }
+      }
     } catch (err) {
       console.error('[invite] generateLink (magiclink) threw:', err instanceof Error ? err.message : String(err))
     }

@@ -78,9 +78,14 @@ export async function POST(
     // Both paths (magiclink for existing user, invite for new user) route
     // through /auth/callback — see app/auth/callback/route.ts. That handler
     // exchanges the PKCE code AND claims every pending group_invites row
-    // keyed to the user's email, so the URL doesn't need to carry the
-    // specific group_id / role any more.
+    // keyed to the user's email.
+    //
+    // The raw action_link is wrapped in a NavHub /invite/<token> URL via
+    // the invite_tokens table — Microsoft Safe Links / Outlook follow every
+    // link in an email and would otherwise consume the OTP before the user
+    // clicks. See app/api/invite/[token]/accept/route.ts.
     const callbackUrl = `${appUrl}/auth/callback?next=/landing`
+    let rawActionLink: string | null = null
     if (existingUser) {
       isExisting = true
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
@@ -89,8 +94,7 @@ export async function POST(
         options: { redirectTo: callbackUrl },
       })
       if (linkErr) console.error('[resend] generateLink (magiclink) error:', linkErr.message)
-      const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
-      if (action) actionLink = action
+      rawActionLink = (linkData?.properties as { action_link?: string } | undefined)?.action_link ?? null
     } else {
       const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
         type:    'invite',
@@ -98,8 +102,28 @@ export async function POST(
         options: { redirectTo: callbackUrl, data: { group_id: params.id, role: invite.role, invited_by: session.user.id } },
       })
       if (linkErr) console.error('[resend] generateLink (invite) error:', linkErr.message)
-      const action = (linkData?.properties as { action_link?: string } | undefined)?.action_link
-      if (action) actionLink = action
+      rawActionLink = (linkData?.properties as { action_link?: string } | undefined)?.action_link ?? null
+    }
+
+    if (rawActionLink) {
+      const { data: tokenRow, error: tokenErr } = await admin
+        .from('invite_tokens')
+        .insert({
+          invite_id:   params.inviteId,
+          action_link: rawActionLink,
+          email:       invite.email as string,
+          group_id:    params.id,
+          group_name:  groupName,
+          role:        invite.role as string,
+        })
+        .select('token')
+        .single()
+      if (tokenErr) {
+        console.error('[resend] invite_tokens insert error:', tokenErr.message)
+        actionLink = rawActionLink
+      } else if (tokenRow) {
+        actionLink = `${appUrl}/invite/${(tokenRow as { token: string }).token}`
+      }
     }
   } catch (err) {
     console.error('[resend] generateLink threw:', err instanceof Error ? err.message : String(err))

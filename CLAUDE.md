@@ -5419,3 +5419,79 @@ alongside Skills and Sage as a logical Intelligence cluster.
 
 ### Manual setup required
 - Run migration `060_agent_templates.sql` in Supabase
+
+---
+
+## Two-Step Invite Landing (Outlook Safe Links workaround)
+
+### The problem
+Microsoft Outlook + Safe Links and similar email security scanners follow
+every link in an email to check for malware. That fetch consumes Supabase's
+one-time invite OTP **before the user clicks**, so when the user opens the
+email and clicks Accept, they get `otp_expired`.
+
+### The shape of the fix
+The Supabase action_link is never put in the email. It's stored
+server-side, keyed to a random token, and the email contains a NavHub URL
+(`https://app.navhub.co/invite/<token>`). The page that loads is a plain
+static page with an "Accept invitation" button. The scanner fetches the
+page, sees no OTP, moves on. When the user clicks the button, the page
+POSTs `/api/invite/[token]/accept` which returns the real action_link in
+the response body — the client redirects with `window.location.href`,
+never embedding the link in HTML.
+
+### Migration 061
+```sql
+CREATE TABLE IF NOT EXISTS invite_tokens (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token       text NOT NULL UNIQUE DEFAULT gen_random_uuid()::text,
+  invite_id   uuid REFERENCES group_invites(id) ON DELETE CASCADE,
+  action_link text NOT NULL,
+  email       text NOT NULL,
+  group_id    uuid REFERENCES groups(id) ON DELETE CASCADE,
+  group_name  text NOT NULL,
+  role        text NOT NULL,
+  full_name   text,
+  used_at     timestamptz,
+  expires_at  timestamptz NOT NULL DEFAULT (now() + interval '24 hours'),
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+```
+RLS stays strict — no anon SELECT. The page + accept handler both use the
+service-role admin client.
+
+### Routes
+- **`/invite/[token]`** (server component) — fetches metadata via the
+  admin client, hands display fields to a client component. The
+  action_link is never passed to the browser.
+- **`InviteAcceptClient`** — renders Used / Expired / Accept states. The
+  Accept button POSTs to `/api/invite/[token]/accept`, then redirects via
+  `window.location.href = json.redirectUrl`. The redirect URL only exists
+  in the POST response body and the local function scope.
+- **`POST /api/invite/[token]/accept`** — the only place the action_link
+  is read. Marks the row `used_at` before returning so a stray retry
+  can't burn the OTP twice. Returns 422 for already-used / expired tokens.
+
+### Plumbing
+Both invite generators now wrap the raw `action_link` into a NavHub URL:
+- `POST /api/groups/[id]/invites` — new-user invite path AND existing-user
+  magic-link path
+- `POST /api/groups/[id]/invites/[inviteId]/resend` — same two paths
+
+Each call:
+1. `admin.auth.admin.generateLink(...)` → raw action_link
+2. Insert `invite_tokens` row { invite_id, action_link, email, group_id,
+   group_name, role, full_name? } — DEFAULT 24h expiry
+3. Email link becomes `${appUrl}/invite/<token>`
+
+If the `invite_tokens` insert fails for any reason (DB blip, migration
+not yet run), both routes fall back to emailing the raw action_link —
+better to send a scanner-vulnerable link than no link.
+
+### Middleware
+`/invite/` and `/api/invite/` added to the public-paths list so
+unauthenticated invitees can hit them without being bounced through the
+session check.
+
+### Manual setup required
+- Run migration `061_invite_tokens.sql` in Supabase

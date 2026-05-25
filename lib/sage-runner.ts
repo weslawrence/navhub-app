@@ -62,6 +62,45 @@ export async function runSageScan(
   try {
     const ctx   = { periodStart, periodEnd, scanType, focusArea }
     const data  = await gatherPlatformData(ctx)
+
+    // ── Empty-period guard ───────────────────────────────────────────────
+    // If nothing happened in the window the model has nothing to analyse
+    // and historically returned malformed output the parser couldn't handle.
+    // Short-circuit with a single informational "no activity" finding and
+    // a clean summary. Alert scans skip this — they're triggered ON activity
+    // so an empty period there is itself meaningful.
+    if (data.runs.length === 0 && scanType !== 'alert') {
+      const start = periodStart.toISOString().slice(0, 10)
+      const end   = periodEnd.toISOString().slice(0, 10)
+      const noActivitySummary =
+        `No agent runs recorded in this period (${start} to ${end}). Platform appears quiet.`
+
+      await admin.from('sage_findings').insert({
+        scan_id:        scanId,
+        scan_type:      scanType,
+        finding_type:   'health',
+        severity:       'info',
+        action_type:    'awareness',
+        title:          'No activity in this period',
+        observation:    `No agent runs were recorded between ${start} and ${end}.`,
+        interpretation: 'The platform was not used during this period, or all activity occurred outside the scan window.',
+        recommendation: null,
+        affected_count: 0,
+        period_start:   periodStart.toISOString(),
+        period_end:     periodEnd.toISOString(),
+      })
+
+      await admin.from('sage_scans').update({
+        status:         'complete',
+        findings_count: 1,
+        critical_count: 0,
+        summary:        noActivitySummary,
+        completed_at:   new Date().toISOString(),
+      }).eq('id', scanId)
+
+      return scanId
+    }
+
     const brief = buildSageBrief(data, ctx)
     const text  = await callClaudeForSage(brief)
 
@@ -69,6 +108,10 @@ export async function runSageScan(
     if (findings.length > 0) {
       const { error: insErr } = await admin.from('sage_findings').insert(findings)
       if (insErr) console.error('[sage] findings insert failed:', insErr.message)
+    } else if (text.length > 100) {
+      // Parser returned nothing but the model did respond — log it so the
+      // operator notices format drift, but don't fail the scan.
+      console.warn('[sage] Parser returned 0 findings; raw response length:', text.length)
     }
 
     const summary       = extractSageSummary(text)
@@ -109,17 +152,24 @@ interface PlatformData {
   staleInvites: Array<Record<string, unknown>>
   agentRuns:    Array<Record<string, unknown>>
   suggestions:  Array<Record<string, unknown>>
+  /** Runs in the most-recent 7 days — separate query so Sage can compare
+   *  current health against the wider period and tag stale findings as
+   *  "appears resolved" when the last failure was more than 7 days ago. */
+  recentRuns:   Array<Record<string, unknown>>
 }
 
 export async function gatherPlatformData(ctx: SageAnalysisContext): Promise<PlatformData> {
   const admin = createAdminClient()
-  const startMs = ctx.periodStart.toISOString()
-  const stuckCutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString()
-  const inviteCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const startMs       = ctx.periodStart.toISOString()
+  const stuckCutoff   = new Date(Date.now() - 30 * 60 * 1000).toISOString()
+  const inviteCutoff  = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  // Recent-window query — last 7 days regardless of the scan period.
+  const recentCutoff  = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
 
   const [
     runStats, errorRuns, stuckRuns, tokenUsage,
     groupActivity, inviteStatus, agentPerformance, userSuggestions,
+    recentRuns,
   ] = await Promise.allSettled([
     admin.from('agent_runs')
       .select('id, status, task_complexity, tokens_used, agent_id, group_id, error_message, created_at, completed_at')
@@ -149,6 +199,11 @@ export async function gatherPlatformData(ctx: SageAnalysisContext): Promise<Plat
     admin.from('user_suggestions')
       .select('id, what_trying, what_happened, what_wanted, category, group_id, created_at')
       .eq('status', 'submitted'),
+    // Recent 7-day window — used by buildSageBrief to detect whether
+    // older failures appear resolved.
+    admin.from('agent_runs')
+      .select('status, group_id, error_message, created_at')
+      .gte('created_at', recentCutoff),
   ])
 
   const settled = <T>(s: PromiseSettledResult<{ data: T[] | null }>): T[] => {
@@ -164,6 +219,7 @@ export async function gatherPlatformData(ctx: SageAnalysisContext): Promise<Plat
     staleInvites: settled(inviteStatus)     as Array<Record<string, unknown>>,
     agentRuns:    settled(agentPerformance) as Array<Record<string, unknown>>,
     suggestions:  settled(userSuggestions)  as Array<Record<string, unknown>>,
+    recentRuns:   settled(recentRuns)       as Array<Record<string, unknown>>,
   }
 }
 
@@ -172,10 +228,11 @@ export async function gatherPlatformData(ctx: SageAnalysisContext): Promise<Plat
 // ────────────────────────────────────────────────────────────────────────────
 
 export function buildSageBrief(data: PlatformData, ctx: SageAnalysisContext): string {
-  const runs        = data.runs        as Array<{ status?: string; tokens_used?: number; group_id?: string }>
-  const errorRuns   = data.errorRuns   as Array<{ id?: string; error_message?: string; group_id?: string }>
+  const runs        = data.runs        as Array<{ status?: string; tokens_used?: number; group_id?: string; created_at?: string }>
+  const errorRuns   = data.errorRuns   as Array<{ id?: string; error_message?: string; group_id?: string; created_at?: string }>
   const stuckRuns   = data.stuckRuns   as Array<{ id?: string; group_id?: string; status?: string; started_at?: string }>
   const groups      = data.groups      as Array<{ id?: string; name?: string }>
+  const recentRuns  = data.recentRuns  as Array<{ status?: string; group_id?: string; error_message?: string; created_at?: string }>
 
   // Build a group-id → name lookup so the prompt can show real names and so
   // the failure lines below carry the friendly name instead of a raw UUID
@@ -220,6 +277,24 @@ export function buildSageBrief(data: PlatformData, ctx: SageAnalysisContext): st
     .map(g => `   ${g.id} = "${g.name}"`)
     .join('\n') || '   (no groups)'
 
+  // ── Recent 7-day comparison ─────────────────────────────────────────────
+  // Tells Sage whether long-tail failures still recur. The "last failure
+  // date" lets it tag stale findings as "appears resolved" when the most
+  // recent error is >7 days old and recent runs are clean.
+  const recentTotal   = recentRuns.length
+  const recentFailed  = recentRuns.filter(r => r.status && ['error', 'failed'].includes(r.status)).length
+  const recentSuccess = recentTotal - recentFailed
+  const errorTimestamps = errorRuns
+    .map(r => r.created_at)
+    .filter((s): s is string => typeof s === 'string')
+    .sort()
+  const lastFailureDate = errorTimestamps.length > 0 ? errorTimestamps[errorTimestamps.length - 1].slice(0, 10) : null
+
+  let recentHealthLine: string
+  if (recentTotal === 0)        recentHealthLine = '— No recent activity in the last 7 days'
+  else if (recentFailed === 0)  recentHealthLine = '✓ No failures in the last 7 days — earlier issues may be resolved'
+  else                          recentHealthLine = `⚠ ${recentFailed} failure(s) in the last 7 days`
+
   return `You are performing a ${ctx.scanType} platform analysis for NavHub.
 Period: ${ctx.periodStart.toISOString().slice(0, 10)} to ${ctx.periodEnd.toISOString().slice(0, 10)} (${periodLabel})
 ${ctx.focusArea ? `Focus area: ${ctx.focusArea}` : ''}
@@ -246,6 +321,19 @@ ${stuckLines}
 - Groups: ${groups.length}
 - Stale invites (>7 days pending): ${data.staleInvites.length}
 - Unreviewed user suggestions: ${data.suggestions.length}
+
+### Recent 7-day health (within the full period above)
+- Total runs (last 7 days):     ${recentTotal}
+- Successful:                   ${recentSuccess}
+- Failed:                       ${recentFailed}
+- Last failure date in period:  ${lastFailureDate ?? '— none —'}
+${recentHealthLine}
+
+IMPORTANT: If the full-period failures cluster on dates MORE THAN 7 days
+ago AND the last 7 days show no failures, downgrade severity to WARNING
+or INFO and note the issue "appears resolved as of ${lastFailureDate ?? '[date]'}".
+Do NOT raise CRITICAL findings for issues whose most recent occurrence
+is more than a week old.
 
 ### Group ID → name map (use names in findings, never raw IDs)
 ${groupIdMap}

@@ -302,6 +302,17 @@ export default function AdminSagePage() {
               : 'Try clearing filters or broadening your search.'}
           </p>
         </div>
+      ) : visibleFindings.length === 1
+            && visibleFindings[0].finding_type === 'health'
+            && visibleFindings[0].title === 'No activity in this period' ? (
+        // Quiet-period special-case — when the runner short-circuited because
+        // there was no activity, render a soft empty state instead of the
+        // single info card.
+        <div className="rounded-lg border border-dashed border-zinc-800 p-10 text-center space-y-2">
+          <p className="text-3xl">💤</p>
+          <p className="text-sm text-zinc-300 font-medium">Quiet period</p>
+          <p className="text-xs text-zinc-500 max-w-md mx-auto">{visibleFindings[0].observation}</p>
+        </div>
       ) : (
         <div className="space-y-3">
           {visibleFindings.map(f => (

@@ -124,16 +124,10 @@ export default function DisplayTab({
 
   // ── Branding state (migration 047) ───────────────────────────────────────
   const [brandName,    setBrandName]    = useState('')
-  const [brandColor,   setBrandColor]   = useState('#6366f1')
   const [logoUrl,      setLogoUrl]      = useState<string | null>(null)
   const [brandSaving,  setBrandSaving]  = useState(false)
   const [brandToast,   setBrandToast]   = useState<string | null>(null)
   const [logoUploading, setLogoUploading] = useState(false)
-
-  // ── Max task complexity (migration 054) ──────────────────────────────────
-  const [maxTaskComplexity, setMaxTaskComplexity] = useState<'standard'|'medium'|'large'|'massive'|'professional'>('massive')
-  const [maxTaskSaving,     setMaxTaskSaving]     = useState(false)
-  const [maxTaskToast,      setMaxTaskToast]      = useState<string | null>(null)
 
   // Keep edit group name in sync with parent
   useEffect(() => { setEditGroupName(groupName) }, [groupName])
@@ -156,18 +150,12 @@ export default function DisplayTab({
         timezone?: string
         location?: string | null
         brand_name?: string | null
-        brand_color?: string | null
         logo_url?: string | null
-        max_task_complexity?: string
       } | undefined
       if (grp?.timezone)    setTimezone(grp.timezone)
       if (grp?.location)    setLocation(grp.location)
       if (grp?.brand_name)  setBrandName(grp.brand_name)
-      if (grp?.brand_color) setBrandColor(grp.brand_color)
       if (grp?.logo_url)    setLogoUrl(grp.logo_url)
-      if (grp?.max_task_complexity && ['standard','medium','large','massive','professional'].includes(grp.max_task_complexity)) {
-        setMaxTaskComplexity(grp.max_task_complexity as 'standard'|'medium'|'large'|'massive'|'professional')
-      }
     }).catch(() => {})
   }, [])
 
@@ -189,30 +177,6 @@ export default function DisplayTab({
     const t = setTimeout(() => setPaletteToast(null), 3000)
     return () => clearTimeout(t)
   }, [paletteToast])
-
-  useEffect(() => {
-    if (!maxTaskToast) return
-    const t = setTimeout(() => setMaxTaskToast(null), 3000)
-    return () => clearTimeout(t)
-  }, [maxTaskToast])
-
-  async function saveMaxTaskComplexity() {
-    if (!groupId) return
-    setMaxTaskSaving(true)
-    try {
-      const res = await fetch(`/api/groups/${groupId}`, {
-        method:  'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ max_task_complexity: maxTaskComplexity }),
-      })
-      if (res.ok) setMaxTaskToast('Saved')
-      else        setMaxTaskToast('Failed to save')
-    } catch {
-      setMaxTaskToast('Failed to save')
-    } finally {
-      setMaxTaskSaving(false)
-    }
-  }
 
   useEffect(() => {
     if (prefsStatus !== 'saved') return
@@ -299,7 +263,6 @@ export default function DisplayTab({
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           brand_name:  brandName.trim() || null,
-          brand_color: brandColor,
         }),
       })
       const json = await res.json()
@@ -536,28 +499,6 @@ export default function DisplayTab({
               </p>
             </div>
 
-            <div className="space-y-1.5">
-              <Label htmlFor="brand-color">Primary Colour</Label>
-              <div className="flex items-center gap-3">
-                <input
-                  id="brand-color"
-                  type="color"
-                  value={brandColor}
-                  onChange={e => setBrandColor(e.target.value.toLowerCase())}
-                  className="h-10 w-14 rounded border border-input cursor-pointer bg-transparent"
-                />
-                <Input
-                  value={brandColor}
-                  onChange={e => setBrandColor(e.target.value.toLowerCase())}
-                  placeholder="#6366f1"
-                  className="font-mono text-sm w-32"
-                />
-                <span className="text-xs text-muted-foreground">
-                  Used for active states, buttons, and accent elements.
-                </span>
-              </div>
-            </div>
-
             <div className="space-y-2">
               <Label>Logo</Label>
               <div className="flex items-center gap-4">
@@ -626,85 +567,44 @@ export default function DisplayTab({
         </Card>
       )}
 
-      {/* ── Max task complexity (admin only) — migration 054 ──────────────── */}
-      {isAdmin && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Maximum task size</CardTitle>
-            <CardDescription>
-              Caps the highest complexity tier users in this group can pick on the run launcher.
-              Professional tier pre-loads all linked documents directly into the agent&apos;s context.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <select
-              value={maxTaskComplexity}
-              onChange={e => setMaxTaskComplexity(e.target.value as typeof maxTaskComplexity)}
-              className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-            >
-              <option value="standard">     ☕ Medium job — stay frugal (cap)</option>
-              <option value="medium">       💪 Big job (cap)</option>
-              <option value="large">        🏋️ You&apos;ve got your work cut out (cap)</option>
-              <option value="massive">      🔥 Open the throttle (cap)</option>
-              <option value="professional"> ⚡ Professional — full capability (cap)</option>
-            </select>
-            <p className="text-xs text-muted-foreground">
-              Professional runs use ~$0.15–$0.50 per run depending on document volume —
-              far cheaper than the equivalent professional firm engagement, but materially more
-              than other tiers. Set this to <strong>massive</strong> to keep professional runs
-              gated.
-            </p>
-            <div className="flex items-center gap-2">
-              <Button size="sm" onClick={() => void saveMaxTaskComplexity()} disabled={maxTaskSaving || !groupId}>
-                {maxTaskSaving && <Loader2 className="h-3 w-3 animate-spin mr-1.5" />}
-                Save Maximum
-              </Button>
-              {maxTaskToast && (
-                <span className={cn('text-xs', maxTaskToast === 'Saved' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
-                  {maxTaskToast === 'Saved' && <Check className="h-3 w-3 inline mr-0.5" />}
-                  {maxTaskToast}
-                </span>
-              )}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* ── Colour palette (admin only) ─────────────────────────────────────── */}
+      {/* ── Brand colour / palette (admin only) ─────────────────────────────── */}
       {isAdmin && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <Palette className="h-4 w-4 text-muted-foreground" />
-              Colour Palette
+              Brand colour
             </CardTitle>
             <CardDescription>
-              Applies to all users in this group. Selecting a palette previews it immediately.
+              Choose a colour palette for your group. This sets your primary colour,
+              sidebar, buttons and accents throughout the app.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {PALETTES.map(palette => (
                 <button
                   key={palette.id}
                   type="button"
                   onClick={() => handlePaletteSelect(palette.id)}
                   className={cn(
-                    'relative p-3 rounded-lg border-2 text-left transition-all focus:outline-none',
+                    'relative flex flex-col items-center gap-1.5 rounded-lg border-2 p-2 transition-all',
                     localPaletteId === palette.id
-                      ? 'border-primary ring-1 ring-primary/30 bg-primary/5'
-                      : 'border-border hover:border-muted-foreground/50'
+                      ? 'border-primary shadow-sm'
+                      : 'border-transparent hover:border-muted-foreground/30'
                   )}
                 >
-                  <div className="flex gap-1 mb-2">
-                    <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.primary }} />
-                    <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.secondary }} />
-                    <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.accent }} />
-                    <div className="h-5 w-5 rounded shadow-sm" style={{ backgroundColor: palette.surface }} />
+                  {/* Colour swatch */}
+                  <div className="flex gap-0.5 rounded overflow-hidden w-full h-6">
+                    <div className="flex-1" style={{ backgroundColor: palette.primary }} />
+                    <div className="w-3" style={{ backgroundColor: palette.accent }} />
+                    <div className="w-3" style={{ backgroundColor: palette.surface }} />
                   </div>
-                  <p className="text-sm font-medium text-foreground">{palette.name}</p>
+                  <span className="text-[10px] text-muted-foreground">{palette.name}</span>
                   {localPaletteId === palette.id && (
-                    <Check className="absolute top-2 right-2 h-4 w-4 text-primary" />
+                    <div className="absolute top-1 right-1">
+                      <Check className="h-3 w-3 text-primary" />
+                    </div>
                   )}
                 </button>
               ))}

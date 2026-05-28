@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, XCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, XCircle, Crown, Loader2 } from 'lucide-react'
 import ImpersonateButton from '@/components/admin/ImpersonateButton'
 import GroupFormModal from '@/components/admin/GroupFormModal'
 
@@ -83,7 +83,12 @@ export default function GroupDetailPage() {
   const [loadingMem, setLoadingMem] = useState(false)
   const [loadingAct, setLoadingAct] = useState(false)
   const [showEdit,   setShowEdit]   = useState(false)
-  
+
+  // Ownership transfer state
+  const [newOwnerId,   setNewOwnerId]   = useState('')
+  const [transferring, setTransferring] = useState(false)
+  const [ownerToast,   setOwnerToast]   = useState<string | null>(null)
+
   function loadOverview() {
     setLoadingOv(true)
     fetch(`/api/admin/groups/${id}`)
@@ -92,19 +97,44 @@ export default function GroupDetailPage() {
       .finally(() => setLoadingOv(false))
   }
 
-  // Load overview on mount
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadOverview() }, [id])
+  function loadMembers() {
+    setLoadingMem(true)
+    fetch(`/api/admin/groups/${id}/members`)
+      .then(r => r.json())
+      .then(json => setMembers(json.data as MemberRow[]))
+      .finally(() => setLoadingMem(false))
+  }
 
-  // Lazy-load users + activity on tab switch
-  useEffect(() => {
-    if (activeTab === 'users' && members.length === 0 && !loadingMem) {
-      setLoadingMem(true)
-      fetch(`/api/admin/groups/${id}/members`)
-        .then(r => r.json())
-        .then(json => setMembers(json.data as MemberRow[]))
-        .finally(() => setLoadingMem(false))
+  const currentOwner = members.find(m => m.role === 'group_owner') ?? null
+
+  async function handleTransferOwnership() {
+    if (!newOwnerId) return
+    setTransferring(true)
+    try {
+      const res = await fetch(`/api/admin/groups/${id}/transfer-owner`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ new_owner_id: newOwnerId }),
+      })
+      if (!res.ok) throw new Error('Failed to transfer ownership')
+      loadMembers()
+      loadOverview()
+      setNewOwnerId('')
+      setOwnerToast('Ownership transferred successfully')
+    } catch {
+      setOwnerToast('Failed to transfer ownership')
+    } finally {
+      setTransferring(false)
+      setTimeout(() => setOwnerToast(null), 4000)
     }
+  }
+
+  // Load overview + members on mount (members back the Owner section)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadOverview(); loadMembers() }, [id])
+
+  // Lazy-load activity on tab switch
+  useEffect(() => {
     if (activeTab === 'activity' && !activity && !loadingAct) {
       setLoadingAct(true)
       fetch(`/api/admin/groups/${id}/activity`)
@@ -200,6 +230,62 @@ export default function GroupDetailPage() {
                   <p className="text-sm text-white mt-1 font-mono truncate">{value}</p>
                 </div>
               ))}
+            </div>
+          )}
+
+          {/* Owner */}
+          {group && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold text-white">Group Owner</h3>
+                <p className="text-xs text-zinc-500 mt-0.5">
+                  The owner can manage group admins. There can only be one owner per group.
+                </p>
+              </div>
+
+              {currentOwner ? (
+                <div className="flex items-center gap-2 text-sm">
+                  <Crown className="h-4 w-4 text-amber-500" />
+                  <span className="font-medium text-white">{currentOwner.email}</span>
+                  <span className="text-xs text-zinc-500">(current owner)</span>
+                </div>
+              ) : (
+                <p className="text-sm text-zinc-500">No owner assigned yet.</p>
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-xs text-zinc-400">Transfer ownership to</label>
+                <select
+                  value={newOwnerId}
+                  onChange={e => setNewOwnerId(e.target.value)}
+                  className="w-full h-9 rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm text-white"
+                >
+                  <option value="">— Select a member —</option>
+                  {members
+                    .filter(m => m.role !== 'super_admin' && m.user_id !== currentOwner?.user_id)
+                    .map(m => (
+                      <option key={m.user_id} value={m.user_id}>
+                        {m.email} ({m.role.replace('_', ' ')})
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  disabled={!newOwnerId || transferring}
+                  onClick={() => void handleTransferOwnership()}
+                  className="inline-flex items-center text-xs text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {transferring ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                  Transfer ownership
+                </button>
+                {ownerToast && (
+                  <span className={ownerToast.startsWith('Failed') ? 'text-xs text-red-400' : 'text-xs text-green-400'}>
+                    {ownerToast}
+                  </span>
+                )}
+              </div>
             </div>
           )}
 

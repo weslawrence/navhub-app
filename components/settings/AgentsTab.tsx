@@ -15,7 +15,7 @@ import { cn }     from '@/lib/utils'
 import type {
   CustomTool, ToolParameter,
   GroupModelConfig, GroupAgentKnowledge, GroupAgentKnowledgeDocument,
-  KnowledgeLink,
+  KnowledgeLink, TaskComplexity,
 } from '@/lib/types'
 import DocumentPickerModal from '@/components/agents/DocumentPickerModal'
 import BulkLinkAdder, { type BulkAddedLink } from '@/components/shared/BulkLinkAdder'
@@ -1228,6 +1228,12 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
   const [editingModel,         setEditingModel]         = useState<EditableModelConfig | null>(null)
   const [deleteModelConfirm,   setDeleteModelConfirm]   = useState<string | null>(null)
 
+  // Group + max task complexity state
+  const [groupId,             setGroupId]             = useState<string | null>(null)
+  const [maxTaskComplexity,   setMaxTaskComplexity]   = useState<TaskComplexity>('massive')
+  const [savingMaxComplexity, setSavingMaxComplexity] = useState(false)
+  const [maxComplexityToast,  setMaxComplexityToast]  = useState<string | null>(null)
+
   const loadAll = useCallback(async () => {
     setLoading(true)
     try {
@@ -1236,10 +1242,17 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
         fetch('/api/settings/custom-tools'),
         fetch('/api/settings/model-configs'),
       ])
-      const grJson = await grRes.json() as { data?: { group?: { id?: string; web_search_enabled?: boolean } } }
+      const grJson = await grRes.json() as {
+        data?: { group?: { id?: string; web_search_enabled?: boolean; max_task_complexity?: string } }
+      }
       const ctJson = await ctRes.json() as { data?: CustomTool[] }
       const mcJson = await mcRes.json() as { data?: GroupModelConfig[] }
       setWebSearchEnabled(!!grJson.data?.group?.web_search_enabled)
+      setGroupId(grJson.data?.group?.id ?? null)
+      const cap = grJson.data?.group?.max_task_complexity
+      if (cap && ['standard', 'medium', 'large', 'massive', 'professional'].includes(cap)) {
+        setMaxTaskComplexity(cap as TaskComplexity)
+      }
       setCustomTools(ctJson.data ?? [])
       setModelConfigs(mcJson.data ?? [])
     } finally {
@@ -1248,6 +1261,29 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
   }, [])
 
   useEffect(() => { void loadAll() }, [loadAll])
+
+  useEffect(() => {
+    if (!maxComplexityToast) return
+    const t = setTimeout(() => setMaxComplexityToast(null), 3000)
+    return () => clearTimeout(t)
+  }, [maxComplexityToast])
+
+  async function handleSaveMaxComplexity() {
+    if (!groupId) return
+    setSavingMaxComplexity(true)
+    try {
+      const res = await fetch(`/api/groups/${groupId}`, {
+        method:  'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ max_task_complexity: maxTaskComplexity }),
+      })
+      setMaxComplexityToast(res.ok ? 'Saved' : 'Failed to save')
+    } catch {
+      setMaxComplexityToast('Failed to save')
+    } finally {
+      setSavingMaxComplexity(false)
+    }
+  }
 
   async function toggleWebSearch(next: boolean) {
     setSavingWebSearch(true)
@@ -1344,6 +1380,48 @@ export default function AgentsTab({ isAdmin }: AgentsTabProps) {
 
       {/* ── Section 0: Provider API Keys (replaces Model Configurations) ── */}
       <ProviderKeysPanel isAdmin={isAdmin} />
+
+      {/* ── Maximum task size (migration 054) ── */}
+      {isAdmin && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Maximum task size</CardTitle>
+            <CardDescription>
+              Controls the highest complexity tier users can select when running agents.
+              Professional tier pre-loads all documents into context for maximum capability.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <select
+              value={maxTaskComplexity}
+              onChange={e => setMaxTaskComplexity(e.target.value as TaskComplexity)}
+              className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
+            >
+              <option value="standard">☕ Medium job — stay frugal (max)</option>
+              <option value="medium">💪 Big job — conserve where you can (max)</option>
+              <option value="large">🏋️ You&apos;ve got your work cut out (max)</option>
+              <option value="massive">🔥 Open the throttle (max)</option>
+              <option value="professional">⚡ Professional — full capability (max)</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Professional runs use ~$0.15–$0.50 per run depending on document volume.
+              Set this to <strong>massive</strong> to keep professional runs gated.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button size="sm" onClick={() => void handleSaveMaxComplexity()} disabled={savingMaxComplexity || !groupId}>
+                {savingMaxComplexity ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                Save
+              </Button>
+              {maxComplexityToast && (
+                <span className={cn('text-xs', maxComplexityToast === 'Saved' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                  {maxComplexityToast === 'Saved' && <CheckCircle2 className="h-3 w-3 inline mr-0.5" />}
+                  {maxComplexityToast}
+                </span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* ── Group Skills (migration 056) ── */}
       <GroupSkillsSection isAdmin={isAdmin} />

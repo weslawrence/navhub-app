@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useMemo } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import ImpersonateButton from '@/components/admin/ImpersonateButton'
 import GroupFormModal from '@/components/admin/GroupFormModal'
@@ -48,6 +49,7 @@ function fmtDate(s: string | null) {
 }
 
 export default function AdminGroupsPage() {
+  const router = useRouter()
   const [groups,    setGroups]    = useState<AdminGroup[]>([])
   const [search,    setSearch]    = useState('')
   const [loading,   setLoading]   = useState(true)
@@ -154,7 +156,11 @@ export default function AdminGroupsPage() {
               </tr>
             )}
             {filtered.map(g => (
-              <tr key={g.id} className={`hover:bg-zinc-800/40 transition-colors ${!g.is_active ? 'opacity-60' : ''}`}>
+              <tr
+                key={g.id}
+                onClick={() => router.push(`/admin/groups/${g.id}`)}
+                className={`hover:bg-zinc-800/50 cursor-pointer transition-colors ${!g.is_active ? 'opacity-60' : ''}`}
+              >
                 <td className="px-5 py-3">
                   <p className="font-medium text-white">{g.name}</p>
                   {g.slug && <p className="text-[11px] text-zinc-500 font-mono">{g.slug}</p>}
@@ -178,7 +184,7 @@ export default function AdminGroupsPage() {
                     {g.is_active ? 'Active' : 'Inactive'}
                   </span>
                 </td>
-                <td className="px-5 py-3">
+                <td className="px-5 py-3" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center gap-1.5 justify-end flex-wrap">
                     <Link
                       href={`/admin/groups/${g.id}`}
@@ -187,14 +193,14 @@ export default function AdminGroupsPage() {
                       View
                     </Link>
                     <button
-                      onClick={() => { setEditGroup(g); setShowModal(true) }}
+                      onClick={(e) => { e.stopPropagation(); setEditGroup(g); setShowModal(true) }}
                       className="text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-2 py-1 rounded transition-colors"
                     >
                       Edit
                     </button>
                     <ImpersonateButton groupId={g.id} groupName={g.name} />
                     <button
-                      onClick={() => setConfirm({ id: g.id, name: g.name, active: g.is_active })}
+                      onClick={(e) => { e.stopPropagation(); setConfirm({ id: g.id, name: g.name, active: g.is_active }) }}
                       className={`text-xs border px-2 py-1 rounded transition-colors ${
                         g.is_active
                           ? 'text-red-400 border-red-900/50 hover:border-red-500'

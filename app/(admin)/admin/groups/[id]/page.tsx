@@ -31,7 +31,7 @@ interface GroupMember {
   user_id:    string
   email:      string
   role:       string
-  created_at: string
+  created_at: string | null
 }
 
 interface GroupRun {
@@ -287,7 +287,7 @@ export default function AdminGroupDetailPage() {
                         </span>
                       </td>
                       <td className="px-4 py-2.5 text-muted-foreground text-xs">
-                        {new Date(m.created_at).toLocaleDateString('en-AU')}
+                        {m.created_at ? new Date(m.created_at).toLocaleDateString('en-AU') : '—'}
                       </td>
                     </tr>
                   ))}

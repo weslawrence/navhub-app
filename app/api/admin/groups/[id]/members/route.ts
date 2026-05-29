@@ -17,32 +17,35 @@ export async function GET(
     .from('user_groups').select('role').eq('user_id', session.user.id).eq('role', 'super_admin')
   if (!sa || sa.length === 0) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
+  // NOTE: user_groups has NO created_at column (see migration 062). Selecting or
+  // ordering by it makes the query fail and return null → empty members list.
   const { data: memberships } = await admin
     .from('user_groups')
-    .select('user_id, role, is_default, created_at')
+    .select('user_id, role, is_default')
     .eq('group_id', params.id)
-    .order('created_at')
 
   if (!memberships || memberships.length === 0) return NextResponse.json({ data: [] })
 
-  // Enrich with auth emails in parallel
+  // Enrich with auth emails in parallel; use the auth account creation date as a
+  // best-effort "joined" timestamp since user_groups itself has no timestamp.
   const enriched = await Promise.all(
-    (memberships as Array<{ user_id: string; role: string; is_default: boolean; created_at: string }>).map(async (m) => {
+    (memberships as Array<{ user_id: string; role: string; is_default: boolean }>).map(async (m) => {
       try {
         const { data: user } = await admin.auth.admin.getUserById(m.user_id)
+        const accountCreated = user?.user?.created_at ?? null
         return {
           user_id:         m.user_id,
           email:           user?.user?.email ?? m.user_id,
           role:            m.role,
           is_default:      m.is_default,
-          joined_at:       m.created_at,
-          created_at:      m.created_at,
+          joined_at:       accountCreated,
+          created_at:      accountCreated,
           last_sign_in_at: user?.user?.last_sign_in_at ?? null,
         }
       } catch {
         return {
           user_id: m.user_id, email: m.user_id, role: m.role,
-          is_default: m.is_default, joined_at: m.created_at, created_at: m.created_at, last_sign_in_at: null,
+          is_default: m.is_default, joined_at: null, created_at: null, last_sign_in_at: null,
         }
       }
     })

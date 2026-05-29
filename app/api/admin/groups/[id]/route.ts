@@ -27,7 +27,7 @@ export async function GET(
 
   const { data: group } = await admin
     .from('groups')
-    .select('id, name, slug, palette_id, created_at, subscription_tier, token_usage_mtd, token_limit_mtd, is_active, owner_id')
+    .select('id, name, slug, palette_id, created_at, subscription_tier, token_usage_mtd, token_limit_mtd, is_active, owner_id, owner_user_id, timezone, max_task_complexity')
     .eq('id', groupId)
     .single()
 

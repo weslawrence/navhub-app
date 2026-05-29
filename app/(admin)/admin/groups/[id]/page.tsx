@@ -1,490 +1,424 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import Link from 'next/link'
-import { useParams } from 'next/navigation'
-import { ArrowLeft, CheckCircle2, XCircle, Crown, Loader2 } from 'lucide-react'
-import ImpersonateButton from '@/components/admin/ImpersonateButton'
-import GroupFormModal from '@/components/admin/GroupFormModal'
+import { useEffect, useState, useCallback } from 'react'
+import { useParams, useRouter }              from 'next/navigation'
+import Link                                  from 'next/link'
+import {
+  Crown, AlertTriangle, Loader2, ArrowLeft,
+} from 'lucide-react'
+import { Button }          from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Label }           from '@/components/ui/label'
+import { cn }              from '@/lib/utils'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+const ROLE_LABELS: Record<string, string> = {
+  super_admin:  'Super Admin',
+  group_owner:  'Owner',
+  group_admin:  'Group Admin',
+  manager:      'Manager',
+  viewer:       'Viewer',
+}
+
+const COMPLEXITY_LABELS: Record<string, string> = {
+  standard:     '☕ Standard',
+  medium:       '💪 Medium',
+  large:        '🏋️ Large',
+  massive:      '🔥 Massive',
+  professional: '⚡ Professional',
+}
+
+interface GroupMember {
+  user_id:    string
+  email:      string
+  role:       string
+  created_at: string
+}
+
+interface GroupRun {
+  id:          string
+  run_name:    string | null
+  status:      string
+  tokens_used: number | null
+  created_at:  string
+  agent_name:  string
+}
 
 interface GroupDetail {
-  id: string; name: string; slug: string | null; palette_id: string | null; created_at: string
-  subscription_tier: string; token_usage_mtd: number; token_limit_mtd: number
-  is_active: boolean; owner_id: string | null
-}
-interface CompanyRow {
-  id: string; name: string; is_active: boolean
-  division_count: number; has_xero: boolean; last_synced_at: string | null
-}
-interface MemberRow {
-  user_id: string; email: string; role: string; is_default: boolean
-  joined_at: string; last_sign_in_at: string | null
-}
-interface RunRow {
-  id: string; status: string; created_at: string; agent_name: string | null
-  tokens_used: number | null; completed_at: string | null; started_at: string | null
-}
-interface ReportRow { id: string; name: string; created_at: string }
-interface DocRow    { id: string; title: string; document_type: string; created_at: string }
-interface SnapshotRow { id: string; name: string; created_at: string; company_id: string }
-
-interface GroupDetailData {
-  group:        GroupDetail
-  companies:    CompanyRow[]
-  storage_files: { bucket: string; count: number }[]
+  id:                  string
+  name:                string
+  is_active:           boolean
+  created_at:          string
+  timezone:            string | null
+  max_task_complexity: string | null
+  palette_id:          string | null
+  owner_user_id:       string | null
 }
 
-const STATUS_BADGE: Record<string, string> = {
-  queued:    'bg-zinc-700 text-zinc-300',
-  running:   'bg-blue-900 text-blue-300',
-  success:   'bg-green-900 text-green-300',
-  error:     'bg-red-900 text-red-300',
-  cancelled: 'bg-amber-900 text-amber-300',
-}
+export default function AdminGroupDetailPage() {
+  const params = useParams<{ id: string }>()
+  const router = useRouter()
 
-const TIER_BADGE: Record<string, string> = {
-  starter:    'bg-zinc-700 text-zinc-300',
-  pro:        'bg-blue-900/60 text-blue-300',
-  enterprise: 'bg-amber-900/60 text-amber-300',
-}
+  const [group,   setGroup]   = useState<GroupDetail | null>(null)
+  const [members, setMembers] = useState<GroupMember[]>([])
+  const [runs,    setRuns]    = useState<GroupRun[]>([])
+  const [loading, setLoading] = useState(true)
+  const [tab,     setTab]     = useState<'overview' | 'members' | 'runs'>('overview')
 
-function TokenBar({ used, limit }: { used: number; limit: number }) {
-  const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0
-  const colour = pct >= 90 ? 'bg-red-500' : pct >= 70 ? 'bg-amber-500' : 'bg-green-500'
-  return (
-    <div className="flex items-center gap-2 flex-1">
-      <div className="flex-1 h-2 bg-zinc-700 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${colour}`} style={{ width: `${pct}%` }} />
-      </div>
-      <span className={`text-xs font-mono shrink-0 ${pct >= 90 ? 'text-red-400' : pct >= 70 ? 'text-amber-400' : 'text-zinc-400'}`}>
-        {(used / 1000).toFixed(0)}k / {(limit / 1000000).toFixed(1)}M ({pct.toFixed(0)}%)
-      </span>
-    </div>
-  )
-}
+  // Transfer ownership state
+  const [showTransferDialog,   setShowTransferDialog]   = useState(false)
+  const [transferToId,         setTransferToId]         = useState('')
+  const [transferConfirmText,  setTransferConfirmText]  = useState('')
+  const [transferring,         setTransferring]         = useState(false)
+  const [transferError,        setTransferError]        = useState<string | null>(null)
 
-function fmtDate(s: string | null) {
-  if (!s) return '—'
-  return new Date(s).toLocaleString('en-AU', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-}
+  const currentOwner = members.find(m => m.role === 'group_owner')
 
-export default function GroupDetailPage() {
-  const { id } = useParams<{ id: string }>()
+  const loadGroup = useCallback(async () => {
+    const res  = await fetch(`/api/admin/groups/${params.id}`)
+    const json = await res.json()
+    // GET route returns { data: { group, companies, storage_files } }
+    setGroup((json.data?.group ?? json.data) ?? null)
+  }, [params.id])
 
-  const [activeTab,  setActiveTab]  = useState<'overview' | 'users' | 'activity'>('overview')
-  const [overview,   setOverview]   = useState<GroupDetailData | null>(null)
-  const [members,    setMembers]    = useState<MemberRow[]>([])
-  const [activity,   setActivity]   = useState<{
-    runs: RunRow[]; reports: ReportRow[]; documents: DocRow[]; snapshots: SnapshotRow[]
-  } | null>(null)
-  const [loadingOv,  setLoadingOv]  = useState(true)
-  const [loadingMem, setLoadingMem] = useState(false)
-  const [loadingAct, setLoadingAct] = useState(false)
-  const [showEdit,   setShowEdit]   = useState(false)
+  const loadMembers = useCallback(async () => {
+    const res  = await fetch(`/api/admin/groups/${params.id}/members`)
+    const json = await res.json()
+    setMembers(json.data ?? [])
+  }, [params.id])
 
-  // Ownership transfer state
-  const [newOwnerId,   setNewOwnerId]   = useState('')
-  const [transferring, setTransferring] = useState(false)
-  const [ownerToast,   setOwnerToast]   = useState<string | null>(null)
+  const loadRuns = useCallback(async () => {
+    const res  = await fetch(`/api/admin/groups/${params.id}/runs?limit=20`)
+    const json = await res.json()
+    setRuns(json.data ?? [])
+  }, [params.id])
 
-  function loadOverview() {
-    setLoadingOv(true)
-    fetch(`/api/admin/groups/${id}`)
-      .then(r => r.json())
-      .then(json => setOverview(json.data as GroupDetailData))
-      .finally(() => setLoadingOv(false))
-  }
-
-  function loadMembers() {
-    setLoadingMem(true)
-    fetch(`/api/admin/groups/${id}/members`)
-      .then(r => r.json())
-      .then(json => setMembers(json.data as MemberRow[]))
-      .finally(() => setLoadingMem(false))
-  }
-
-  const currentOwner = members.find(m => m.role === 'group_owner') ?? null
+  useEffect(() => {
+    setLoading(true)
+    Promise.all([loadGroup(), loadMembers(), loadRuns()])
+      .finally(() => setLoading(false))
+  }, [loadGroup, loadMembers, loadRuns])
 
   async function handleTransferOwnership() {
-    if (!newOwnerId) return
+    if (!transferToId || transferConfirmText !== group?.name) return
     setTransferring(true)
+    setTransferError(null)
     try {
-      const res = await fetch(`/api/admin/groups/${id}/transfer-owner`, {
+      const res = await fetch(`/api/admin/groups/${params.id}/transfer-owner`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ new_owner_id: newOwnerId }),
+        body:    JSON.stringify({ new_owner_id: transferToId }),
       })
-      if (!res.ok) throw new Error('Failed to transfer ownership')
-      loadMembers()
-      loadOverview()
-      setNewOwnerId('')
-      setOwnerToast('Ownership transferred successfully')
-    } catch {
-      setOwnerToast('Failed to transfer ownership')
+      if (!res.ok) {
+        const json = await res.json()
+        throw new Error(json.error ?? 'Transfer failed')
+      }
+      await Promise.all([loadGroup(), loadMembers()])
+      setShowTransferDialog(false)
+      setTransferToId('')
+      setTransferConfirmText('')
+    } catch (err) {
+      setTransferError(err instanceof Error ? err.message : 'Transfer failed')
     } finally {
       setTransferring(false)
-      setTimeout(() => setOwnerToast(null), 4000)
     }
   }
 
-  // Load overview + members on mount (members back the Owner section)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadOverview(); loadMembers() }, [id])
+  if (loading) return (
+    <div className="flex items-center justify-center h-48">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  )
 
-  // Lazy-load activity on tab switch
-  useEffect(() => {
-    if (activeTab === 'activity' && !activity && !loadingAct) {
-      setLoadingAct(true)
-      fetch(`/api/admin/groups/${id}/activity`)
-        .then(r => r.json())
-        .then(json => setActivity(json.data as typeof activity))
-        .finally(() => setLoadingAct(false))
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab])
-
-  const group = overview?.group
+  if (!group) return (
+    <div className="p-6 text-sm text-muted-foreground">Group not found.</div>
+  )
 
   return (
-    <div className="p-6 space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6 p-6">
       {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex items-start gap-3">
-          <Link href="/admin/groups" className="mt-1 text-zinc-500 hover:text-white transition-colors">
-            <ArrowLeft className="h-4 w-4" />
+      <div className="flex items-start justify-between">
+        <div className="space-y-1">
+          <Link href="/admin/groups" className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground mb-2">
+            <ArrowLeft className="h-3.5 w-3.5" /> Back to groups
           </Link>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold text-white">{group?.name ?? '…'}</h1>
-              {group && (
-                <span className={`text-[11px] px-2 py-0.5 rounded-full capitalize ${TIER_BADGE[group.subscription_tier] ?? TIER_BADGE.starter}`}>
-                  {group.subscription_tier}
-                </span>
-              )}
-              {group && !group.is_active && (
-                <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-400">Inactive</span>
-              )}
-            </div>
-            <p className="text-zinc-400 text-sm mt-0.5 font-mono">{id}</p>
-          </div>
+          <h1 className="text-xl font-semibold">{group.name}</h1>
+          <p className="text-xs text-muted-foreground">
+            ID: {group.id.slice(0, 8)} · Created {new Date(group.created_at).toLocaleDateString('en-AU')}
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {group && (
-            <button
-              onClick={() => setShowEdit(true)}
-              className="text-xs text-zinc-400 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1.5 rounded transition-colors"
-            >
-              Edit Group
-            </button>
-          )}
-          {group && <ImpersonateButton groupId={group.id} groupName={group.name} />}
+          <span className={cn(
+            'text-xs px-2 py-1 rounded-full font-medium',
+            group.is_active
+              ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+              : 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+          )}>
+            {group.is_active ? '● Active' : '● Inactive'}
+          </span>
         </div>
       </div>
 
-      {/* Token usage bar */}
-      {group && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-lg px-5 py-3 flex items-center gap-4">
-          <span className="text-xs text-zinc-500 uppercase tracking-wide shrink-0">Token Usage MTD</span>
-          <TokenBar used={group.token_usage_mtd} limit={group.token_limit_mtd} />
-        </div>
-      )}
-
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-zinc-800">
-        {(['overview', 'users', 'activity'] as const).map(tab => (
+      <div className="flex gap-1 border-b">
+        {(['overview', 'members', 'runs'] as const).map(t => (
           <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium capitalize transition-colors -mb-px border-b-2 ${
-              activeTab === tab
-                ? 'border-amber-500 text-amber-400'
-                : 'border-transparent text-zinc-500 hover:text-white'
-            }`}
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn(
+              'px-4 py-2 text-sm capitalize border-b-2 -mb-px transition-colors',
+              tab === t
+                ? 'border-primary text-primary font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
           >
-            {tab}
+            {t}
+            {t === 'members' && members.length > 0 && (
+              <span className="ml-1.5 text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded-full">
+                {members.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {/* ── Overview Tab ── */}
-      {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {loadingOv && <p className="text-zinc-500 text-sm">Loading…</p>}
-
-          {group && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[
-                ['Name',         group.name],
-                ['Slug',         group.slug ?? '—'],
-                ['Palette',      group.palette_id ?? '—'],
-                ['Created',      fmtDate(group.created_at)],
-                ['Tier',         group.subscription_tier],
-                ['Token Limit',  `${(group.token_limit_mtd / 1000000).toFixed(1)}M / mo`],
-                ['Status',       group.is_active ? 'Active' : 'Inactive'],
-                ['Owner ID',     group.owner_id ? group.owner_id.slice(0, 8) + '…' : '—'],
-              ].map(([label, value]) => (
-                <div key={label} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
-                  <p className="text-xs text-zinc-500 uppercase tracking-wide">{label}</p>
-                  <p className="text-sm text-white mt-1 font-mono truncate">{value}</p>
-                </div>
-              ))}
-            </div>
-          )}
+      {/* Overview tab */}
+      {tab === 'overview' && (
+        <div className="space-y-4 max-w-2xl">
+          {/* Details */}
+          <div className="border rounded-lg divide-y text-sm">
+            {[
+              ['Timezone',       group.timezone ?? '—'],
+              ['Max complexity', COMPLEXITY_LABELS[group.max_task_complexity ?? 'massive'] ?? '—'],
+              ['Palette',        group.palette_id ?? 'default'],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between px-4 py-2.5">
+                <span className="text-muted-foreground">{label}</span>
+                <span className="font-medium">{value}</span>
+              </div>
+            ))}
+          </div>
 
           {/* Owner */}
-          {group && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold text-white">Group Owner</h3>
-                <p className="text-xs text-zinc-500 mt-0.5">
-                  The owner can manage group admins. There can only be one owner per group.
-                </p>
-              </div>
-
-              {currentOwner ? (
-                <div className="flex items-center gap-2 text-sm">
-                  <Crown className="h-4 w-4 text-amber-500" />
-                  <span className="font-medium text-white">{currentOwner.email}</span>
-                  <span className="text-xs text-zinc-500">(current owner)</span>
+          <div className="border rounded-lg p-4 space-y-3">
+            <h3 className="text-sm font-medium flex items-center gap-1.5">
+              <Crown className="h-4 w-4 text-amber-500" />
+              Group Owner
+            </h3>
+            {currentOwner ? (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Crown className="h-3.5 w-3.5 text-amber-500" />
+                  <span className="text-sm font-medium">{currentOwner.email}</span>
                 </div>
-              ) : (
-                <p className="text-sm text-zinc-500">No owner assigned yet.</p>
-              )}
-
-              <div className="space-y-1.5">
-                <label className="text-xs text-zinc-400">Transfer ownership to</label>
-                <select
-                  value={newOwnerId}
-                  onChange={e => setNewOwnerId(e.target.value)}
-                  className="w-full h-9 rounded-md border border-zinc-700 bg-zinc-950 px-3 text-sm text-white"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowTransferDialog(true)}
                 >
-                  <option value="">— Select a member —</option>
-                  {members
-                    .filter(m => m.role !== 'super_admin' && m.user_id !== currentOwner?.user_id)
-                    .map(m => (
-                      <option key={m.user_id} value={m.user_id}>
-                        {m.email} ({m.role.replace('_', ' ')})
-                      </option>
-                    ))}
-                </select>
+                  Transfer ownership →
+                </Button>
               </div>
-
-              <div className="flex items-center gap-3">
-                <button
-                  disabled={!newOwnerId || transferring}
-                  onClick={() => void handleTransferOwnership()}
-                  className="inline-flex items-center text-xs text-zinc-300 hover:text-white border border-zinc-700 hover:border-zinc-500 px-3 py-1.5 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            ) : (
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted-foreground">No owner assigned</p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowTransferDialog(true)}
                 >
-                  {transferring ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
-                  Transfer ownership
-                </button>
-                {ownerToast && (
-                  <span className={ownerToast.startsWith('Failed') ? 'text-xs text-red-400' : 'text-xs text-green-400'}>
-                    {ownerToast}
-                  </span>
-                )}
+                  Assign owner →
+                </Button>
               </div>
+            )}
+          </div>
+
+          {/* Usage */}
+          <div className="border rounded-lg p-4">
+            <h3 className="text-sm font-medium mb-3">Usage</h3>
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div>
+                <p className="text-2xl font-bold">{members.length}</p>
+                <p className="text-xs text-muted-foreground">Members</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">{runs.length}</p>
+                <p className="text-xs text-muted-foreground">Recent runs</p>
+              </div>
+              <div>
+                <p className="text-2xl font-bold">
+                  {(runs.reduce((sum, r) => sum + (r.tokens_used ?? 0), 0) / 1000).toFixed(0)}k
+                </p>
+                <p className="text-xs text-muted-foreground">Tokens</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Members tab */}
+      {tab === 'members' && (
+        <div className="max-w-2xl">
+          {members.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">No members found.</p>
+          ) : (
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Email</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Role</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Joined</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {members.map((m, i) => (
+                    <tr key={m.user_id} className={cn('border-b last:border-0', i % 2 === 0 ? '' : 'bg-muted/20')}>
+                      <td className="px-4 py-2.5 font-medium">{m.email}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={cn(
+                          'text-xs px-2 py-0.5 rounded-full',
+                          m.role === 'group_owner'  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' :
+                          m.role === 'super_admin'  ? 'bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300' :
+                          m.role === 'group_admin'  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
+                          'bg-muted text-muted-foreground'
+                        )}>
+                          {m.role === 'group_owner' && '👑 '}
+                          {ROLE_LABELS[m.role] ?? m.role}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs">
+                        {new Date(m.created_at).toLocaleDateString('en-AU')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
+        </div>
+      )}
 
-          {/* Companies */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-white">Companies</h3>
-            </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-zinc-800 text-xs text-zinc-500 uppercase tracking-wide">
-                  <th className="px-5 py-2.5 text-left">Name</th>
-                  <th className="px-4 py-2.5 text-right">Divisions</th>
-                  <th className="px-4 py-2.5 text-center">Status</th>
-                  <th className="px-4 py-2.5 text-center">Xero</th>
-                  <th className="px-5 py-2.5 text-left">Last Synced</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-800">
-                {(overview?.companies ?? []).map(c => (
-                  <tr key={c.id} className="hover:bg-zinc-800/30">
-                    <td className="px-5 py-2.5 text-white">{c.name}</td>
-                    <td className="px-4 py-2.5 text-right text-zinc-400">{c.division_count}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${c.is_active ? 'bg-green-900 text-green-300' : 'bg-zinc-700 text-zinc-400'}`}>
-                        {c.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-center">
-                      {c.has_xero
-                        ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" />
-                        : <XCircle className="h-4 w-4 text-zinc-600 mx-auto" />}
-                    </td>
-                    <td className="px-5 py-2.5 text-zinc-400">{fmtDate(c.last_synced_at)}</td>
+      {/* Runs tab */}
+      {tab === 'runs' && (
+        <div className="max-w-3xl">
+          {runs.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-8 text-center">No runs found.</p>
+          ) : (
+            <div className="border rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Run</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Agent</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Tokens</th>
+                    <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">Date</th>
                   </tr>
-                ))}
-                {(overview?.companies ?? []).length === 0 && !loadingOv && (
-                  <tr><td colSpan={5} className="px-5 py-4 text-zinc-500 text-center">No companies.</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Storage */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-white">Storage Usage</h3>
+                </thead>
+                <tbody>
+                  {runs.map((run, i) => (
+                    <tr key={run.id} className={cn('border-b last:border-0 hover:bg-muted/20 cursor-pointer', i % 2 === 0 ? '' : 'bg-muted/10')}
+                      onClick={() => router.push(`/admin/agent-runs/${run.id}`)}>
+                      <td className="px-4 py-2.5 font-medium truncate max-w-[200px]">
+                        {run.run_name ?? 'Untitled'}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">{run.agent_name}</td>
+                      <td className="px-4 py-2.5">
+                        <span className={cn('text-xs', run.status === 'success' ? 'text-green-600' : run.status === 'error' || run.status === 'failed' ? 'text-red-600' : 'text-muted-foreground')}>
+                          {run.status === 'success' ? '✓' : run.status === 'error' || run.status === 'failed' ? '✗' : '○'} {run.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs">
+                        {run.tokens_used ? `${(run.tokens_used / 1000).toFixed(0)}k` : '—'}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground text-xs">
+                        {new Date(run.created_at).toLocaleDateString('en-AU')}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-            <div className="divide-y divide-zinc-800">
-              {(overview?.storage_files ?? []).map(f => (
-                <div key={f.bucket} className="flex items-center justify-between px-5 py-3">
-                  <span className="text-sm text-zinc-300 font-mono">{f.bucket}</span>
-                  <span className="text-sm text-white font-semibold">{f.count} files</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          )}
         </div>
       )}
 
-      {/* ── Users Tab ── */}
-      {activeTab === 'users' && (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-zinc-800 text-xs text-zinc-500 uppercase tracking-wide">
-                <th className="px-5 py-3 text-left">Email</th>
-                <th className="px-5 py-3 text-left">Role</th>
-                <th className="px-4 py-3 text-center">Default</th>
-                <th className="px-5 py-3 text-left">Joined</th>
-                <th className="px-5 py-3 text-left">Last Sign In</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800">
-              {loadingMem && (
-                <tr><td colSpan={5} className="px-5 py-6 text-center text-zinc-500">Loading…</td></tr>
-              )}
-              {!loadingMem && members.length === 0 && (
-                <tr><td colSpan={5} className="px-5 py-6 text-center text-zinc-500">No members.</td></tr>
-              )}
-              {members.map(m => (
-                <tr key={m.user_id} className="hover:bg-zinc-800/30">
-                  <td className="px-5 py-3 text-white">{m.email}</td>
-                  <td className="px-5 py-3">
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300 capitalize">{m.role.replace('_', ' ')}</span>
-                  </td>
-                  <td className="px-4 py-3 text-center">
-                    {m.is_default ? <CheckCircle2 className="h-4 w-4 text-green-500 mx-auto" /> : null}
-                  </td>
-                  <td className="px-5 py-3 text-zinc-400">{fmtDate(m.joined_at)}</td>
-                  <td className="px-5 py-3 text-zinc-400">{fmtDate(m.last_sign_in_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      {/* Transfer ownership dialog */}
+      <Dialog open={showTransferDialog} onOpenChange={open => {
+        if (!open) { setTransferToId(''); setTransferConfirmText(''); setTransferError(null) }
+        setShowTransferDialog(open)
+      }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Transfer group ownership
+            </DialogTitle>
+            <DialogDescription>
+              This is a significant action. The current owner will be demoted to Group Admin
+              and will lose the ability to manage other admins.
+            </DialogDescription>
+          </DialogHeader>
 
-      {/* ── Activity Tab ── */}
-      {activeTab === 'activity' && (
-        <div className="space-y-6">
-          {loadingAct && <p className="text-zinc-500 text-sm">Loading…</p>}
+          <div className="space-y-4 py-2">
+            {currentOwner && (
+              <div className="rounded-md bg-muted/50 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Current owner: </span>
+                <span className="font-medium">{currentOwner.email}</span>
+              </div>
+            )}
 
-          {/* Agent runs */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-white">Recent Agent Runs</h3>
+            <div className="space-y-1.5">
+              <Label>Transfer to</Label>
+              <select
+                value={transferToId}
+                onChange={e => setTransferToId(e.target.value)}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+              >
+                <option value="">— Select a member —</option>
+                {members
+                  .filter(m => m.role !== 'super_admin' && m.user_id !== currentOwner?.user_id)
+                  .map(m => (
+                    <option key={m.user_id} value={m.user_id}>
+                      {m.email} ({ROLE_LABELS[m.role] ?? m.role})
+                    </option>
+                  ))}
+              </select>
             </div>
-            <div className="divide-y divide-zinc-800">
-              {(activity?.runs ?? []).map(r => {
-                const dur = r.started_at && r.completed_at
-                  ? `${Math.round((new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000)}s`
-                  : null
-                return (
-                  <Link key={r.id} href={`/admin/agent-runs/${r.id}`} className="flex items-center gap-3 px-5 py-3 hover:bg-zinc-800/40 transition-colors">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-white truncate">{r.agent_name ?? 'Unknown'}</p>
-                      <p className="text-xs text-zinc-500">{fmtDate(r.created_at)}{r.tokens_used ? ` · ${r.tokens_used.toLocaleString()} tokens` : ''}</p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {dur && <span className="text-xs text-zinc-500">{dur}</span>}
-                      <span className={`text-[11px] px-2 py-0.5 rounded-full ${STATUS_BADGE[r.status] ?? STATUS_BADGE.queued}`}>{r.status}</span>
-                    </div>
-                  </Link>
-                )
-              })}
-              {!loadingAct && (activity?.runs ?? []).length === 0 && (
-                <p className="px-5 py-4 text-sm text-zinc-500">No runs.</p>
-              )}
+
+            <div className="space-y-1.5">
+              <Label>
+                Type <strong>{group.name}</strong> to confirm
+              </Label>
+              <input
+                type="text"
+                value={transferConfirmText}
+                onChange={e => setTransferConfirmText(e.target.value)}
+                placeholder={group.name}
+                className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+              />
             </div>
+
+            {transferError && (
+              <p className="text-sm text-red-600">{transferError}</p>
+            )}
           </div>
 
-          {/* Reports */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-white">Recent Reports</h3>
-            </div>
-            <div className="divide-y divide-zinc-800">
-              {(activity?.reports ?? []).map(r => (
-                <div key={r.id} className="flex items-center justify-between px-5 py-3">
-                  <p className="text-sm text-white truncate">{r.name}</p>
-                  <span className="text-xs text-zinc-500 shrink-0 ml-4">{fmtDate(r.created_at)}</span>
-                </div>
-              ))}
-              {!loadingAct && (activity?.reports ?? []).length === 0 && (
-                <p className="px-5 py-4 text-sm text-zinc-500">No reports.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Documents */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-white">Recent Documents</h3>
-            </div>
-            <div className="divide-y divide-zinc-800">
-              {(activity?.documents ?? []).map(d => (
-                <div key={d.id} className="flex items-center justify-between px-5 py-3">
-                  <div className="min-w-0">
-                    <p className="text-sm text-white truncate">{d.title}</p>
-                    <p className="text-xs text-zinc-500 capitalize">{d.document_type.replace(/_/g, ' ')}</p>
-                  </div>
-                  <span className="text-xs text-zinc-500 shrink-0 ml-4">{fmtDate(d.created_at)}</span>
-                </div>
-              ))}
-              {!loadingAct && (activity?.documents ?? []).length === 0 && (
-                <p className="px-5 py-4 text-sm text-zinc-500">No documents.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Cash flow snapshots */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-3 border-b border-zinc-800">
-              <h3 className="text-sm font-semibold text-white">Recent Cash Flow Snapshots</h3>
-            </div>
-            <div className="divide-y divide-zinc-800">
-              {(activity?.snapshots ?? []).map(s => (
-                <div key={s.id} className="flex items-center justify-between px-5 py-3">
-                  <p className="text-sm text-white truncate">{s.name}</p>
-                  <span className="text-xs text-zinc-500 shrink-0 ml-4">{fmtDate(s.created_at)}</span>
-                </div>
-              ))}
-              {!loadingAct && (activity?.snapshots ?? []).length === 0 && (
-                <p className="px-5 py-4 text-sm text-zinc-500">No snapshots.</p>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Edit modal */}
-      {showEdit && group && (
-        <GroupFormModal
-          group={group}
-          onClose={() => setShowEdit(false)}
-          onSaved={() => { setShowEdit(false); loadOverview() }}
-        />
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowTransferDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!transferToId || transferConfirmText !== group.name || transferring}
+              onClick={handleTransferOwnership}
+            >
+              {transferring && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              Transfer ownership
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -36,12 +36,13 @@ export async function GET(
           role:            m.role,
           is_default:      m.is_default,
           joined_at:       m.created_at,
+          created_at:      m.created_at,
           last_sign_in_at: user?.user?.last_sign_in_at ?? null,
         }
       } catch {
         return {
           user_id: m.user_id, email: m.user_id, role: m.role,
-          is_default: m.is_default, joined_at: m.created_at, last_sign_in_at: null,
+          is_default: m.is_default, joined_at: m.created_at, created_at: m.created_at, last_sign_in_at: null,
         }
       }
     })
